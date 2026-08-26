@@ -52,11 +52,16 @@ def fetch_tiktok_data(url):
         if alt_resp.get('code') == 0:
             data = alt_resp.get('data', {})
             music_url = data.get('music', None)
+            title = data.get('title', 'محتوى تيك توك')
             
-            audio_filename = f"{random.randint(100000000, 999999999)}_tk.mp3"
+            # تنظيف العنوان ليكون صالحاً كاسم ملف إذا لزم الأمر
+            clean_title = "".join(c for c in title if c.isalnum() or c in (' ', '_', '-', '🔥')).strip()
+            if not clean_title:
+                clean_title = "tiktok_audio"
+            audio_filename = f"{clean_title}.mp3"
 
             result = {
-                'title': data.get('title', 'محتوى تيك توك'),
+                'title': title,
                 'author': data.get('author', {}).get('nickname', 'مستخدم تيك توك'),
                 'music': music_url,
                 'audio_title': audio_filename,
@@ -110,19 +115,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if images:
                     if audio_url:
                         try:
-                            # تحميل الصوت عبر الرابط وحفظه محلياً لضمان إرساله كملف صوتي حقيقي وليس كملف/مستند
                             r = requests.get(audio_url, timeout=15)
                             if r.status_code == 200:
-                                local_audio_path = f"{audio_title}"
+                                local_audio_path = f"audio_{random.randint(1000,9999)}.mp3"
                                 with open(local_audio_path, 'wb') as f:
                                     f.write(r.content)
                                 
                                 with open(local_audio_path, 'rb') as audio_file:
                                     await update.message.reply_audio(
                                         audio=audio_file, 
-                                        title=audio_title, 
-                                        performer="مستخدم تيك توك",
-                                        caption="- @G66Gbot"
+                                        title=title, 
+                                        performer=author,
+                                        caption=f"🎵 {title}\n- @G66Gbot"
                                     )
                                 if os.path.exists(local_audio_path):
                                     os.remove(local_audio_path)
@@ -160,6 +164,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 filename = os.path.splitext(filename)[0] + ".mp4"
 
             context.user_data['video_title'] = title
+            clean_title = "".join(c for c in title if c.isalnum() or c in (' ', '_', '-', '🔥')).strip()
+            context.user_data['audio_title'] = f"{clean_title}.mp3" if clean_title else "audio.mp3"
 
             caption = f"🎬 {title}\n\n👤 الحساب: {uploader}\n\n- @G66Gbot"
 
@@ -179,7 +185,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     url = context.user_data.get('current_url')
-    saved_title = context.user_data.get('audio_title', f"{random.randint(100000000, 999999999)}_tk.mp3")
+    video_title = context.user_data.get('video_title', 'محتوى صوتي')
+    saved_audio_title = context.user_data.get('audio_title', 'audio.mp3')
     
     if not url:
         await query.message.reply_text("❌ انتهت صلاحية الجلسة، أرسل الرابط مرة أخرى.")
@@ -194,7 +201,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if audio_link:
                 r = requests.get(audio_link, timeout=15)
                 if r.status_code == 200:
-                    local_audio_path = f"{saved_title}"
+                    local_audio_path = f"audio_{random.randint(1000,9999)}.mp3"
                     with open(local_audio_path, 'wb') as f:
                         f.write(r.content)
 
@@ -202,9 +209,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await context.bot.send_audio(
                             chat_id=query.message.chat_id, 
                             audio=audio_file, 
-                            title=saved_title, 
-                            performer="المؤدي غير معروف", 
-                            caption="- @G66Gbot"
+                            title=video_title, 
+                            performer="مستخدم تيك توك", 
+                            caption=f"🎵 {video_title}\n- @G66Gbot"
                         )
                     if os.path.exists(local_audio_path):
                         os.remove(local_audio_path)
@@ -234,9 +241,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_audio(
                         chat_id=query.message.chat_id, 
                         audio=f, 
-                        title=saved_title, 
-                        performer="المؤدي غير معروف", 
-                        caption="- @G66Gbot"
+                        title=video_title, 
+                        performer="مؤلف غير معروف", 
+                        caption=f"🎵 {video_title}\n- @G66Gbot"
                     )
 
                 if os.path.exists(filename):
@@ -262,9 +269,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     filename = os.path.splitext(filename)[0] + ".mp4"
 
                 if os.path.exists(filename):
-                    video_title = context.user_data.get('video_title', 'media')
+                    v_title = context.user_data.get('video_title', 'media')
                     with open(filename, 'rb') as f:
-                        await context.bot.send_video(chat_id=query.message.chat_id, video=f, caption=f"🎬 {video_title} (HD)\n- @G66Gbot")
+                        await context.bot.send_video(chat_id=query.message.chat_id, video=f, caption=f"🎬 {v_title} (HD)\n- @G66Gbot")
                     os.remove(filename)
                 await status_msg.delete()
         except Exception:
@@ -277,7 +284,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    print("البوت يعمل الآن بصيغة الأغاني الحقيقية وبدون ملفات مستندات...")
+    print("البوت يعمل الآن بصيغة أسماء الصوتيات المستخرجة من العنوان تماماً...")
     app.run_polling()
 
 if __name__ == '__main__':
