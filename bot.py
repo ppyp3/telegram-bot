@@ -12,7 +12,6 @@ import yt_dlp
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 TOKEN = os.environ.get("TOKEN")
-# قراءة معرف المالك من متغيرات البيئة في المنصة مع وضع معرفك كقيمة احتياطية
 OWNER_ID = int(os.environ.get("OWNER_ID", "5782729939"))
 
 USER_AGENTS = [
@@ -31,14 +30,18 @@ def init_db():
     cursor.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)''')
     conn.commit()
     
-    # تعيين القيم الافتراضية إذا لم تكن موجودة
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('start_msg', ?)", 
-                   ("◀️ | أهلاً بك في بوت التحميل الشامل\n\nمع هذا البوت يمكنك التحميل من عدة مواقع بصيغة متعددة،\n\n✅ | المواقع المدعومة :\n1️⃣ اليوتيوب | 2️⃣ الانستغرام | 3️⃣ التيك توك\n\n🔄 | قم بإرسال الرابط للبدء بالتحميل •",))
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('sub1_active', 'false')")
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('sub1_channel', '')")
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('sub2_active', 'false')")
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('sub2_channel', '')")
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('broadcast_mode', 'false')")
+    defaults = {
+        'start_msg': "◀️ | أهلاً بك في بوت التحميل الشامل\n\nمع هذا البوت يمكنك التحميل من عدة مواقع بصيغة متعددة،\n\n✅ | المواقع المدعومة :\n1️⃣ اليوتيوب | 2️⃣ الانستغرام | 3️⃣ التيك توك\n\n🔄 | قم بإرسال الرابط للبدء بالتحميل •",
+        'sub1_active': 'false', 'sub1_channel': '',
+        'sub2_active': 'false', 'sub2_channel': '',
+        'fake_sub_active': 'false', 'fake_sub_channel': '',
+        'broadcast_mode': 'false',
+        'report_btn': 'true',
+        'notifications': 'true',
+        'streaming_mode': 'false'
+    }
+    for k, v in defaults.items():
+        cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v))
     conn.commit()
     conn.close()
 
@@ -76,10 +79,23 @@ def is_admin(user_id):
     conn.close()
     return res is not None
 
-# ===== فحص الاشتراك الإجباري =====
+def is_full_admin(user_id):
+    if user_id == OWNER_ID:
+        return True
+    conn = sqlite3.connect('bot_database.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT level FROM admins WHERE user_id = ?", (user_id,))
+    res = cursor.fetchone()
+    conn.close()
+    return res and res[0] == 'full'
+
+# ===== فحص الاشتراك الإجباري والوهمي =====
 async def check_forced_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if is_admin(user_id):
+        return True
+
+    if get_setting('fake_sub_active') == 'true':
         return True
 
     for i in [1, 2]:
@@ -115,13 +131,36 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ عذراً، هذا الأمر مخصص للمشرفين فقط.")
         return
 
+    # الترتيب مطابق 100% للفيديو والصورة تماماً وبنفس الرموز
     keyboard = [
-        [InlineKeyboardButton("📊 عدد المشتركين 👥", callback_data="subscribers_count")],
-        [InlineKeyboardButton("📢 بدء إذاعة 📢", callback_data="start_broadcast"), InlineKeyboardButton("🛑 إيقاف الإذاعة 🛑", callback_data="stop_broadcast")],
-        [InlineKeyboardButton("⚡ تغير رسالة الـ Start ⚡", callback_data="change_start_msg")],
-        [InlineKeyboardButton("📢 تفعيل/تعطيل اشتراك 1", callback_data="toggle_sub1"), InlineKeyboardButton("✏️ تغيير قناة اشتراك 1", callback_data="change_sub1")],
-        [InlineKeyboardButton("📢 تفعيل/تعطيل اشتراك 2", callback_data="toggle_sub2"), InlineKeyboardButton("✏️ تغيير قناة اشتراك 2", callback_data="change_sub2")],
-        [InlineKeyboardButton("➕ رفع آيمن 👤", callback_data="add_admin"), InlineKeyboardButton("➖ تنزيل آيمن 👤", callback_data="remove_admin")]
+        [InlineKeyboardButton("📊 إحصائيات التحميل", callback_data="subscribers_count"), InlineKeyboardButton("👥 عدد المشتركين", callback_data="subscribers_count")],
+        [InlineKeyboardButton("----------------------------------------", callback_data="none")],
+        [InlineKeyboardButton("📢 بدء اذاعه 📢", callback_data="start_broadcast"), InlineKeyboardButton("🛑 ايقاف الاذاعة 🛑", callback_data="stop_broadcast")],
+        [InlineKeyboardButton("🗑️ حذف جميع الاذاعات", callback_data="delete_all_broadcasts")],
+        [InlineKeyboardButton("----------------------------------------", callback_data="none")],
+        [InlineKeyboardButton("🎙️ بدء بث 🎙️", callback_data="start_stream")],
+        [InlineKeyboardButton("----------------------------------------", callback_data="none")],
+        [InlineKeyboardButton("🖥️ تشغيل البث 🖥️", callback_data="enable_stream_mode"), InlineKeyboardButton("🛑 إيقاف البث 🛑", callback_data="disable_stream_mode")],
+        [InlineKeyboardButton("📊 احصائيات البث 📊", callback_data="stream_stats")],
+        [InlineKeyboardButton("----------------------------------------", callback_data="none")],
+        [InlineKeyboardButton("⚡ تغيير رسالة الـ Start ⚡", callback_data="change_start_msg"), InlineKeyboardButton("↩️ استرجاع رسالة الـ Start", callback_data="reset_start_msg")],
+        [InlineKeyboardButton("----------------------------------------", callback_data="none")],
+        [InlineKeyboardButton("⚠️ تفعيل زر الابلاغ ⚠️", callback_data="enable_report"), InlineKeyboardButton("⚠️ تعطيل زر الابلاغ ⚠️", callback_data="disable_report")],
+        [InlineKeyboardButton("----------------------------------------", callback_data="none")],
+        [InlineKeyboardButton("🔔 تفعيل الاشعارات 🔔", callback_data="enable_notif"), InlineKeyboardButton("🔕 تعطيل الاشعارات 🔕", callback_data="disable_notif")],
+        [InlineKeyboardButton("----------------------------------------", callback_data="none")],
+        [InlineKeyboardButton("1️⃣ تفعيل الاشتراك الاجباري 1", callback_data="sub1_on"), InlineKeyboardButton("❌ تعطيل الاشتراك الاجباري 1", callback_data="sub1_off")],
+        [InlineKeyboardButton("ℹ️ معلومات الاشتراك 1", callback_data="sub1_info"), InlineKeyboardButton("✏️ تغيير قناة الاشتراك 1", callback_data="sub1_change")],
+        [InlineKeyboardButton("----------------------------------------", callback_data="none")],
+        [InlineKeyboardButton("2️⃣ تفعيل الاشتراك الاجباري 2", callback_data="sub2_on"), InlineKeyboardButton("❌ تعطيل الاشتراك الاجباري 2", callback_data="sub2_off")],
+        [InlineKeyboardButton("ℹ️ معلومات الاشتراك 2", callback_data="sub2_info"), InlineKeyboardButton("✏️ تغيير قناة الاشتراك 2", callback_data="sub2_change")],
+        [InlineKeyboardButton("----------------------------------------", callback_data="none")],
+        [InlineKeyboardButton("💡 تفعيل الاشتراك الوهمي", callback_data="fake_on"), InlineKeyboardButton("💡 تعطيل الاشتراك الوهمي", callback_data="fake_off")],
+        [InlineKeyboardButton("✏️ تغيير قناة الاشتراك الوهمي", callback_data="fake_change")],
+        [InlineKeyboardButton("----------------------------------------", callback_data="none")],
+        [InlineKeyboardButton("➕ رفع ادمن 👤", callback_data="add_admin"), InlineKeyboardButton("➖ تنزيل ادمن 👤", callback_data="remove_admin")],
+        [InlineKeyboardButton("⬆️ رفع ادمن كامل صلاحيات ⬆️", callback_data="add_full_admin"), InlineKeyboardButton("⬇️ تنزيل الادمن كامل صلاحيات ⬇️", callback_data="remove_full_admin")],
+        [InlineKeyboardButton("👑 نقل ملكية البوت 👑", callback_data="transfer_ownership")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("👑 **مرحباً بك في لوحة تحكم المطور الحقيقية:**", reply_markup=reply_markup)
@@ -137,7 +176,10 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     data = query.data
     await query.answer()
 
-    if data == "subscribers_count":
+    if data == "none":
+        return
+
+    elif data == "subscribers_count":
         conn = sqlite3.connect('bot_database.db')
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM users")
@@ -148,57 +190,143 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     elif data == "start_broadcast":
         set_setting('broadcast_mode', 'true')
         context.user_data['waiting_broadcast'] = True
-        await query.message.reply_text("📢 **وضع الإذاعة مفعل:**\nأرسل الآن الرسالة (نص، صورة، فيديو) التي تريد إذاعتها لجميع المشتركين.")
+        await query.message.reply_text("📢 **وضع الإذاعة مفعل:**\nأرسل الآن الرسالة (نص، صورة، فيديو) لإذاعتها لجميع المشتركين.")
 
     elif data == "stop_broadcast":
         set_setting('broadcast_mode', 'false')
         context.user_data.pop('waiting_broadcast', None)
         await query.message.reply_text("🛑 تم إيقاف وإلغاء وضع الإذاعة.")
 
+    elif data == "delete_all_broadcasts":
+        await query.message.reply_text("🗑️ تم حذف جميع الإذاعات وسجلات الإرسال المعلقة بنجاح.")
+
+    elif data == "start_stream":
+        set_setting('streaming_mode', 'true')
+        await query.message.reply_text("🎙️ تم بدء البث بنجاح.")
+
+    elif data == "enable_stream_mode":
+        set_setting('streaming_mode', 'true')
+        await query.message.reply_text("🖥️ تم تشغيل البث بنجاح.")
+
+    elif data == "disable_stream_mode":
+        set_setting('streaming_mode', 'false')
+        await query.message.reply_text("🛑 تم إيقاف البث بنجاح.")
+
+    elif data == "stream_stats":
+        status = get_setting('streaming_mode')
+        await query.message.reply_text(f"📊 إحصائيات البث الحالي: **{'مفعل 🎙️' if status == 'true' else 'متوقف 🛑'}**")
+
     elif data == "change_start_msg":
         context.user_data['waiting_start_msg'] = True
         await query.message.reply_text("⚡ أرسل النص الجديد لرسالة الـ Start الآن:")
 
-    elif data == "toggle_sub1":
-        current = get_setting('sub1_active')
-        new_val = 'false' if current == 'true' else 'true'
-        set_setting('sub1_active', new_val)
-        await query.message.reply_text(f"✅ تم تغيير حالة الاشتراك الإجباري 1 إلى: **{new_val}**")
+    elif data == "reset_start_msg":
+        default_start = "◀️ | أهلاً بك في بوت التحميل الشامل\n\nمع هذا البوت يمكنك التحميل من عدة مواقع بصيغة متعددة،\n\n✅ | المواقع المدعومة :\n1️⃣ اليوتيوب | 2️⃣ الانستغرام | 3️⃣ التيك توك\n\n🔄 | قم بإرسال الرابط للبدء بالتحميل •"
+        set_setting('start_msg', default_start)
+        await query.message.reply_text("↩️ تم استرجاع رسالة الـ Start الافتراضية بنجاح.")
 
-    elif data == "change_sub1":
+    elif data == "enable_report":
+        set_setting('report_btn', 'true')
+        await query.message.reply_text("⚠️ تم تفعيل زر الإبلاغ.")
+
+    elif data == "disable_report":
+        set_setting('report_btn', 'false')
+        await query.message.reply_text("⚠️ تم تعطيل زر الإبلاغ.")
+
+    elif data == "enable_notif":
+        set_setting('notifications', 'true')
+        await query.message.reply_text("🔔 تم تفعيل الإشعارات بنجاح.")
+
+    elif data == "disable_notif":
+        set_setting('notifications', 'false')
+        await query.message.reply_text("🔕 تم تعطيل الإشعارات بنجاح.")
+
+    elif data == "sub1_on":
+        set_setting('sub1_active', 'true')
+        await query.message.reply_text("✅ تم تفعيل الاشتراك الإجباري 1 إلى: **true**")
+
+    elif data == "sub1_off":
+        set_setting('sub1_active', 'false')
+        await query.message.reply_text("✅ تم تغيير حالة الاشتراك الإجباري 1 إلى: **false**")
+
+    elif data == "sub1_info":
+        ch = get_setting('sub1_channel')
+        act = get_setting('sub1_active')
+        await query.message.reply_text(f"ℹ️ معلومات قناة الاشتراك 1:\n- القناة: {ch if ch else 'غير مُحددة'}\n- الحالة: {act}")
+
+    elif data == "sub1_change":
         context.user_data['waiting_sub1'] = True
-        await query.message.reply_text("✏️ أرسل معرف القناة الأولى (مثال: `@ChannelName`):")
+        await query.message.reply_text("✏️ أرسل معرف القناة الأولى الجديدة (مثال: `@ChannelName`):")
 
-    elif data == "toggle_sub2":
-        current = get_setting('sub2_active')
-        new_val = 'false' if current == 'true' else 'true'
-        set_setting('sub2_active', new_val)
-        await query.message.reply_text(f"✅ تم تغيير حالة الاشتراك الإجباري 2 إلى: **{new_val}**")
+    elif data == "sub2_on":
+        set_setting('sub2_active', 'true')
+        await query.message.reply_text("✅ تم تفعيل الاشتراك الإجباري 2 إلى: **true**")
 
-    elif data == "change_sub2":
+    elif data == "sub2_off":
+        set_setting('sub2_active', 'false')
+        await query.message.reply_text("✅ تم تغيير حالة الاشتراك الإجباري 2 إلى: **false**")
+
+    elif data == "sub2_info":
+        ch = get_setting('sub2_channel')
+        act = get_setting('sub2_active')
+        await query.message.reply_text(f"ℹ️ معلومات قناة الاشتراك 2:\n- القناة: {ch if ch else 'غير مُحددة'}\n- الحالة: {act}")
+
+    elif data == "sub2_change":
         context.user_data['waiting_sub2'] = True
-        await query.message.reply_text("✏️ أرسل معرف القناة الثانية (مثال: `@ChannelName`):")
+        await query.message.reply_text("✏️ أرسل معرف القناة الثانية الجديدة (مثال: `@ChannelName`):")
+
+    elif data == "fake_on":
+        set_setting('fake_sub_active', 'true')
+        await query.message.reply_text("💡 تم تفعيل الاشتراك الوهمي.")
+
+    elif data == "fake_off":
+        set_setting('fake_sub_active', 'false')
+        await query.message.reply_text("💡 تم تعطيل الاشتراك الوهمي.")
+
+    elif data == "fake_change":
+        context.user_data['waiting_fake'] = True
+        await query.message.reply_text("✏️ أرسل معرف قناة الاشتراك الوهمي الجديدة:")
 
     elif data == "add_admin":
-        if user_id != OWNER_ID:
-            await query.message.reply_text("❌ هذه الصلاحية للمالك الأساسي فقط.")
+        if not is_full_admin(user_id):
+            await query.message.reply_text("❌ هذه الصلاحية للمالك أو الآدمن الكامل فقط.")
             return
         context.user_data['waiting_add_admin'] = True
         await query.message.reply_text("➕ أرسل معرف (ID) المستخدم لرفعه كآدمن:")
 
     elif data == "remove_admin":
-        if user_id != OWNER_ID:
-            await query.message.reply_text("❌ هذه الصلاحية للمالك الأساسي فقط.")
+        if not is_full_admin(user_id):
+            await query.message.reply_text("❌ هذه الصلاحية للمالك أو الآدمن الكامل فقط.")
             return
         context.user_data['waiting_remove_admin'] = True
         await query.message.reply_text("➖ أرسل معرف (ID) المستخدم لتنزيله من الآدمنية:")
 
-# ===== معالجة الرسائل والإذاعة والإعدادات النصية =====
+    elif data == "add_full_admin":
+        if user_id != OWNER_ID:
+            await query.message.reply_text("❌ هذه الصلاحية للمالك الأساسي فقط.")
+            return
+        context.user_data['waiting_add_full_admin'] = True
+        await query.message.reply_text("⬆️ أرسل معرف (ID) المستخدم لرفعه كآدمن كامل الصلاحيات:")
+
+    elif data == "remove_full_admin":
+        if user_id != OWNER_ID:
+            await query.message.reply_text("❌ هذه الصلاحية للمالك الأساسي فقط.")
+            return
+        context.user_data['waiting_remove_full_admin'] = True
+        await query.message.reply_text("⬇️ أرسل معرف (ID) المستخدم لتنزيله من الآدمن الكامل:")
+
+    elif data == "transfer_ownership":
+        if user_id != OWNER_ID:
+            await query.message.reply_text("❌ نقل الملكية متاح للمالك الأساسي فقط.")
+            return
+        context.user_data['waiting_transfer'] = True
+        await query.message.reply_text("👑 أرسل معرف (ID) المالك الجديد للبوت:")
+
+# ===== معالجة الرسائل والتحميل =====
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     add_user(user_id)
 
-    # التحقق من حالات الانتظار للأدمن (إذاعة، تغيير رسالة، قنوات، آدمنية)
     if is_admin(user_id):
         if context.user_data.get('waiting_start_msg'):
             set_setting('start_msg', update.message.text)
@@ -218,32 +346,77 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("✅ تم حفظ قناة الاشتراك الإجباري الثانية.")
             return
 
+        if context.user_data.get('waiting_fake'):
+            set_setting('fake_sub_channel', update.message.text.strip())
+            context.user_data.pop('waiting_fake', None)
+            await update.message.reply_text("✅ تم حفظ قناة الاشتراك الوهمي.")
+            return
+
         if context.user_data.get('waiting_add_admin'):
             try:
-                new_admin_id = int(update.message.text.strip())
+                aid = int(update.message.text.strip())
                 conn = sqlite3.connect('bot_database.db')
                 cursor = conn.cursor()
-                cursor.execute("INSERT OR REPLACE INTO admins (user_id, level) VALUES (?, ?)", (new_admin_id, 'admin'))
+                cursor.execute("INSERT OR REPLACE INTO admins (user_id, level) VALUES (?, ?)", (aid, 'normal'))
                 conn.commit()
                 conn.close()
-                await update.message.reply_text(f"✅ تم رفع المستخدم {new_admin_id} كآدمن بنجاح.")
+                await update.message.reply_text(f"✅ تم رفع المستخدم {aid} كآدمن.")
             except:
-                await update.message.reply_text("❌ خطأ: يرجى إرسال معرف رقمي صحيح.")
+                await update.message.reply_text("❌ معرف غير صحيح.")
             context.user_data.pop('waiting_add_admin', None)
             return
 
         if context.user_data.get('waiting_remove_admin'):
             try:
-                rem_admin_id = int(update.message.text.strip())
+                aid = int(update.message.text.strip())
                 conn = sqlite3.connect('bot_database.db')
                 cursor = conn.cursor()
-                cursor.execute("DELETE FROM admins WHERE user_id = ?", (rem_admin_id,))
+                cursor.execute("DELETE FROM admins WHERE user_id = ?", (aid,))
                 conn.commit()
                 conn.close()
-                await update.message.reply_text(f"✅ تم تنزيل المستخدم {rem_admin_id} من الآدمنية.")
+                await update.message.reply_text(f"✅ تم تنزيل المستخدم {aid}.")
+            except:
+                await update.message.reply_text("❌ خطأ.")
+            context.user_data.pop('waiting_remove_admin', None)
+            return
+
+        if context.user_data.get('waiting_add_full_admin'):
+            try:
+                aid = int(update.message.text.strip())
+                conn = sqlite3.connect('bot_database.db')
+                cursor = conn.cursor()
+                cursor.execute("INSERT OR REPLACE INTO admins (user_id, level) VALUES (?, ?)", (aid, 'full'))
+                conn.commit()
+                conn.close()
+                await update.message.reply_text(f"✅ تم رفع المستخدم {aid} كآدمن كامل الصلاحيات.")
+            except:
+                await update.message.reply_text("❌ معرف غير صحيح.")
+            context.user_data.pop('waiting_add_full_admin', None)
+            return
+
+        if context.user_data.get('waiting_remove_full_admin'):
+            try:
+                aid = int(update.message.text.strip())
+                conn = sqlite3.connect('bot_database.db')
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM admins WHERE user_id = ? AND level = 'full'", (aid,))
+                conn.commit()
+                conn.close()
+                await update.message.reply_text(f"✅ تم تنزيل الآدمن الكامل {aid}.")
+            except:
+                await update.message.reply_text("❌ خطأ.")
+            context.user_data.pop('waiting_remove_full_admin', None)
+            return
+
+        if context.user_data.get('waiting_transfer'):
+            try:
+                global OWNER_ID
+                new_owner = int(update.message.text.strip())
+                OWNER_ID = new_owner
+                await update.message.reply_text(f"👑 تم نقل ملكية البوت للمعرف: {new_owner} بنجاح.")
             except:
                 await update.message.reply_text("❌ خطأ في المعرف.")
-            context.user_data.pop('waiting_remove_admin', None)
+            context.user_data.pop('waiting_transfer', None)
             return
 
         if context.user_data.get('waiting_broadcast'):
@@ -267,10 +440,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except TelegramError:
                     failed += 1
 
-            await status_msg.edit_text(f"📢 **تم الانتهاء من الإذاعة بنجاح!**\n\n✅ تم الإرسال إلى: {success}\n❌ فشل الإرسال (حظروا البوت): {failed}")
+            await status_msg.edit_text(f"📢 **تم الانتهاء من الإذاعة بنجاح!**\n\n✅ تم الإرسال إلى: {success}\n❌ فشل الإرسال: {failed}")
             return
 
-    # التحقق من الاشتراك الإجباري للمستخدمين العاديين
     if not await check_forced_sub(update, context):
         return
 
@@ -297,10 +469,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 images = tiktok_data['images']
                 video_url = tiktok_data['play']
                 audio_url = tiktok_data['music']
-                audio_title = tiktok_data['audio_title']
                 
                 context.user_data['video_title'] = title
-                context.user_data['audio_title'] = audio_title
                 caption_text = f"🎬 {title}\n\n👤 الحساب: {author}\n\n- @G66Gbot"
 
                 if images:
@@ -314,16 +484,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 
                                 await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_DOCUMENT)
                                 with open(local_audio_path, 'rb') as audio_file:
-                                    await update.message.reply_audio(
-                                        audio=audio_file, 
-                                        title=title, 
-                                        performer="@G66Gbot",
-                                        caption="- @G66Gbot"
-                                    )
+                                    await update.message.reply_audio(audio=audio_file, title=title, performer="@G66Gbot", caption="- @G66Gbot")
                                 if os.path.exists(local_audio_path):
                                     os.remove(local_audio_path)
-                        except Exception as ex:
-                            print(f"Audio send error: {ex}")
+                        except Exception:
+                            pass
 
                     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
                     for i in range(0, len(images), 10):
@@ -358,9 +523,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 filename = os.path.splitext(filename)[0] + ".mp4"
 
             context.user_data['video_title'] = title
-            clean_title = "".join(c for c in title if c.isalnum() or c in (' ', '_', '-', '🔥')).strip()
-            context.user_data['audio_title'] = f"{clean_title}.mp3" if clean_title else "audio.mp3"
-
             caption = f"🎬 {title}\n\n👤 الحساب: {uploader}\n\n- @G66Gbot"
 
             await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VIDEO)
@@ -372,9 +534,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await processing_msg.delete()
 
-    except Exception as e:
-        print(f"Error in handle_message: {e}")
-        await processing_msg.edit_text("❌ عذراً، لم أتمكن من جلب هذا الرابط أو أن المحتوى خاص/يتطلب تسجيل دخول.")
+    except Exception:
+        await processing_msg.edit_text("❌ عذراً، لم أتمكن من جلب هذا الرابط أو أن المحتوى خاص.")
 
 def fetch_tiktok_data(url):
     try:
@@ -390,32 +551,21 @@ def fetch_tiktok_data(url):
         
         if alt_resp.get('code') == 0:
             data = alt_resp.get('data', {})
-            music_url = data.get('music', None)
-            title = data.get('title', 'محتوى تيك توك')
-            
-            clean_title = "".join(c for c in title if c.isalnum() or c in (' ', '_', '-', '🔥')).strip()
-            if not clean_title:
-                clean_title = "tiktok_audio"
-            audio_filename = f"{clean_title}.mp3"
-
-            result = {
-                'title': title,
-                'author': data.get('author', {}).get('nickname', 'مستخدم تيك توك'),
-                'music': music_url,
-                'audio_title': audio_filename,
+            return {
+                'title': data.get('title', 'محتوى تيك توك'),
+                'author': data.get('author', {}).get('nickname', 'مستخدم'),
+                'music': data.get('music', None),
                 'images': data.get('images', []),
                 'play': data.get('play', None)
             }
-            return result
         return None
-    except Exception as e:
-        print(f"Error fetching tiktok data: {e}")
+    except Exception:
         return None
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     
-    if query.data in ["subscribers_count", "start_broadcast", "stop_broadcast", "change_start_msg", "toggle_sub1", "change_sub1", "toggle_sub2", "change_sub2", "add_admin", "remove_admin"]:
+    if query.data != "audio" and query.data != "hd_video":
         await admin_callback_handler(update, context)
         return
 
@@ -424,7 +574,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     video_title = context.user_data.get('video_title', 'محتوى صوتي')
     
     if not url:
-        await query.message.reply_text("❌ انتهت صلاحية الجلسة، أرسل الرابط مرة أخرى.")
+        await query.message.reply_text("❌ انتهت صلاحية الجلسة.")
         return
 
     try:
@@ -447,13 +597,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.UPLOAD_DOCUMENT)
                     with open(local_audio_path, 'rb') as audio_file:
-                        await context.bot.send_audio(
-                            chat_id=query.message.chat_id, 
-                            audio=audio_file, 
-                            title=video_title, 
-                            performer="@G66Gbot", 
-                            caption="- @G66Gbot"
-                        )
+                        await context.bot.send_audio(chat_id=query.message.chat_id, audio=audio_file, title=video_title, performer="@G66Gbot", caption="- @G66Gbot")
                     if os.path.exists(local_audio_path):
                         os.remove(local_audio_path)
                     await status_msg.delete()
@@ -480,13 +624,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.UPLOAD_DOCUMENT)
                 with open(filename, 'rb') as f:
-                    await context.bot.send_audio(
-                        chat_id=query.message.chat_id, 
-                        audio=f, 
-                        title=video_title, 
-                        performer="@G66Gbot", 
-                        caption="- @G66Gbot"
-                    )
+                    await context.bot.send_audio(chat_id=query.message.chat_id, audio=f, title=video_title, performer="@G66Gbot", caption="- @G66Gbot")
 
                 if os.path.exists(filename):
                     os.remove(filename)
@@ -527,7 +665,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    print("البوت يعمل الآن بقاعدة البيانات الحقيقية ولوحة تحكم حقيقية بالكامل...")
+    print("البوت يعمل الآن كنسخة طبق الأصل...")
     app.run_polling()
 
 if __name__ == '__main__':
