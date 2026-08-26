@@ -52,11 +52,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     processing_msg = await update.message.reply_text("⏳ جاري جلب المحتوى...")
 
     try:
-        ydl_opts_meta = {'extract_flat': True, 'quiet': True}
+        # فحص نوع الرابط مع تمرير الكوكيز
+        ydl_opts_meta = {'extract_flat': True, 'quiet': True, 'cookiefile': 'cookies.json'}
         is_slideshow = False
         with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
             meta = ydl.extract_info(url, download=False)
-            if meta and 'entries' in meta:
+            if meta and ('entries' in meta or meta.get('_type') == 'playlist'):
                 is_slideshow = True
 
         context.user_data['current_url'] = url
@@ -72,65 +73,46 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         if is_slideshow:
-            ydl_opts_full = {'quiet': True, 'outtmpl': '%(id)s.%(ext)s'}
-            with yt_dlp.YoutubeDL(ydl_opts_full) as ydl:
-                info = ydl.extract_info(url, download=True)
-                title = info.get('title', 'منشور صور')
-                context.user_data['video_title'] = title
-
-            audio_opts = {
-                'format': 'bestaudio',
-                'outtmpl': 'audio_%(id)s.%(ext)s',
-                'quiet': True
-            }
-            with yt_dlp.YoutubeDL(audio_opts) as ydl:
-                try:
-                    audio_info = ydl.extract_info(url, download=True)
-                    audio_file = ydl.prepare_filename(audio_info)
-                    if not os.path.exists(audio_file):
-                        base, _ = os.path.splitext(audio_file)
-                        for ext in ['.m4a', '.mp3', '.aac', '.opus']:
-                            if os.path.exists(base + ext):
-                                audio_file = base + ext
-                                break
-                    
-                    if os.path.exists(audio_file):
-                        with open(audio_file, 'rb') as af:
-                            await update.message.reply_audio(
-                                audio=af,
-                                title=f"{info.get('id', 'media')}_tk.mp3",
-                                caption=f"🎵 {info.get('title', '')}\n- @G66Gbot"
-                            )
-                        os.remove(audio_file)
-                except:
-                    pass
-
             image_opts = {
                 'format': 'best',
                 'outtmpl': 'img_%(id)s_%(autonumber)s.%(ext)s',
-                'quiet': True
+                'quiet': True,
+                'cookiefile': 'cookies.json',
+                'skip_download': False,
             }
+            
+            downloaded_images = []
             with yt_dlp.YoutubeDL(image_opts) as ydl:
-                img_info = ydl.extract_info(url, download=True)
-                downloaded_files = ydl.prepare_filenames(img_info)
-                
-                for fpath in downloaded_files.get('file_downloads', []):
-                    if os.path.exists(fpath) and fpath.endswith(('.jpg', '.jpeg', '.png', '.webp')):
-                        with open(fpath, 'rb') as img_f:
-                            await update.message.reply_photo(
-                                photo=img_f,
-                                caption=f"- @G66Gbot",
-                                reply_markup=reply_markup
-                            )
-                        os.remove(fpath)
+                info = ydl.extract_info(url, download=True)
+                if 'entries' in info:
+                    for entry in info['entries']:
+                        if entry:
+                            img_url = entry.get('url') or entry.get('webpage_url')
+                            if img_url:
+                                downloaded_images.append(img_url)
+                else:
+                    filename = ydl.prepare_filename(info)
+                    if os.path.exists(filename):
+                        downloaded_images.append(filename)
 
-            await processing_msg.delete()
+            if downloaded_images:
+                for img in downloaded_images:
+                    if img.startswith("http"):
+                        await update.message.reply_photo(photo=img, caption="- @G66Gbot", reply_markup=reply_markup)
+                    elif os.path.exists(img):
+                        with open(img, 'rb') as img_f:
+                            await update.message.reply_photo(photo=img_f, caption="- @G66Gbot", reply_markup=reply_markup)
+                        os.remove(img)
+                await processing_msg.delete()
+            else:
+                raise Exception("No images found")
 
         else:
             output_template = '%(id)s.%(ext)s'
             ydl_opts = {
                 'format': 'best[ext=mp4]/best',
                 'outtmpl': output_template,
+                'cookiefile': 'cookies.json',
                 'quiet': True
             }
 
@@ -164,7 +146,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await processing_msg.delete()
 
     except Exception as e:
-        await processing_msg.edit_text("❌ عذراً، لم أتمكن من جلب هذا الرابط أو أن المحتوى خاص.")
+        try:
+            ydl_opts_fallback = {'format': 'best', 'quiet': True, 'cookiefile': 'cookies.json', 'outtmpl': 'fallback_%(id)s.%(ext)s'}
+            with yt_dlp.YoutubeDL(ydl_opts_fallback) as ydl:
+                info = ydl.extract_info(url, download=True)
+                filename = ydl.prepare_filename(info)
+                if os.path.exists(filename):
+                    if filename.endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                        with open(filename, 'rb') as f:
+                            await update.message.reply_photo(photo=f, caption="- @G66Gbot")
+                    else:
+                        with open(filename, 'rb') as f:
+                            await update.message.reply_video(video=f, caption="- @G66Gbot")
+                    os.remove(filename)
+                    await processing_msg.delete()
+                    return
+        except:
+            pass
+            
+        await processing_msg.edit_text("❌ عذراً، لم أتمكن من جلب هذا الرابط أو أن المحتوى خاص/يتطلب تسجيل دخول.")
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -182,6 +182,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ydl_opts = {
             'format': 'bestaudio[ext=m4a]/bestaudio/best',
             'outtmpl': output_template,
+            'cookiefile': 'cookies.json',
             'quiet': True
         }
 
@@ -217,6 +218,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ydl_opts = {
             'format': 'best[ext=mp4]/best',
             'outtmpl': output_template,
+            'cookiefile': 'cookies.json',
             'quiet': True
         }
 
