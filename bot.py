@@ -15,7 +15,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"‌▪️ | أهلاً بك يا {user_name} في بوت التحميل الشامل\n"
         f"G66Gbot@\n\n"
         "• أرسل أي رابط (تيك توك، يوتيوب، إنستجرام)\n"
-        "• سيتم إرسال الفيديو مباشرة بدقة SD مع خيار الصوت! 📥"
+        "• سيتم إرسال الفيديو مع خيارات التحميل بدقة عالية! 📥"
     )
     await update.message.reply_text(welcome_msg)
 
@@ -27,25 +27,23 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👑 لوحة تحكم الآدمن: البوت يعمل بكفاءة 24/7 ✅")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # تجاهل أي رسالة لا تحتوي على رابط مباشر
     url = update.message.text
     if not url or not (url.startswith("http://") or url.startswith("https://")):
         return
 
-    # منع التكرار: التحقق من معالجة نفس الرابط لنفس المستخدم خلال ثوانٍ معدودة
     user_id = update.effective_user.id
     if 'last_processed_url' in context.user_data and context.user_data.get('last_user') == user_id:
         if context.user_data['last_processed_url'] == url:
-            return  # إذا أرسل نفس الرابط مرتين وراء بعض يتم تجاهل التكرار
+            return
 
     context.user_data['last_processed_url'] = url
     context.user_data['last_user'] = user_id
 
-    processing_msg = await update.message.reply_text("⏳ جاري تحميل الفيديو (SD) وإعداده...")
+    processing_msg = await update.message.reply_text("⏳ جاري جلب الفيديو وإعداده...")
     
     output_template = '%(id)s.%(ext)s'
     ydl_opts = {
-        'format': 'best[height<=720][ext=mp4]/best[ext=mp4]/best',
+        'format': 'best[ext=mp4]/best',
         'outtmpl': output_template,
         'quiet': True
     }
@@ -60,6 +58,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not os.path.exists(filename):
                 filename = os.path.splitext(filename)[0] + ".mp4"
 
+            # حفظ الرابط والعنوان في الجلسة للاستخدام عند الضغط على الأزرار
             context.user_data['current_url'] = url
             context.user_data['video_title'] = title
 
@@ -69,9 +68,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"- @G66Gbot"
             )
 
+            # الأزرار المطابقة تماماً للصورة المطلوبة
             keyboard = [
                 [
-                    InlineKeyboardButton("🎵 تحويل وتحميل كملف صوتي (MP3)", callback_data="audio"),
+                    InlineKeyboardButton("🎵 تحميل كملف صوتي.", callback_data="audio"),
+                ],
+                [
+                    InlineKeyboardButton("📥 تحميل باعلى دقه HD.", callback_data="hd_video")
                 ]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -89,7 +92,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await processing_msg.delete()
 
     except Exception as e:
-        await processing_msg.edit_text("❌ عذراً، حدث خطأ أثناء تحميل الرابط أو أن المحتوى خاص / محمي.")
+        await processing_msg.edit_text("❌ عذراً، لم أتمكن من جلب هذا الرابط أو أن المحتوى خاص.")
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -98,39 +101,67 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = context.user_data.get('current_url')
     title = context.user_data.get('video_title', 'media')
     if not url:
-        await query.edit_message_text("❌ انتهت صلاحية الجلسة، أرسل الرابط مرة أخرى.")
+        await query.message.reply_text("❌ انتهت صلاحية الجلسة، أرسل الرابط مرة أخرى.")
         return
 
-    status_msg = await query.message.reply_text("🔄 جاري استخراج الصوت (MP3)...")
+    if query.data == "audio":
+        status_msg = await query.message.reply_text("🔄 جاري تحويل وتحميل الملف الصوتي...")
+        output_template = '%(id)s.%(ext)s'
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': output_template,
+            'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
+            'quiet': True
+        }
 
-    output_template = '%(id)s.%(ext)s'
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': output_template,
-        'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
-        'quiet': True
-    }
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                filename = ydl.prepare_filename(info)
+                filename = os.path.splitext(filename)[0] + ".mp3"
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info)
-            filename = os.path.splitext(filename)[0] + ".mp3"
+                with open(filename, 'rb') as f:
+                    await context.bot.send_audio(
+                        chat_id=query.message.chat_id, 
+                        audio=f, 
+                        title=title, 
+                        caption=f"🎵 {title}\n- @G66Gbot"
+                    )
 
-            with open(filename, 'rb') as f:
-                await context.bot.send_audio(
-                    chat_id=query.message.chat_id, 
-                    audio=f, 
-                    title=title, 
-                    caption=f"🎵 {title}\n- @G66Gbot"
-                )
+                if os.path.exists(filename):
+                    os.remove(filename)
+                await status_msg.delete()
+        except Exception:
+            await status_msg.edit_text("❌ حدث خطأ أثناء تحويل الملف الصوتي.")
 
-            if os.path.exists(filename):
-                os.remove(filename)
-            await status_msg.delete()
-            
-    except Exception as e:
-        await status_msg.edit_text("❌ حدث خطأ أثناء تحويل الملف الصوتي.")
+    elif query.data == "hd_video":
+        status_msg = await query.message.reply_text("🔄 جاري إرسال الفيديو بأعلى دقة...")
+        output_template = '%(id)s.%(ext)s'
+        ydl_opts = {
+            'format': 'best[ext=mp4]/best',
+            'outtmpl': output_template,
+            'quiet': True
+        }
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                filename = ydl.prepare_filename(info)
+                if not os.path.exists(filename):
+                    filename = os.path.splitext(filename)[0] + ".mp4"
+
+                with open(filename, 'rb') as f:
+                    await context.bot.send_video(
+                        chat_id=query.message.chat_id, 
+                        video=f, 
+                        caption=f"🎬 {title} (HD)\n- @G66Gbot"
+                    )
+
+                if os.path.exists(filename):
+                    os.remove(filename)
+                await status_msg.delete()
+        except Exception:
+            await status_msg.edit_text("❌ حدث خطأ أثناء إرسال فيديو HD.")
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
