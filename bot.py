@@ -110,14 +110,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if images:
                     if audio_url:
                         try:
-                            await update.message.reply_audio(
-                                audio=audio_url, 
-                                title=audio_title, 
-                                performer="المؤدي غير معروف",
-                                caption="- @G66Gbot"
-                            )
-                        except Exception:
-                            pass
+                            # تحميل الصوت عبر الرابط وحفظه محلياً لضمان إرساله كملف صوتي حقيقي وليس كملف/مستند
+                            r = requests.get(audio_url, timeout=15)
+                            if r.status_code == 200:
+                                local_audio_path = f"{audio_title}"
+                                with open(local_audio_path, 'wb') as f:
+                                    f.write(r.content)
+                                
+                                with open(local_audio_path, 'rb') as audio_file:
+                                    await update.message.reply_audio(
+                                        audio=audio_file, 
+                                        title=audio_title, 
+                                        performer="مستخدم تيك توك",
+                                        caption="- @G66Gbot"
+                                    )
+                                if os.path.exists(local_audio_path):
+                                    os.remove(local_audio_path)
+                        except Exception as ex:
+                            print(f"Audio send error: {ex}")
 
                     for i in range(0, len(images), 10):
                         batch = images[i:i+10]
@@ -182,15 +192,24 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             audio_link = tiktok_data.get('music') if tiktok_data else None
 
             if audio_link:
-                await context.bot.send_audio(
-                    chat_id=query.message.chat_id, 
-                    audio=audio_link, 
-                    title=saved_title, 
-                    performer="المؤدي غير معروف", 
-                    caption="- @G66Gbot"
-                )
-                await status_msg.delete()
-                return
+                r = requests.get(audio_link, timeout=15)
+                if r.status_code == 200:
+                    local_audio_path = f"{saved_title}"
+                    with open(local_audio_path, 'wb') as f:
+                        f.write(r.content)
+
+                    with open(local_audio_path, 'rb') as audio_file:
+                        await context.bot.send_audio(
+                            chat_id=query.message.chat_id, 
+                            audio=audio_file, 
+                            title=saved_title, 
+                            performer="المؤدي غير معروف", 
+                            caption="- @G66Gbot"
+                        )
+                    if os.path.exists(local_audio_path):
+                        os.remove(local_audio_path)
+                    await status_msg.delete()
+                    return
         except:
             pass
 
@@ -258,7 +277,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    print("البوت يعمل الآن بكامل طاقته...")
+    print("البوت يعمل الآن بصيغة الأغاني الحقيقية وبدون ملفات مستندات...")
     app.run_polling()
 
 if __name__ == '__main__':
