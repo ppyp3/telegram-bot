@@ -1,5 +1,7 @@
 import os
 import logging
+import re
+import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 import yt_dlp
@@ -28,6 +30,43 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text("👑 لوحة تحكم الآدمن: البوت يعمل بكفاءة 24/7 ✅")
 
+def fetch_tiktok_images(url):
+    """مكتبة/دالة خاصة لجلب صور تيك توك بدون الاعتماد على yt-dlp"""
+    try:
+        # استخراج معرف الفيديو/الصور من الرابط
+        match = re.search(r'/photo/(\d+)', url) or re.search(r'/video/(\d+)', url)
+        if not match:
+            # محاولة تتبع الرابط المختصر
+            r = requests.get(url, allow_redirects=True, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
+            match = re.search(r'/photo/(\d+)', r.url) or re.search(r'/video/(\d+)', r.url)
+            if not match:
+                return []
+        
+        item_id = match.group(1)
+        api_url = f"https://api16-normal-c-useast1a.tiktokv.com/aweme/v1/feed/?aweme_id={item_id}"
+        resp = requests.get(api_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10).json()
+        
+        aweme_list = resp.get('aweme_list', [])
+        if not aweme_list:
+            return []
+            
+        item = aweme_list[0]
+        images = []
+        
+        # التأكد إذا كان المنشور يحتوي على صور (Image Post)
+        image_post_info = item.get('image_post_info')
+        if image_post_info and 'images' in image_post_info:
+            for img in image_post_info['images']:
+                display_image = img.get('display_image', {})
+                url_list = display_image.get('url_list', [])
+                if url_list:
+                    # اختيار أعلى رابط دقة متوفر
+                    images.append(url_list[0])
+        return images
+    except Exception as e:
+        print(f"Error fetching tiktok images: {e}")
+        return []
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text
     if not url or not (url.startswith("http://") or url.startswith("https://")):
@@ -52,84 +91,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # إذا كان رابط صور تيك توك، سنتعامل معه بمعزل تام لتجنب خطأ Unsupported URL
-        if "tiktok.com" in url and "/photo/" in url:
-            image_opts = {
-                'format': 'best',
-                'outtmpl': 'img_%(id)s_%(autonumber)s.%(ext)s',
-                'quiet': True,
-                'cookiefile': 'cookies.txt',
-                'skip_download': False,
-            }
-            
-            downloaded_images = []
-            with yt_dlp.YoutubeDL(image_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                if info:
-                    if 'entries' in info:
-                        for entry in info['entries']:
-                            if entry:
-                                img_url = entry.get('url') or entry.get('webpage_url')
-                                if img_url:
-                                    downloaded_images.append(img_url)
-                    else:
-                        filename = ydl.prepare_filename(info)
-                        if os.path.exists(filename):
-                            downloaded_images.append(filename)
-
-            if downloaded_images:
-                for img in downloaded_images:
-                    if img.startswith("http"):
-                        await update.message.reply_photo(photo=img, caption="- @G66Gbot", reply_markup=reply_markup)
-                    elif os.path.exists(img):
-                        with open(img, 'rb') as img_f:
-                            await update.message.reply_photo(photo=img_f, caption="- @G66Gbot", reply_markup=reply_markup)
-                        os.remove(img)
+        # 1. فحص هل هو رابط صور تيك توك لتشغيل المكتبة الخاصة المباشرة
+        if "tiktok.com" in url and ("/photo/" in url or "slideshow" in url):
+            images = fetch_tiktok_images(url)
+            if images:
+                for img_url in images:
+                    await update.message.reply_photo(photo=img_url, caption="- @G66Gbot", reply_markup=reply_markup)
                 await processing_msg.delete()
                 return
 
-        # الفحص العادي للبقية (فيديوهات يوتيوب، انستا، تيك توك عادية، إلخ)
-        ydl_opts_meta = {'extract_flat': True, 'quiet': True, 'cookiefile': 'cookies.txt'}
-        is_slideshow = False
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
-                meta = ydl.extract_info(url, download=False)
-                if meta and ('entries' in meta or meta.get('_type') == 'playlist'):
-                    is_slideshow = True
-        except:
-            pass
-
-        if is_slideshow:
-            image_opts = {
-                'format': 'best',
-                'outtmpl': 'img_%(id)s_%(autonumber)s.%(ext)s',
-                'quiet': True,
-                'cookiefile': 'cookies.txt',
-                'skip_download': False,
-            }
-            
-            downloaded_images = []
-            with yt_dlp.YoutubeDL(image_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                if info and 'entries' in info:
-                    for entry in info['entries']:
-                        if entry:
-                            img_url = entry.get('url') or entry.get('webpage_url')
-                            if img_url:
-                                downloaded_images.append(img_url)
-
-            if downloaded_images:
-                for img in downloaded_images:
-                    if img.startswith("http"):
-                        await update.message.reply_photo(photo=img, caption="- @G66Gbot", reply_markup=reply_markup)
-                    elif os.path.exists(img):
-                        with open(img, 'rb') as img_f:
-                            await update.message.reply_photo(photo=img_f, caption="- @G66Gbot", reply_markup=reply_markup)
-                        os.remove(img)
-                await processing_msg.delete()
-                return
-
-        # تحميل الفيديو العادي
+        # 2. التحميل العادي للفيديوهات عبر yt-dlp
         output_template = '%(id)s.%(ext)s'
         ydl_opts = {
             'format': 'best[ext=mp4]/best',
@@ -168,24 +139,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await processing_msg.delete()
 
     except Exception as e:
-        try:
-            ydl_opts_fallback = {'format': 'best', 'quiet': True, 'cookiefile': 'cookies.txt', 'outtmpl': 'fallback_%(id)s.%(ext)s'}
-            with yt_dlp.YoutubeDL(ydl_opts_fallback) as ydl:
-                info = ydl.extract_info(url, download=True)
-                filename = ydl.prepare_filename(info)
-                if os.path.exists(filename):
-                    if filename.endswith(('.jpg', '.jpeg', '.png', '.webp')):
-                        with open(filename, 'rb') as f:
-                            await update.message.reply_photo(photo=f, caption="- @G66Gbot")
-                    else:
-                        with open(filename, 'rb') as f:
-                            await update.message.reply_video(video=f, caption="- @G66Gbot")
-                    os.remove(filename)
-                    await processing_msg.delete()
-                    return
-        except:
-            pass
-            
         await processing_msg.edit_text("❌ عذراً، لم أتمكن من جلب هذا الرابط أو أن المحتوى خاص/يتطلب تسجيل دخول.")
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
