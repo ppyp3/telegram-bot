@@ -102,7 +102,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 # إذا كانت صور (ألبوم صور تيك توك)
                 if images:
-                    # 1. إرسال الأغنية أولاً مع يوزر البوت فقط بدون أي حشو
+                    # 1. إرسال الأغنية أولاً مع يوزر البوت فقط
                     if audio_url:
                         try:
                             await update.message.reply_audio(
@@ -114,12 +114,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         except Exception:
                             pass
 
-                    # 2. إرسال ألبوم الصور بدون أي كتابة نهائياً (بدون caption)
-                    media_group = []
-                    for idx, img_url in enumerate(images[:10]):
-                        media_group.append(InputMediaPhoto(media=img_url))
-                    
-                    await update.message.reply_media_group(media=media_group)
+                    # 2. إرسال جميع الصور مقسمة لألبومات (كل ألبوم 10 صور كحد أقصى نظراً لقيود تيليجرام) وبدون أي كتابة
+                    for i in range(0, len(images), 10):
+                        batch = images[i:i+10]
+                        media_group = [InputMediaPhoto(media=img_url) for img_url in batch]
+                        if media_group:
+                            await update.message.reply_media_group(media=media_group)
+
                     await processing_msg.delete()
                     return
 
@@ -241,7 +242,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    print("البوت يعمل الآن بالتنسيق المطلوب تماماً...")
+    print("البوت جاهز ويعمل بكفاءة عالية...")
     app.run_polling()
 
 if __name__ == '__main__':
