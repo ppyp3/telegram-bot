@@ -31,40 +31,56 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👑 لوحة تحكم الآدمن: البوت يعمل بكفاءة 24/7 ✅")
 
 def fetch_tiktok_images(url):
-    """مكتبة/دالة خاصة لجلب صور تيك توك بدون الاعتماد على yt-dlp"""
+    """مكتبة متقدمة لجلب صور تيك توك عبر عدة نوافذ بديلة"""
     try:
-        # استخراج معرف الفيديو/الصور من الرابط
+        # فك الرابط المختصر إذا وجد
+        if "vm.tiktok.com" in url or "vt.tiktok.com" in url:
+            r = requests.get(url, allow_redirects=True, timeout=10, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+            url = r.url
+
         match = re.search(r'/photo/(\d+)', url) or re.search(r'/video/(\d+)', url)
         if not match:
-            # محاولة تتبع الرابط المختصر
-            r = requests.get(url, allow_redirects=True, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
-            match = re.search(r'/photo/(\d+)', r.url) or re.search(r'/video/(\d+)', r.url)
-            if not match:
-                return []
+            return []
         
         item_id = match.group(1)
+        
+        # الطريقة الأولى: استعلام الـ API الرسمي المباشر
         api_url = f"https://api16-normal-c-useast1a.tiktokv.com/aweme/v1/feed/?aweme_id={item_id}"
-        resp = requests.get(api_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10).json()
+        headers = {
+            'User-Agent': 'com.zhiliaoapp.musically/2022600040 (Linux; U; Android 7.1.2; en_US; A5010; Build/N2G47H; OkHttp/3.10.0)'
+        }
+        resp = requests.get(api_url, headers=headers, timeout=10).json()
         
-        aweme_list = resp.get('aweme_list', [])
-        if not aweme_list:
-            return []
-            
-        item = aweme_list[0]
         images = []
+        aweme_list = resp.get('aweme_list', [])
+        if aweme_list:
+            item = aweme_list[0]
+            image_post_info = item.get('image_post_info')
+            if image_post_info and 'images' in image_post_info:
+                for img in image_post_info['images']:
+                    display_image = img.get('display_image', {})
+                    url_list = display_image.get('url_list', [])
+                    if url_list:
+                        images.append(url_list[0])
         
-        # التأكد إذا كان المنشور يحتوي على صور (Image Post)
-        image_post_info = item.get('image_post_info')
-        if image_post_info and 'images' in image_post_info:
-            for img in image_post_info['images']:
-                display_image = img.get('display_image', {})
-                url_list = display_image.get('url_list', [])
-                if url_list:
-                    # اختيار أعلى رابط دقة متوفر
-                    images.append(url_list[0])
-        return images
+        if images:
+            return images
+
+        # الطريقة الثانية: الاعتماد على خدمة استخراج بديلة عامة لروابط صور تيك توك
+        alt_api = f"https://tikwm.com/api/?url={url}"
+        alt_resp = requests.get(alt_api, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10).json()
+        if alt_resp.get('code') == 0:
+            data = alt_resp.get('data', {})
+            # لو كانت صور متعددة
+            if 'images' in data and data['images']:
+                return data['images']
+            # لو كان فيديو يحتوي على رابط مباشر
+            elif 'play' in data:
+                return [data['play']]
+
+        return []
     except Exception as e:
-        print(f"Error fetching tiktok images: {e}")
+        print(f"Error in fetch_tiktok_images: {e}")
         return []
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -80,7 +96,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['last_processed_url'] = url
     context.user_data['last_user'] = user_id
 
-    processing_msg = await update.message.reply_text("⏳ جاري جلب المحتوى...")
+    processing_msg = await update.message.reply_text("⏳ جاري جلب المحتوى بدقة عالية...")
 
     try:
         context.user_data['current_url'] = url
@@ -91,16 +107,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # 1. فحص هل هو رابط صور تيك توك لتشغيل المكتبة الخاصة المباشرة
-        if "tiktok.com" in url and ("/photo/" in url or "slideshow" in url):
-            images = fetch_tiktok_images(url)
-            if images:
-                for img_url in images:
-                    await update.message.reply_photo(photo=img_url, caption="- @G66Gbot", reply_markup=reply_markup)
-                await processing_msg.delete()
-                return
+        # فحص ما إذا كان الرابط يخص تيك توك (صور أو فيديو)
+        if "tiktok.com" in url:
+            if "/photo/" in url or "slideshow" in url or "vm.tiktok.com" in url or "vt.tiktok.com" in url:
+                images = fetch_tiktok_images(url)
+                if images:
+                    for img_url in images:
+                        if img_url.endswith(('.mp4', '.mov')):
+                            await update.message.reply_video(video=img_url, caption="- @G66Gbot", reply_markup=reply_markup)
+                        else:
+                            await update.message.reply_photo(photo=img_url, caption="- @G66Gbot", reply_markup=reply_markup)
+                    await processing_msg.delete()
+                    return
 
-        # 2. التحميل العادي للفيديوهات عبر yt-dlp
+        # التحميل العادي عبر yt-dlp لباقي الفيديوهات
         output_template = '%(id)s.%(ext)s'
         ydl_opts = {
             'format': 'best[ext=mp4]/best',
@@ -110,10 +130,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            title = info.get('title', 'فيديو بدون عنوان')
-            uploader = info.get('uploader', 'مؤلف غير معروف')
-            filename = ydl.prepare_filename(info)
+            info = yt_dlp.YoutubeDL({'quiet': True, 'cookiefile': 'cookies.txt'}).extract_info(url, download=False)
+            
+            # إذا تبين أن رابط تيك توك العادي عبارة عن صور بالداخل
+            if info.get('_type') == 'playlist' or 'entries' in info:
+                images = fetch_tiktok_images(url)
+                if images:
+                    for img_url in images:
+                        await update.message.reply_photo(photo=img_url, caption="- @G66Gbot", reply_markup=reply_markup)
+                    await processing_msg.delete()
+                    return
+
+            info_dl = ydl.extract_info(url, download=True)
+            title = info_dl.get('title', 'فيديو بدون عنوان')
+            uploader = info_dl.get('uploader', 'مؤلف غير معروف')
+            filename = ydl.prepare_filename(info_dl)
             
             if not os.path.exists(filename):
                 filename = os.path.splitext(filename)[0] + ".mp4"
@@ -139,6 +170,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await processing_msg.delete()
 
     except Exception as e:
+        # محاولة أخيرة عبر الـ API البديل لو فشل yt-dlp تماماً
+        try:
+            if "tiktok.com" in url:
+                images = fetch_tiktok_images(url)
+                if images:
+                    for img_url in images:
+                        await update.message.reply_photo(photo=img_url, caption="- @G66Gbot")
+                    await processing_msg.delete()
+                    return
+        except:
+            pass
+
         await processing_msg.edit_text("❌ عذراً، لم أتمكن من جلب هذا الرابط أو أن المحتوى خاص/يتطلب تسجيل دخول.")
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
