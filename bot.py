@@ -54,7 +54,6 @@ def fetch_tiktok_data(url):
             music_url = data.get('music', None)
             title = data.get('title', 'محتوى تيك توك')
             
-            # تنظيف العنوان ليكون صالحاً كاسم ملف إذا لزم الأمر
             clean_title = "".join(c for c in title if c.isalnum() or c in (' ', '_', '-', '🔥')).strip()
             if not clean_title:
                 clean_title = "tiktok_audio"
@@ -125,8 +124,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     await update.message.reply_audio(
                                         audio=audio_file, 
                                         title=title, 
-                                        performer=author,
-                                        caption=f"🎵 {title}\n- @G66Gbot"
+                                        performer="@G66Gbot",  # تم استبدالها بيوزر البوت
+                                        caption="- @G66Gbot"      # يوزر البوت فقط بدون تكرار العنوان
                                     )
                                 if os.path.exists(local_audio_path):
                                     os.remove(local_audio_path)
@@ -186,7 +185,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     url = context.user_data.get('current_url')
     video_title = context.user_data.get('video_title', 'محتوى صوتي')
-    saved_audio_title = context.user_data.get('audio_title', 'audio.mp3')
     
     if not url:
         await query.message.reply_text("❌ انتهت صلاحية الجلسة، أرسل الرابط مرة أخرى.")
@@ -210,8 +208,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             chat_id=query.message.chat_id, 
                             audio=audio_file, 
                             title=video_title, 
-                            performer="مستخدم تيك توك", 
-                            caption=f"🎵 {video_title}\n- @G66Gbot"
+                            performer="@G66Gbot",  # يوزر البوت كاسم مؤدي
+                            caption="- @G66Gbot"      # يوزر البوت فقط في الوصف
                         )
                     if os.path.exists(local_audio_path):
                         os.remove(local_audio_path)
@@ -242,8 +240,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         chat_id=query.message.chat_id, 
                         audio=f, 
                         title=video_title, 
-                        performer="مؤلف غير معروف", 
-                        caption=f"🎵 {video_title}\n- @G66Gbot"
+                        performer="@G66Gbot",  # يوزر البوت كاسم مؤدي
+                        caption="- @G66Gbot"      # يوزر البوت فقط في الوصف
                     )
 
                 if os.path.exists(filename):
@@ -284,7 +282,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    print("البوت يعمل الآن بصيغة أسماء الصوتيات المستخرجة من العنوان تماماً...")
+    print("البوت يعمل الآن بالتعديلات المطلوبة بدقة...")
     app.run_polling()
 
 if __name__ == '__main__':
