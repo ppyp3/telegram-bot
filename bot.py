@@ -22,15 +22,10 @@ USER_AGENTS = [
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
     welcome_msg = (
-        f"✨ **أهلاً بك يا {user_name} في أقوى بوت لتحميل محتوى التيك توك!** 🎵\n\n"
-        f"🚀 **ما يمكنني تقديمه لك:**\n"
-        f"▪️ 📥 **تحميل الفيديوهات:** بدقة عالية HD وبدون حقوق (بدون علامة مائية).\n"
-        f"▪️ 🖼️ **تحميل الصور:** جلب صور البوستات بكامل دقتها مع العداد التلقائي.\n"
-        f"▪️ 🎵 **تحميل الصوتيات:** استخراج ملفات الصوت (MP3) بضغطة زر واحدة.\n\n"
-        f"⚡ **طريقة الاستخدام أبسط مما تتخيل:**\n"
-        f"فقط قم بإرسال رابط أي فيديو أو صور من التيك توك وسأقوم بتحميله لك فوراً وبشكل مرتب! 🤍\n\n"
-        f"----\n"
-        f"💡 *قم بإرسال الرابط الآن لنبدأ العمل 👇*"
+        f"✦ أهلاً بك ⦗ {user_name} ⦘ 🖤\n\n"
+        f"▫︎ بوت تحميل التيك توك السريع 📥\n"
+        f"▫︎ فيديوهات بدون حقوق • صور • صوتيات\n\n"
+        f"⚡ أرسل الرابط الآن للبدء 🔻"
     )
     await update.message.reply_text(welcome_msg, parse_mode="Markdown")
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
