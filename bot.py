@@ -1,9 +1,8 @@
 import os
 import logging
-import re
 import random
 import requests
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 import yt_dlp
 
@@ -12,13 +11,11 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 TOKEN = os.environ.get("TOKEN")
 ADMIN_IDS = [123456789]
 
-# قائمة منسقة ومتجددة لبصمات متصفحات حقيقية (User-Agents) لتغييرها مع كل طلب لمنع الحظر
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2.1 Safari/605.1.15',
     'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
     'Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0'
 ]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -38,65 +35,35 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in ADMIN_IDS:
         await update.message.reply_text("❌ عذراً، هذا الأمر مخصص للمشرفين فقط.")
         return
-    await update.message.reply_text("👑 لوحة تحكم الآدمن: نظام تدوير الجلسات والبوت يعمل بكفاءة 24/7 ✅")
+    await update.message.reply_text("👑 لوحة تحكم الآدمن: البوت يعمل بكفاءة عالية ✅")
 
-def fetch_tiktok_images(url):
-    """دالة متقدمة مع تدوير الـ Headers تلقائياً لتجنب الحظر نهائياً"""
+def fetch_tiktok_data(url):
+    """دالة متقدمة لجلب تفاصيل صور أو فيديو تيك توك بدقة"""
     try:
         current_ua = random.choice(USER_AGENTS)
-        headers = {
-            'User-Agent': current_ua,
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept': 'application/json, text/plain, */*'
-        }
+        headers = {'User-Agent': current_ua, 'Accept-Language': 'en-US,en;q=0.9'}
 
-        # فك الرابط المختصر إن وجد باستخدام البصمة المتجددة
         if "vm.tiktok.com" in url or "vt.tiktok.com" in url:
             r = requests.get(url, allow_redirects=True, timeout=10, headers=headers)
             url = r.url
 
-        match = re.search(r'/photo/(\d+)', url) or re.search(r'/video/(\d+)', url)
-        item_id = match.group(1) if match else None
-
-        if item_id:
-            api_url = f"https://api16-normal-c-useast1a.tiktokv.com/aweme/v1/feed/?aweme_id={item_id}"
-            try:
-                resp = requests.get(api_url, headers=headers, timeout=8).json()
-                aweme_list = resp.get('aweme_list', [])
-                if aweme_list:
-                    item = aweme_list[0]
-                    images = []
-                    image_post_info = item.get('image_post_info')
-                    if image_post_info and 'images' in image_post_info:
-                        for img in image_post_info['images']:
-                            display_image = img.get('display_image', {})
-                            url_list = display_image.get('url_list', [])
-                            if url_list:
-                                images.append(url_list[0])
-                        if images:
-                            return images
-                    
-                    video_info = item.get('video', {})
-                    play_addr = video_info.get('play_addr', {}).get('url_list', [])
-                    if play_addr:
-                        return [play_addr[0]]
-            except Exception:
-                pass
-
-        # الاعتماد على واجهة بديلة قوية مع تغيير الـ UA
-        alt_api = f"https://tikwm.com/api/?url={url}"
+        alt_api = f"https://tikwm.com/api/?url={url}&music=1"
         alt_resp = requests.get(alt_api, headers=headers, timeout=10).json()
+        
         if alt_resp.get('code') == 0:
             data = alt_resp.get('data', {})
-            if 'images' in data and data['images']:
-                return data['images']
-            elif 'play' in data:
-                return [data['play']]
-
-        return []
+            result = {
+                'title': data.get('title', 'محتوى تيك توك'),
+                'author': data.get('author', {}).get('nickname', 'مستخدم تيك توك'),
+                'music': data.get('music', None),
+                'images': data.get('images', []),
+                'play': data.get('play', None)
+            }
+            return result
+        return None
     except Exception as e:
-        print(f"Error in rotated fetch: {e}")
-        return []
+        print(f"Error fetching tiktok data: {e}")
+        return None
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text
@@ -111,7 +78,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['last_processed_url'] = url
     context.user_data['last_user'] = user_id
 
-    processing_msg = await update.message.reply_text("⏳ جاري معالجة الطلب بأمان...")
+    processing_msg = await update.message.reply_text("⏳ جاري جلب المحتوى وترتيبه...")
 
     try:
         context.user_data['current_url'] = url
@@ -122,19 +89,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # إذا كان تيك توك، نستخدم نظام الجلسات المتجددة
         if "tiktok.com" in url:
-            media_links = fetch_tiktok_images(url)
-            if media_links:
-                for link in media_links:
-                    if link.endswith(('.mp4', '.mov')) or 'video' in link:
-                        await update.message.reply_video(video=link, caption="- @G66Gbot", reply_markup=reply_markup)
-                    else:
-                        await update.message.reply_photo(photo=link, caption="- @G66Gbot", reply_markup=reply_markup)
-                await processing_msg.delete()
-                return
+            tiktok_data = fetch_tiktok_data(url)
+            if tiktok_data:
+                title = tiktok_data['title']
+                author = tiktok_data['author']
+                images = tiktok_data['images']
+                video_url = tiktok_data['play']
+                
+                context.user_data['video_title'] = title
 
-        # إعدادات yt-dlp مع اختيار عشوائي لمتصفح وهمي لمنع الحظر
+                caption_text = f"🎬 {title}\n\n👤 الحساب: {author}\n\n- @G66Gbot"
+
+                if images:
+                    media_group = []
+                    for idx, img_url in enumerate(images[:10]):
+                        if idx == 0:
+                            media_group.append(InputMediaPhoto(media=img_url, caption=caption_text))
+                        else:
+                            media_group.append(InputMediaPhoto(media=img_url))
+                    
+                    await update.message.reply_media_group(media=media_group)
+                    await update.message.reply_text("اختر طريقة التحميل الإضافية:", reply_markup=reply_markup)
+                    await processing_msg.delete()
+                    return
+
+                elif video_url:
+                    await update.message.reply_video(video=video_url, caption=caption_text, reply_markup=reply_markup)
+                    await processing_msg.delete()
+                    return
+
         ydl_opts = {
             'format': 'best[ext=mp4]/best',
             'outtmpl': '%(id)s.%(ext)s',
@@ -153,18 +137,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             context.user_data['video_title'] = title
 
-            caption = (
-                f"🎬 {title}\n\n"
-                f"👤 الحساب: {uploader}\n\n"
-                f"- @G66Gbot"
-            )
+            caption = f"🎬 {title}\n\n👤 الحساب: {uploader}\n\n- @G66Gbot"
 
             with open(filename, 'rb') as f:
-                await update.message.reply_video(
-                    video=f, 
-                    caption=caption, 
-                    reply_markup=reply_markup
-                )
+                await update.message.reply_video(video=f, caption=caption, reply_markup=reply_markup)
 
             if os.path.exists(filename):
                 os.remove(filename)
@@ -172,17 +148,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await processing_msg.delete()
 
     except Exception as e:
-        try:
-            if "tiktok.com" in url:
-                media_links = fetch_tiktok_images(url)
-                if media_links:
-                    for link in media_links:
-                        await update.message.reply_photo(photo=link, caption="- @G66Gbot")
-                    await processing_msg.delete()
-                    return
-        except:
-            pass
-
         await processing_msg.edit_text("❌ عذراً، لم أتمكن من جلب هذا الرابط أو أن المحتوى خاص/يتطلب تسجيل دخول.")
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -197,18 +162,27 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == "audio":
         status_msg = await query.message.reply_text("🔄 جاري تحميل الملف الصوتي...")
+        try:
+            tiktok_data = fetch_tiktok_data(url) if "tiktok.com" in url else None
+            audio_link = tiktok_data.get('music') if tiktok_data else None
+
+            if audio_link:
+                await context.bot.send_audio(chat_id=query.message.chat_id, audio=audio_link, title=title, caption=f"🎵 {title}\n- @G66Gbot")
+                await status_msg.delete()
+                return
+        except:
+            pass
+
         ydl_opts = {
             'format': 'bestaudio[ext=m4a]/bestaudio/best',
             'outtmpl': '%(id)s.%(ext)s',
             'quiet': True,
             'http_headers': {'User-Agent': random.choice(USER_AGENTS)}
         }
-
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 filename = ydl.prepare_filename(info)
-                
                 if not os.path.exists(filename):
                     base, _ = os.path.splitext(filename)
                     for ext in ['.m4a', '.mp3', '.aac', '.opus', '.webm']:
@@ -217,12 +191,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             break
 
                 with open(filename, 'rb') as f:
-                    await context.bot.send_audio(
-                        chat_id=query.message.chat_id, 
-                        audio=f, 
-                        title=title, 
-                        caption=f"🎵 {title}\n- @G66Gbot"
-                    )
+                    await context.bot.send_audio(chat_id=query.message.chat_id, audio=f, title=title, caption=f"🎵 {title}\n- @G66Gbot")
 
                 if os.path.exists(filename):
                     os.remove(filename)
@@ -248,11 +217,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if os.path.exists(filename):
                     with open(filename, 'rb') as f:
-                        await context.bot.send_video(
-                            chat_id=query.message.chat_id, 
-                            video=f, 
-                            caption=f"🎬 {title} (HD)\n- @G66Gbot"
-                        )
+                        await context.bot.send_video(chat_id=query.message.chat_id, video=f, caption=f"🎬 {title} (HD)\n- @G66Gbot")
                     os.remove(filename)
                 await status_msg.delete()
         except Exception:
@@ -265,7 +230,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    print("البوت يعمل الآن بنظام تدوير الجلسات...")
+    print("البوت يعمل الآن...")
     app.run_polling()
 
 if __name__ == '__main__':
