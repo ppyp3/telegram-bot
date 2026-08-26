@@ -12,10 +12,20 @@ ADMIN_IDS = [123456789] # استبدل الأيدي بأيديك إذا أردت
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
     welcome_msg = (
-        f"‌▪️ | أهلاً بك يا {user_name} في بوت التحميل الشامل\n"
-        f"G66Gbot@\n\n"
-        "• أرسل أي رابط (تيك توك، يوتيوب، إنستجرام)\n"
-        "• سيتم إرسال الفيديو مع خيارات التحميل بدقة عالية! 📥"
+        f"◀️ | أهلاً بك يا {user_name} في بوت التحميل الشامل\n\n"
+        f"مع هذا البوت يمكنك التحميل من عدة مواقع بصيغ متعددة،\n\n"
+        f"✅ | المواقع المدعومة :\n\n"
+        f"1️⃣- التحميل من اليوتيوب،\n"
+        f"2️⃣- التحميل من انستا مع كشف التاكات،\n"
+        f"3️⃣- التحميل من تيك توك،\n"
+        f"4️⃣- التحميل من تويتر،\n"
+        f"5️⃣- التحميل من سناب شات،\n"
+        f"6️⃣- التحميل من لايكي،\n"
+        f"7️⃣- التحميل من كواي،\n"
+        f"8️⃣- التحميل من ساوند كلاود،\n"
+        f"9️⃣- التحميل من بينترست،\n"
+        f"🔟 - التحميل من ثريدز،\n\n"
+        f"🔄 | قم بإرسال الرابط للبدء بالتحميل •"
     )
     await update.message.reply_text(welcome_msg)
 
@@ -39,57 +49,119 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['last_processed_url'] = url
     context.user_data['last_user'] = user_id
 
-    processing_msg = await update.message.reply_text("⏳ جاري جلب الفيديو وإعداده...")
-    
-    output_template = '%(id)s.%(ext)s'
-    ydl_opts = {
-        'format': 'best[ext=mp4]/best',
-        'outtmpl': output_template,
-        'quiet': True
-    }
+    processing_msg = await update.message.reply_text("⏳ جاري جلب المحتوى...")
 
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            title = info.get('title', 'فيديو بدون عنوان')
-            uploader = info.get('uploader', 'مؤلف غير معروف')
-            filename = ydl.prepare_filename(info)
-            
-            if not os.path.exists(filename):
-                filename = os.path.splitext(filename)[0] + ".mp4"
+        ydl_opts_meta = {'extract_flat': True, 'quiet': True}
+        is_slideshow = False
+        with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
+            meta = ydl.extract_info(url, download=False)
+            if meta and 'entries' in meta:
+                is_slideshow = True
 
-            # حفظ الرابط والعنوان في الجلسة للاستخدام عند الضغط على الأزرار
-            context.user_data['current_url'] = url
-            context.user_data['video_title'] = title
-
-            caption = (
-                f"🎬 {title}\n\n"
-                f"👤 الحساب: {uploader}\n\n"
-                f"- @G66Gbot"
-            )
-
-            # الأزرار المطابقة تماماً للشكل المطلوب
-            keyboard = [
-                [
-                    InlineKeyboardButton("🎵 تحميل كملف صوتي.", callback_data="audio"),
-                ],
-                [
-                    InlineKeyboardButton("📥 تحميل باعلى دقه HD.", callback_data="hd_video")
-                ]
+        context.user_data['current_url'] = url
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("🎵 تحميل كملف صوتي.", callback_data="audio"),
+            ],
+            [
+                InlineKeyboardButton("📥 تحميل باعلى دقه HD.", callback_data="hd_video")
             ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
-            with open(filename, 'rb') as f:
-                await update.message.reply_video(
-                    video=f, 
-                    caption=caption, 
-                    reply_markup=reply_markup
+        if is_slideshow:
+            ydl_opts_full = {'quiet': True, 'outtmpl': '%(id)s.%(ext)s'}
+            with yt_dlp.YoutubeDL(ydl_opts_full) as ydl:
+                info = ydl.extract_info(url, download=True)
+                title = info.get('title', 'منشور صور')
+                context.user_data['video_title'] = title
+
+            audio_opts = {
+                'format': 'bestaudio',
+                'outtmpl': 'audio_%(id)s.%(ext)s',
+                'quiet': True
+            }
+            with yt_dlp.YoutubeDL(audio_opts) as ydl:
+                try:
+                    audio_info = ydl.extract_info(url, download=True)
+                    audio_file = ydl.prepare_filename(audio_info)
+                    if not os.path.exists(audio_file):
+                        base, _ = os.path.splitext(audio_file)
+                        for ext in ['.m4a', '.mp3', '.aac', '.opus']:
+                            if os.path.exists(base + ext):
+                                audio_file = base + ext
+                                break
+                    
+                    if os.path.exists(audio_file):
+                        with open(audio_file, 'rb') as af:
+                            await update.message.reply_audio(
+                                audio=af,
+                                title=f"{info.get('id', 'media')}_tk.mp3",
+                                caption=f"🎵 {info.get('title', '')}\n- @G66Gbot"
+                            )
+                        os.remove(audio_file)
+                except:
+                    pass
+
+            image_opts = {
+                'format': 'best',
+                'outtmpl': 'img_%(id)s_%(autonumber)s.%(ext)s',
+                'quiet': True
+            }
+            with yt_dlp.YoutubeDL(image_opts) as ydl:
+                img_info = ydl.extract_info(url, download=True)
+                downloaded_files = ydl.prepare_filenames(img_info)
+                
+                for fpath in downloaded_files.get('file_downloads', []):
+                    if os.path.exists(fpath) and fpath.endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                        with open(fpath, 'rb') as img_f:
+                            await update.message.reply_photo(
+                                photo=img_f,
+                                caption=f"- @G66Gbot",
+                                reply_markup=reply_markup
+                            )
+                        os.remove(fpath)
+
+            await processing_msg.delete()
+
+        else:
+            output_template = '%(id)s.%(ext)s'
+            ydl_opts = {
+                'format': 'best[ext=mp4]/best',
+                'outtmpl': output_template,
+                'quiet': True
+            }
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                title = info.get('title', 'فيديو بدون عنوان')
+                uploader = info.get('uploader', 'مؤلف غير معروف')
+                filename = ydl.prepare_filename(info)
+                
+                if not os.path.exists(filename):
+                    filename = os.path.splitext(filename)[0] + ".mp4"
+
+                context.user_data['video_title'] = title
+
+                caption = (
+                    f"🎬 {title}\n\n"
+                    f"👤 الحساب: {uploader}\n\n"
+                    f"- @G66Gbot"
                 )
 
-            if os.path.exists(filename):
-                os.remove(filename)
-            
-            await processing_msg.delete()
+                with open(filename, 'rb') as f:
+                    await update.message.reply_video(
+                        video=f, 
+                        caption=caption, 
+                        reply_markup=reply_markup
+                    )
+
+                if os.path.exists(filename):
+                    os.remove(filename)
+                
+                await processing_msg.delete()
 
     except Exception as e:
         await processing_msg.edit_text("❌ عذراً، لم أتمكن من جلب هذا الرابط أو أن المحتوى خاص.")
@@ -106,7 +178,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == "audio":
         status_msg = await query.message.reply_text("🔄 جاري تحميل الملف الصوتي...")
-        
         output_template = '%(id)s.%(ext)s'
         ydl_opts = {
             'format': 'bestaudio[ext=m4a]/bestaudio/best',
@@ -137,11 +208,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if os.path.exists(filename):
                     os.remove(filename)
                 await status_msg.delete()
-        except Exception as e:
+        except Exception:
             await status_msg.edit_text("❌ حدث خطأ أثناء تحميل الملف الصوتي.")
 
     elif query.data == "hd_video":
-        status_msg = await query.message.reply_text("🔄 جاري إرسال الفيديو بأعلى دقة...")
+        status_msg = await query.message.reply_text("🔄 جاري إرسال المحتوى بأعلى دقة...")
         output_template = '%(id)s.%(ext)s'
         ydl_opts = {
             'format': 'best[ext=mp4]/best',
@@ -156,18 +227,17 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not os.path.exists(filename):
                     filename = os.path.splitext(filename)[0] + ".mp4"
 
-                with open(filename, 'rb') as f:
-                    await context.bot.send_video(
-                        chat_id=query.message.chat_id, 
-                        video=f, 
-                        caption=f"🎬 {title} (HD)\n- @G66Gbot"
-                    )
-
                 if os.path.exists(filename):
+                    with open(filename, 'rb') as f:
+                        await context.bot.send_video(
+                            chat_id=query.message.chat_id, 
+                            video=f, 
+                            caption=f"🎬 {title} (HD)\n- @G66Gbot"
+                        )
                     os.remove(filename)
                 await status_msg.delete()
-        except Exception as e:
-            await status_msg.edit_text("❌ حدث خطأ أثناء إرسال فيديو HD.")
+        except Exception:
+            await status_msg.edit_text("❌ عذراً، لا يمكن جلب هذا المحتوى كفيديو.")
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
