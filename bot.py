@@ -2,7 +2,8 @@ import os
 import logging
 import random
 import requests
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, ChatAction
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram.constants import ChatAction
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 import yt_dlp
 
@@ -287,7 +288,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    print("البوت يعمل الآن بكامل الميزات وبدون أي نقص...")
+    print("البوت يعمل الآن بدون أخطاء الاستيراد...")
     app.run_polling()
 
 if __name__ == '__main__':
