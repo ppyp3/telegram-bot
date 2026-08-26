@@ -15,7 +15,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"◀️ | أهلاً بك يا {user_name} في بوت التحميل الشامل\n\n"
         f"مع هذا البوت يمكنك التحميل من عدة مواقع بصيغة متعددة،\n\n"
         f"✅ | المواقع المدعومة :\n"
-        f"1️⃣ اليوتيوب | 2️⃣ الانستغرام | 3️⃣ التيك توك\n"
+        f"1️⃣ اليوتيوب | 2️⃣ الانستغرام | 3️⃣ التيك توك (فيديوهات وصور)\n"
         f"4️⃣ التويتر | 5️⃣ السناب شات | 6️⃣ البينترست\n\n"
         f"🔄 | قم بإرسال الرابط للبدء بالتحميل •"
     )
@@ -52,22 +52,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # فحص شامل لتحديد إذا كان الرابط يحتوي على صور أو منشور متعدد
-        is_slideshow = False
-        if "tiktok.com" in url and ("/photo/" in url or "slideshow" in url):
-            is_slideshow = True
-
-        if not is_slideshow:
-            try:
-                ydl_opts_meta = {'extract_flat': True, 'quiet': True, 'cookiefile': 'cookies.txt'}
-                with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
-                    meta = ydl.extract_info(url, download=False)
-                    if meta and ('entries' in meta or meta.get('_type') == 'playlist'):
-                        is_slideshow = True
-            except:
-                pass
-
-        if is_slideshow:
+        # إذا كان رابط صور تيك توك، سنتعامل معه بمعزل تام لتجنب خطأ Unsupported URL
+        if "tiktok.com" in url and "/photo/" in url:
             image_opts = {
                 'format': 'best',
                 'outtmpl': 'img_%(id)s_%(autonumber)s.%(ext)s',
@@ -102,7 +88,48 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await processing_msg.delete()
                 return
 
-        # محاولة تحميل الفيديو العادي أو كـ Fallback
+        # الفحص العادي للبقية (فيديوهات يوتيوب، انستا، تيك توك عادية، إلخ)
+        ydl_opts_meta = {'extract_flat': True, 'quiet': True, 'cookiefile': 'cookies.txt'}
+        is_slideshow = False
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
+                meta = ydl.extract_info(url, download=False)
+                if meta and ('entries' in meta or meta.get('_type') == 'playlist'):
+                    is_slideshow = True
+        except:
+            pass
+
+        if is_slideshow:
+            image_opts = {
+                'format': 'best',
+                'outtmpl': 'img_%(id)s_%(autonumber)s.%(ext)s',
+                'quiet': True,
+                'cookiefile': 'cookies.txt',
+                'skip_download': False,
+            }
+            
+            downloaded_images = []
+            with yt_dlp.YoutubeDL(image_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                if info and 'entries' in info:
+                    for entry in info['entries']:
+                        if entry:
+                            img_url = entry.get('url') or entry.get('webpage_url')
+                            if img_url:
+                                downloaded_images.append(img_url)
+
+            if downloaded_images:
+                for img in downloaded_images:
+                    if img.startswith("http"):
+                        await update.message.reply_photo(photo=img, caption="- @G66Gbot", reply_markup=reply_markup)
+                    elif os.path.exists(img):
+                        with open(img, 'rb') as img_f:
+                            await update.message.reply_photo(photo=img_f, caption="- @G66Gbot", reply_markup=reply_markup)
+                        os.remove(img)
+                await processing_msg.delete()
+                return
+
+        # تحميل الفيديو العادي
         output_template = '%(id)s.%(ext)s'
         ydl_opts = {
             'format': 'best[ext=mp4]/best',
@@ -141,7 +168,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await processing_msg.delete()
 
     except Exception as e:
-        # محاولة أخيرة مرنة في حال فشل الاستخراج المباشر
         try:
             ydl_opts_fallback = {'format': 'best', 'quiet': True, 'cookiefile': 'cookies.txt', 'outtmpl': 'fallback_%(id)s.%(ext)s'}
             with yt_dlp.YoutubeDL(ydl_opts_fallback) as ydl:
