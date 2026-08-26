@@ -13,7 +13,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
     welcome_msg = (
         f"◀️ | أهلاً بك يا {user_name} في بوت التحميل الشامل\n\n"
-        f"مع هذا البوت يمكنك التحميل من عدة مواقع بصيغ متعددة،\n\n"
+        f"مع هذا البوت يمكنك التحميل من عدة مواقع بصيغة متعددة،\n\n"
         f"✅ | المواقع المدعومة :\n\n"
         f"1️⃣- التحميل من اليوتيوب،\n"
         f"2️⃣- التحميل من انستا مع كشف التاكات،\n"
@@ -52,8 +52,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     processing_msg = await update.message.reply_text("⏳ جاري جلب المحتوى...")
 
     try:
-        # فحص نوع الرابط مع تمرير الكوكيز
-        ydl_opts_meta = {'extract_flat': True, 'quiet': True, 'cookiefile': 'cookies.json'}
+        # فحص نوع الرابط مع تمرير ملف cookies.txt
+        ydl_opts_meta = {'extract_flat': True, 'quiet': True, 'cookiefile': 'cookies.txt'}
         is_slideshow = False
         with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
             meta = ydl.extract_info(url, download=False)
@@ -77,7 +77,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'format': 'best',
                 'outtmpl': 'img_%(id)s_%(autonumber)s.%(ext)s',
                 'quiet': True,
-                'cookiefile': 'cookies.json',
+                'cookiefile': 'cookies.txt',
                 'skip_download': False,
             }
             
@@ -112,7 +112,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ydl_opts = {
                 'format': 'best[ext=mp4]/best',
                 'outtmpl': output_template,
-                'cookiefile': 'cookies.json',
+                'cookiefile': 'cookies.txt',
                 'quiet': True
             }
 
@@ -147,7 +147,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         try:
-            ydl_opts_fallback = {'format': 'best', 'quiet': True, 'cookiefile': 'cookies.json', 'outtmpl': 'fallback_%(id)s.%(ext)s'}
+            ydl_opts_fallback = {'format': 'best', 'quiet': True, 'cookiefile': 'cookies.txt', 'outtmpl': 'fallback_%(id)s.%(ext)s'}
             with yt_dlp.YoutubeDL(ydl_opts_fallback) as ydl:
                 info = ydl.extract_info(url, download=True)
                 filename = ydl.prepare_filename(info)
@@ -182,7 +182,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ydl_opts = {
             'format': 'bestaudio[ext=m4a]/bestaudio/best',
             'outtmpl': output_template,
-            'cookiefile': 'cookies.json',
+            'cookiefile': 'cookies.txt',
             'quiet': True
         }
 
@@ -218,7 +218,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ydl_opts = {
             'format': 'best[ext=mp4]/best',
             'outtmpl': output_template,
-            'cookiefile': 'cookies.json',
+            'cookiefile': 'cookies.txt',
             'quiet': True
         }
 
