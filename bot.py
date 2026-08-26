@@ -125,6 +125,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         context.user_data['current_url'] = url
         
+        # الأزرار الأولية (تحميل صوت + تحميل دقة عالية)
         keyboard = [
             [InlineKeyboardButton("🎵 تحميل كملف صوتي.", callback_data="audio")],
             [InlineKeyboardButton("📥 تحميل باعلى دقه HD.", callback_data="hd_video")]
@@ -143,7 +144,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data['video_title'] = title
                 context.user_data['audio_title'] = audio_title
                 
-                # هنا تم جعل الوصف يظهر معرف البوت فقط بدون نص الفيديو أو اسم الحساب
                 caption_text = "- @G66Gbot"
 
                 if images:
@@ -161,7 +161,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                         audio=audio_file, 
                                         title=title, 
                                         performer="@G66Gbot",
-                                        caption="- @G66Gbot"
+                                        caption="- @G66Gbot - 1/1"
                                     )
                                 if os.path.exists(local_audio_path):
                                     os.remove(local_audio_path)
@@ -169,9 +169,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             print(f"Audio send error: {ex}")
 
                     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
-                    for i in range(0, len(images), 10):
+                    
+                    total_images = len(images)
+                    for i in range(0, total_images, 10):
                         batch = images[i:i+10]
-                        media_group = [InputMediaPhoto(media=img_url) for img_url in batch]
+                        media_group = []
+                        
+                        for idx, img_url in enumerate(batch):
+                            absolute_index = i + idx + 1
+                            if absolute_index == total_images:
+                                media_group.append(InputMediaPhoto(media=img_url, caption=f"- @G66Gbot - {absolute_index}/{total_images}"))
+                            else:
+                                media_group.append(InputMediaPhoto(media=img_url))
+
                         if media_group:
                             await update.message.reply_media_group(media=media_group)
 
@@ -203,7 +213,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             clean_title = "".join(c for c in title if c.isalnum() or c in (' ', '_', '-', '🔥')).strip()
             context.user_data['audio_title'] = f"{clean_title}.mp3" if clean_title else "audio.mp3"
 
-            # هنا أيضاً لليوتيوب يظهر معرف البوت فقط
             caption = "- @G66Gbot"
 
             await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VIDEO)
@@ -222,6 +231,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    chat_id = query.message.chat_id
     
     url = context.user_data.get('current_url')
     video_title = context.user_data.get('video_title', 'محتوى صوتي')
@@ -230,12 +240,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("❌ انتهت صلاحية الجلسة، أرسل الرابط مرة أخرى.")
         return
 
-    try:
-        await query.edit_message_reply_markup(reply_markup=None)
-    except Exception:
-        pass
-
     if query.data == "audio":
+        # عند الضغط على تحميل صوت، نحذف الأزرار نهائياً من الرسالة الحالية
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+
         status_msg = await query.message.reply_text("🔄 جاري تحميل الملف الصوتي...")
         try:
             tiktok_data = fetch_tiktok_data(url) if "tiktok.com" in url else None
@@ -248,10 +259,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     with open(local_audio_path, 'wb') as f:
                         f.write(r.content)
 
-                    await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.UPLOAD_VOICE)
+                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
                     with open(local_audio_path, 'rb') as audio_file:
                         await context.bot.send_audio(
-                            chat_id=query.message.chat_id, 
+                            chat_id=chat_id, 
                             audio=audio_file, 
                             title=video_title, 
                             performer="@G66Gbot", 
@@ -281,10 +292,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             filename = base + ext
                             break
 
-                await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.UPLOAD_VOICE)
+                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
                 with open(filename, 'rb') as f:
                     await context.bot.send_audio(
-                        chat_id=query.message.chat_id, 
+                        chat_id=chat_id, 
                         audio=f, 
                         title=video_title, 
                         performer="@G66Gbot", 
@@ -298,6 +309,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await status_msg.edit_text("❌ حدث خطأ أثناء تحميل الملف الصوتي.")
 
     elif query.data == "hd_video":
+        # عند الضغط على دقة عالية، نجعل الأزرار تختفي من رسالة الفيديو القديمة، ونترك زر الصوت فقط تحت الفيديو الجديد
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+
         status_msg = await query.message.reply_text("🔄 جاري إرسال المحتوى بأعلى دقة...")
         ydl_opts = {
             'format': 'best[ext=mp4]/best',
@@ -314,9 +331,22 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     filename = os.path.splitext(filename)[0] + ".mp4"
 
                 if os.path.exists(filename):
-                    await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.UPLOAD_VIDEO)
+                    v_title = context.user_data.get('video_title', 'media')
+                    
+                    # زر الصوت فقط ليظهر تحت الفيديو عند تحميله بدقة عالية
+                    audio_only_keyboard = [
+                        [InlineKeyboardButton("🎵 تحميل كملف صوتي.", callback_data="audio")]
+                    ]
+                    audio_reply_markup = InlineKeyboardMarkup(audio_only_keyboard)
+
+                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
                     with open(filename, 'rb') as f:
-                        await context.bot.send_video(chat_id=query.message.chat_id, video=f, caption="- @G66Gbot")
+                        await context.bot.send_video(
+                            chat_id=chat_id, 
+                            video=f, 
+                            caption="- @G66Gbot", 
+                            reply_markup=audio_reply_markup
+                        )
                     os.remove(filename)
                 await status_msg.delete()
         except Exception:
@@ -329,7 +359,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    print("البوت يعمل الآن مع إخفاء وصف الفيديو وإظهار معرف البوت فقط...")
+    print("البوت يعمل الآن مع نظام أزرار الفيديو والصوت الاحترافي...")
     app.run_polling()
 
 if __name__ == '__main__':
