@@ -135,7 +135,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             tiktok_data = fetch_tiktok_data(url)
             if tiktok_data:
                 title = tiktok_data['title']
-                author = tiktok_data['author']
                 images = tiktok_data['images']
                 video_url = tiktok_data['play']
                 audio_url = tiktok_data['music']
@@ -143,7 +142,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 context.user_data['video_title'] = title
                 context.user_data['audio_title'] = audio_title
-                caption_text = f"🎬 {title}\n\n👤 الحساب: {author}\n\n- @G66Gbot"
+                
+                # هنا تم جعل الوصف يظهر معرف البوت فقط بدون نص الفيديو أو اسم الحساب
+                caption_text = "- @G66Gbot"
 
                 if images:
                     if audio_url:
@@ -154,7 +155,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 with open(local_audio_path, 'wb') as f:
                                     f.write(r.content)
                                 
-                                # تظهر عبارة "يرسل ملفا صوتيا" تحت اسم البوت
                                 await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VOICE)
                                 with open(local_audio_path, 'rb') as audio_file:
                                     await update.message.reply_audio(
@@ -168,7 +168,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         except Exception as ex:
                             print(f"Audio send error: {ex}")
 
-                    # تظهر عبارة "يرسل صورة" تحت اسم البوت
                     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
                     for i in range(0, len(images), 10):
                         batch = images[i:i+10]
@@ -180,7 +179,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
 
                 elif video_url:
-                    # تظهر عبارة "يرسل مقطعا مرئيا" تماماً مثل الصورة التي أرسلتها تحت اسم البوت
                     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VIDEO)
                     await update.message.reply_video(video=video_url, caption=caption_text, reply_markup=reply_markup)
                     await processing_msg.delete()
@@ -196,7 +194,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             title = info.get('title', 'فيديو بدون عنوان')
-            uploader = info.get('uploader', 'مؤلف غير معروف')
             filename = ydl.prepare_filename(info)
             
             if not os.path.exists(filename):
@@ -206,9 +203,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             clean_title = "".join(c for c in title if c.isalnum() or c in (' ', '_', '-', '🔥')).strip()
             context.user_data['audio_title'] = f"{clean_title}.mp3" if clean_title else "audio.mp3"
 
-            caption = f"🎬 {title}\n\n👤 الحساب: {uploader}\n\n- @G66Gbot"
+            # هنا أيضاً لليوتيوب يظهر معرف البوت فقط
+            caption = "- @G66Gbot"
 
-            # تظهر عبارة "يرسل مقطعا مرئيا" تحت اسم البوت أثناء رفع فيديو اليوتيوب
             await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VIDEO)
             with open(filename, 'rb') as f:
                 await update.message.reply_video(video=f, caption=caption, reply_markup=reply_markup)
@@ -251,7 +248,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     with open(local_audio_path, 'wb') as f:
                         f.write(r.content)
 
-                    # إظهار حالة "يرسل ملفا صوتيا" تحت اسم البوت
                     await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.UPLOAD_VOICE)
                     with open(local_audio_path, 'rb') as audio_file:
                         await context.bot.send_audio(
@@ -285,7 +281,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             filename = base + ext
                             break
 
-                # إظهار حالة "يرسل ملفا صوتيا" تحت اسم البوت
                 await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.UPLOAD_VOICE)
                 with open(filename, 'rb') as f:
                     await context.bot.send_audio(
@@ -319,11 +314,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     filename = os.path.splitext(filename)[0] + ".mp4"
 
                 if os.path.exists(filename):
-                    v_title = context.user_data.get('video_title', 'media')
-                    # إظهار حالة "يرسل مقطعا مرئيا" تحت اسم البوت
                     await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.UPLOAD_VIDEO)
                     with open(filename, 'rb') as f:
-                        await context.bot.send_video(chat_id=query.message.chat_id, video=f, caption=f"🎬 {v_title} (HD)\n- @G66Gbot")
+                        await context.bot.send_video(chat_id=query.message.chat_id, video=f, caption="- @G66Gbot")
                     os.remove(filename)
                 await status_msg.delete()
         except Exception:
@@ -336,7 +329,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    print("البوت يعمل الآن مع إظهار حالات الإرسال تحت اسم البوت تماماً مثل طلبت...")
+    print("البوت يعمل الآن مع إخفاء وصف الفيديو وإظهار معرف البوت فقط...")
     app.run_polling()
 
 if __name__ == '__main__':
