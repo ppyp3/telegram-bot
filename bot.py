@@ -78,14 +78,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not url or not (url.startswith("http://") or url.startswith("https://")):
         return
 
-    user_id = update.effective_user.id
-    if 'last_processed_url' in context.user_data and context.user_data.get('last_user') == user_id:
-        if context.user_data['last_processed_url'] == url:
-            return
-
-    context.user_data['last_processed_url'] = url
-    context.user_data['last_user'] = user_id
-
     processing_msg = await update.message.reply_text("⏳ ¦ يرجى الانتظار, يتم قياس حجم التحميل...")
 
     try:
@@ -120,7 +112,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 with open(local_audio_path, 'wb') as f:
                                     f.write(r.content)
                                 
-                                await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VOICE)
+                                await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_DOCUMENT)
                                 with open(local_audio_path, 'rb') as audio_file:
                                     await update.message.reply_audio(
                                         audio=audio_file, 
@@ -181,6 +173,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await processing_msg.delete()
 
     except Exception as e:
+        print(f"Error in handle_message: {e}")
         await processing_msg.edit_text("❌ عذراً، لم أتمكن من جلب هذا الرابط أو أن المحتوى خاص/يتطلب تسجيل دخول.")
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -212,7 +205,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     with open(local_audio_path, 'wb') as f:
                         f.write(r.content)
 
-                    await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.UPLOAD_VOICE)
+                    await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.UPLOAD_DOCUMENT)
                     with open(local_audio_path, 'rb') as audio_file:
                         await context.bot.send_audio(
                             chat_id=query.message.chat_id, 
@@ -245,7 +238,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             filename = base + ext
                             break
 
-                await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.UPLOAD_VOICE)
+                await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.UPLOAD_DOCUMENT)
                 with open(filename, 'rb') as f:
                     await context.bot.send_audio(
                         chat_id=query.message.chat_id, 
@@ -294,7 +287,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    print("البوت يعمل الآن مع إظهار حالات (يرسل مقطعاً مرئياً/صورة) والتعديلات كاملة...")
+    print("البوت يعمل الآن بكامل الميزات وبدون أي نقص...")
     app.run_polling()
 
 if __name__ == '__main__':
