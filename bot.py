@@ -38,7 +38,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👑 لوحة تحكم الآدمن: البوت يعمل بكفاءة عالية ✅")
 
 def fetch_tiktok_data(url):
-    """دالة متقدمة لجلب تفاصيل صور أو فيديو تيك توك بدقة"""
+    """دالة متقدمة لجلب تفاصيل صور أو فيديو تيك توك مع الصوت الأصلي بدقة"""
     try:
         current_ua = random.choice(USER_AGENTS)
         headers = {'User-Agent': current_ua, 'Accept-Language': 'en-US,en;q=0.9'}
@@ -96,12 +96,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 author = tiktok_data['author']
                 images = tiktok_data['images']
                 video_url = tiktok_data['play']
+                audio_url = tiktok_data['music']
                 
                 context.user_data['video_title'] = title
-
                 caption_text = f"🎬 {title}\n\n👤 الحساب: {author}\n\n- @G66Gbot"
 
+                # إذا كانت صور (ألبوم صور تيك توك) -> إرسال الصوت ثم الصور بدون أزرار
                 if images:
+                    if audio_url:
+                        try:
+                            await update.message.reply_audio(
+                                audio=audio_url, 
+                                title=title, 
+                                performer=author,
+                                caption=f"🎵 {title}\n- @G66Gbot"
+                            )
+                        except Exception:
+                            pass
+
                     media_group = []
                     for idx, img_url in enumerate(images[:10]):
                         if idx == 0:
@@ -110,15 +122,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             media_group.append(InputMediaPhoto(media=img_url))
                     
                     await update.message.reply_media_group(media=media_group)
-                    await update.message.reply_text("اختر طريقة التحميل الإضافية:", reply_markup=reply_markup)
                     await processing_msg.delete()
                     return
 
+                # إذا كان فيديو عادي -> إرسال الفيديو مع الأزرار التفاعلية
                 elif video_url:
                     await update.message.reply_video(video=video_url, caption=caption_text, reply_markup=reply_markup)
                     await processing_msg.delete()
                     return
 
+        # لباقي المنصات عبر yt-dlp
         ydl_opts = {
             'format': 'best[ext=mp4]/best',
             'outtmpl': '%(id)s.%(ext)s',
@@ -230,7 +243,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    print("البوت يعمل الآن...")
+    print("البوت يعمل الآن بأحدث التعديلات...")
     app.run_polling()
 
 if __name__ == '__main__':
