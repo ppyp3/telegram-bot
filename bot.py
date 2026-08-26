@@ -7,24 +7,16 @@ import yt_dlp
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 TOKEN = os.environ.get("TOKEN")
-ADMIN_IDS = [123456789] # استبدل الأيدي بأيديك إذا أردت
+ADMIN_IDS = [123456789]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
     welcome_msg = (
         f"◀️ | أهلاً بك يا {user_name} في بوت التحميل الشامل\n\n"
         f"مع هذا البوت يمكنك التحميل من عدة مواقع بصيغة متعددة،\n\n"
-        f"✅ | المواقع المدعومة :\n\n"
-        f"1️⃣- التحميل من اليوتيوب،\n"
-        f"2️⃣- التحميل من انستا مع كشف التاكات،\n"
-        f"3️⃣- التحميل من تيك توك (فيديوهات وصور)،\n"
-        f"4️⃣- التحميل من تويتر،\n"
-        f"5️⃣- التحميل من سناب شات،\n"
-        f"6️⃣- التحميل من لايكي،\n"
-        f"7️⃣- التحميل من كواي،\n"
-        f"8️⃣- التحميل من ساوند كلاود،\n"
-        f"9️⃣- التحميل من بينترست،\n"
-        f"🔟 - التحميل من ثريدز،\n\n"
+        f"✅ | المواقع المدعومة :\n"
+        f"1️⃣ اليوتيوب | 2️⃣ الانستغرام | 3️⃣ التيك توك\n"
+        f"4️⃣ التويتر | 5️⃣ السناب شات | 6️⃣ البينترست\n\n"
         f"🔄 | قم بإرسال الرابط للبدء بالتحميل •"
     )
     await update.message.reply_text(welcome_msg)
@@ -52,30 +44,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     processing_msg = await update.message.reply_text("⏳ جاري جلب المحتوى...")
 
     try:
-        # فحص نوع الرابط مع تمرير ملف cookies.txt
-        ydl_opts_meta = {'extract_flat': True, 'quiet': True, 'cookiefile': 'cookies.txt'}
-        is_slideshow = False
-        
-        # إذا كان رابط صور تيك توك، نعتبره مباشرة Slideshow ليتعامل معه البوت كصور
-        if "tiktok.com" in url and "/photo/" in url:
-            is_slideshow = True
-        else:
-            with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
-                meta = ydl.extract_info(url, download=False)
-                if meta and ('entries' in meta or meta.get('_type') == 'playlist'):
-                    is_slideshow = True
-
         context.user_data['current_url'] = url
         
         keyboard = [
-            [
-                InlineKeyboardButton("🎵 تحميل كملف صوتي.", callback_data="audio"),
-            ],
-            [
-                InlineKeyboardButton("📥 تحميل باعلى دقه HD.", callback_data="hd_video")
-            ]
+            [InlineKeyboardButton("🎵 تحميل كملف صوتي.", callback_data="audio")],
+            [InlineKeyboardButton("📥 تحميل باعلى دقه HD.", callback_data="hd_video")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
+
+        # فحص شامل لتحديد إذا كان الرابط يحتوي على صور أو منشور متعدد
+        is_slideshow = False
+        if "tiktok.com" in url and ("/photo/" in url or "slideshow" in url):
+            is_slideshow = True
+
+        if not is_slideshow:
+            try:
+                ydl_opts_meta = {'extract_flat': True, 'quiet': True, 'cookiefile': 'cookies.txt'}
+                with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
+                    meta = ydl.extract_info(url, download=False)
+                    if meta and ('entries' in meta or meta.get('_type') == 'playlist'):
+                        is_slideshow = True
+            except:
+                pass
 
         if is_slideshow:
             image_opts = {
@@ -89,16 +79,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             downloaded_images = []
             with yt_dlp.YoutubeDL(image_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
-                if info and 'entries' in info:
-                    for entry in info['entries']:
-                        if entry:
-                            img_url = entry.get('url') or entry.get('webpage_url')
-                            if img_url:
-                                downloaded_images.append(img_url)
-                else:
-                    filename = ydl.prepare_filename(info)
-                    if os.path.exists(filename):
-                        downloaded_images.append(filename)
+                if info:
+                    if 'entries' in info:
+                        for entry in info['entries']:
+                            if entry:
+                                img_url = entry.get('url') or entry.get('webpage_url')
+                                if img_url:
+                                    downloaded_images.append(img_url)
+                    else:
+                        filename = ydl.prepare_filename(info)
+                        if os.path.exists(filename):
+                            downloaded_images.append(filename)
 
             if downloaded_images:
                 for img in downloaded_images:
@@ -109,48 +100,48 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             await update.message.reply_photo(photo=img_f, caption="- @G66Gbot", reply_markup=reply_markup)
                         os.remove(img)
                 await processing_msg.delete()
-            else:
-                raise Exception("No images found")
+                return
 
-        else:
-            output_template = '%(id)s.%(ext)s'
-            ydl_opts = {
-                'format': 'best[ext=mp4]/best',
-                'outtmpl': output_template,
-                'cookiefile': 'cookies.txt',
-                'quiet': True
-            }
+        # محاولة تحميل الفيديو العادي أو كـ Fallback
+        output_template = '%(id)s.%(ext)s'
+        ydl_opts = {
+            'format': 'best[ext=mp4]/best',
+            'outtmpl': output_template,
+            'cookiefile': 'cookies.txt',
+            'quiet': True
+        }
 
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                title = info.get('title', 'فيديو بدون عنوان')
-                uploader = info.get('uploader', 'مؤلف غير معروف')
-                filename = ydl.prepare_filename(info)
-                
-                if not os.path.exists(filename):
-                    filename = os.path.splitext(filename)[0] + ".mp4"
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            title = info.get('title', 'فيديو بدون عنوان')
+            uploader = info.get('uploader', 'مؤلف غير معروف')
+            filename = ydl.prepare_filename(info)
+            
+            if not os.path.exists(filename):
+                filename = os.path.splitext(filename)[0] + ".mp4"
 
-                context.user_data['video_title'] = title
+            context.user_data['video_title'] = title
 
-                caption = (
-                    f"🎬 {title}\n\n"
-                    f"👤 الحساب: {uploader}\n\n"
-                    f"- @G66Gbot"
+            caption = (
+                f"🎬 {title}\n\n"
+                f"👤 الحساب: {uploader}\n\n"
+                f"- @G66Gbot"
+            )
+
+            with open(filename, 'rb') as f:
+                await update.message.reply_video(
+                    video=f, 
+                    caption=caption, 
+                    reply_markup=reply_markup
                 )
 
-                with open(filename, 'rb') as f:
-                    await update.message.reply_video(
-                        video=f, 
-                        caption=caption, 
-                        reply_markup=reply_markup
-                    )
-
-                if os.path.exists(filename):
-                    os.remove(filename)
-                
-                await processing_msg.delete()
+            if os.path.exists(filename):
+                os.remove(filename)
+            
+            await processing_msg.delete()
 
     except Exception as e:
+        # محاولة أخيرة مرنة في حال فشل الاستخراج المباشر
         try:
             ydl_opts_fallback = {'format': 'best', 'quiet': True, 'cookiefile': 'cookies.txt', 'outtmpl': 'fallback_%(id)s.%(ext)s'}
             with yt_dlp.YoutubeDL(ydl_opts_fallback) as ydl:
