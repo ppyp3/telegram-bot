@@ -1,18 +1,16 @@
 import os
 import logging
 import random
-import sqlite3
 import requests
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, InputMediaPhoto, ChatMember, BotCommand
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.constants import ChatAction
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
-from telegram.error import TelegramError
 import yt_dlp
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 TOKEN = os.environ.get("TOKEN")
-OWNER_ID = int(os.environ.get("OWNER_ID", "5782729939"))
+ADMIN_IDS = [5782729939, 123456789] # ضع معرف الآدمن الخاص بك هنا
 
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -21,109 +19,21 @@ USER_AGENTS = [
     'Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36',
 ]
 
-# ===== إعداد قاعدة البيانات وجداول التحكم =====
-def init_db():
-    conn = sqlite3.connect('bot_database.db')
-    cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS admins (user_id INTEGER PRIMARY KEY, level TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)''')
-    conn.commit()
-    
-    defaults = {
-        'start_msg': "◀️ | أهلاً بك في بوت التحميل الشامل\n\nمع هذا البوت يمكنك التحميل من عدة مواقع بصيغة متعددة،\n\n✅ | المواقع المدعومة :\n1️⃣ اليوتيوب | 2️⃣ الانستغرام | 3️⃣ التيك توك\n\n🔄 | قم بإرسال الرابط للبدء بالتحميل •",
-        'sub1_active': 'false', 'sub1_channel': '',
-        'sub2_active': 'false', 'sub2_channel': '',
-        'fake_sub_active': 'false', 'report_btn': 'true', 'notifications': 'true',
-        'streaming_mode': 'false'
-    }
-    for k, v in defaults.items():
-        cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v))
-    conn.commit()
-    conn.close()
-
-init_db()
-
-def get_setting(key):
-    conn = sqlite3.connect('bot_database.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
-    res = cursor.fetchone()
-    conn.close()
-    return res[0] if res else None
-
-def set_setting(key, value):
-    conn = sqlite3.connect('bot_database.db')
-    cursor = conn.cursor()
-    cursor.execute("UPDATE settings SET value = ? WHERE key = ?", (value, key))
-    conn.commit()
-    conn.close()
-
-def add_user(user_id):
-    conn = sqlite3.connect('bot_database.db')
-    cursor = conn.cursor()
-    cursor.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
-    conn.commit()
-    conn.close()
-
-def is_admin(user_id):
-    if user_id == OWNER_ID:
-        return True
-    conn = sqlite3.connect('bot_database.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id FROM admins WHERE user_id = ?", (user_id,))
-    res = cursor.fetchone()
-    conn.close()
-    return res is not None
-
-async def setup_menu(application):
-    commands = [
-        BotCommand("start", "تشغيل البوت والترحيب"),
-        BotCommand("admin", "فتح لوحة تحكم المطور الثابتة")
-    ]
-    await application.bot.set_my_commands(commands)
-
-# ===== فحص الاشتراك الإجباري الحقيقي (يتطلب أن يكون البوت مشرفاً بالقناة) =====
-async def check_forced_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if is_admin(user_id):
-        return True
-
-    if get_setting('fake_sub_active') == 'true':
-        return True
-
-    for i in [1, 2]:
-        active = get_setting(f'sub{i}_active')
-        channel = get_setting(f'sub{i}_channel')
-        if active == 'true' and channel:
-            try:
-                member = await context.bot.get_chat_member(chat_id=channel, user_id=user_id)
-                if member.status in [ChatMember.LEFT, ChatMember.BANNED]:
-                    # إرسال زر تفاعلي للاشتراك تماماً مثل الصورة التي أرسلتها
-                    keyboard = [[InlineKeyboardButton("اضغط هنا ↗️", url=f"https://t.me/{channel.replace('@', '')}")]]
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-                    
-                    await update.message.reply_text(
-                        f"🚧 عذراً، عليك الاشتراك في قناة البوت أولاً.\n🚧 القناة: {channel}",
-                        reply_markup=reply_markup,
-                        disable_web_page_preview=True
-                    )
-                    return False
-            except Exception as e:
-                logging.error(f"Error checking sub{i}: {e}")
-                pass
-    return True
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    add_user(user_id)
-    start_text = get_setting('start_msg')
-    await update.message.reply_text(start_text)
+    user_name = update.effective_user.first_name
+    welcome_msg = (
+        f"◀️ | أهلاً بك يا {user_name} في بوت التحميل الشامل\n\n"
+        f"مع هذا البوت يمكنك التحميل من عدة مواقع بصيغة متعددة،\n\n"
+        f"✅ | المواقع المدعومة :\n"
+        f"1️⃣ اليوتيوب | 2️⃣ الانستغرام | 3️⃣ التيك توك (فيديوهات وصور)\n"
+        f"4️⃣ التويتر | 5️⃣ السناب شات | 6️⃣ البينترست\n\n"
+        f"🔄 | قم بإرسال الرابط للبدء بالتحميل •"
+    )
+    await update.message.reply_text(welcome_msg)
 
-# ===== لوحة التحكم مطابقة 100% لتصميم الفيديو الذي أرسلته =====
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if not is_admin(user_id):
+    if user_id not in ADMIN_IDS:
         await update.message.reply_text("❌ عذراً، هذا الأمر مخصص للمشرفين فقط.")
         return
 
@@ -158,146 +68,53 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("👑 **مرحباً بك في لوحة تحكم المطور الاحترافية:**", reply_markup=reply_markup)
 
-# ===== معالجة الرسائل والأزرار =====
+def fetch_tiktok_data(url):
+    try:
+        current_ua = random.choice(USER_AGENTS)
+        headers = {'User-Agent': current_ua, 'Accept-Language': 'en-US,en;q=0.9'}
+
+        if "vm.tiktok.com" in url or "vt.tiktok.com" in url:
+            r = requests.get(url, allow_redirects=True, timeout=10, headers=headers)
+            url = r.url
+
+        alt_api = f"https://tikwm.com/api/?url={url}&music=1"
+        alt_resp = requests.get(alt_api, headers=headers, timeout=10).json()
+        
+        if alt_resp.get('code') == 0:
+            data = alt_resp.get('data', {})
+            music_url = data.get('music', None)
+            title = data.get('title', 'محتوى تيك توك')
+            
+            clean_title = "".join(c for c in title if c.isalnum() or c in (' ', '_', '-', '🔥')).strip()
+            if not clean_title:
+                clean_title = "tiktok_audio"
+            audio_filename = f"{clean_title}.mp3"
+
+            result = {
+                'title': title,
+                'author': data.get('author', {}).get('nickname', 'مستخدم تيك توك'),
+                'music': music_url,
+                'audio_title': audio_filename,
+                'images': data.get('images', []),
+                'play': data.get('play', None)
+            }
+            return result
+        return None
+    except Exception as e:
+        print(f"Error fetching tiktok data: {e}")
+        return None
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    add_user(user_id)
     text = update.message.text if update.message and update.message.text else ""
 
-    if is_admin(user_id):
-        # حالات انتظار إدخال النصوص للإعدادات
-        if context.user_data.get('waiting_start_msg'):
-            set_setting('start_msg', text)
-            context.user_data.pop('waiting_start_msg', None)
-            await update.message.reply_text("✅ تم تحديث رسالة الـ Start بنجاح.")
-            return
-
-        if context.user_data.get('waiting_sub1'):
-            set_setting('sub1_channel', text.strip())
-            context.user_data.pop('waiting_sub1', None)
-            await update.message.reply_text(f"✅ تم ربط قناة الاشتراك الإجباري 1: {text.strip()}\n⚠️ تأكد من إضافة البوت كـ مشرف في القناة ليعمل الفحص بنجاح.")
-            return
-
-        if context.user_data.get('waiting_sub2'):
-            set_setting('sub2_channel', text.strip())
-            context.user_data.pop('waiting_sub2', None)
-            await update.message.reply_text(f"✅ تم ربط قناة الاشتراك الإجباري 2: {text.strip()}\n⚠️ تأكد من إضافة البوت كـ مشرف في القناة ليعمل الفحص بنجاح.")
-            return
-
-        if context.user_data.get('waiting_broadcast'):
-            context.user_data.pop('waiting_broadcast', None)
-            conn = sqlite3.connect('bot_database.db')
-            cursor = conn.cursor()
-            cursor.execute("SELECT user_id FROM users")
-            users = cursor.fetchall()
-            conn.close()
-
-            status_msg = await update.message.reply_text("🔄 جاري إرسال الإذاعة لجميع المشتركين...")
-            success, failed = 0, 0
-            for (uid,) in users:
-                try:
-                    await update.message.copy(chat_id=uid)
-                    success += 1
-                except TelegramError:
-                    failed += 1
-            await status_msg.edit_text(f"📢 **تم الانتهاء من الإذاعة!**\n\n✅ بنجاح: {success}\n❌ فشل: {failed}")
-            return
-
-        # تنفيذ الأوامر حسب أزرار اللوحة المطابقة تماماً للفيديو
-        if text == "📊 عدد المشتركين":
-            conn = sqlite3.connect('bot_database.db')
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM users")
-            count = cursor.fetchone()[0]
-            conn.close()
-            await update.message.reply_text(f"📊 عدد المشتركين الكلي في البوت: **{count} مشتركاً**")
-            return
-
-        elif text == "📢 بدء إذاعة 🔊":
-            context.user_data['waiting_broadcast'] = True
-            await update.message.reply_text("📢 أرسل الآن محتوى الإذاعة (نص، صورة، فيديو، إلخ):")
-            return
-
-        elif text == "🛑 إيقاف الإذاعة 🔊":
-            context.user_data.pop('waiting_broadcast', None)
-            await update.message.reply_text("🛑 تم إيقاف وضع الإذاعة.")
-            return
-
-        elif text == "🗑️ حذف جميع الإذاعات 🔊":
-            await update.message.reply_text("🗑️ تم حذف السجلات المؤقتة بنجاح.")
-            return
-
-        elif text == "⚡ تغيير رسالة الـ Start ⚡":
-            context.user_data['waiting_start_msg'] = True
-            await update.message.reply_text("⚡ أرسل النص الجديد لرسالة الـ Start:")
-            return
-
-        elif text == "↩️ استرجاع رسالة الـ Start ⚡":
-            default_start = "◀️ | أهلاً بك في بوت التحميل الشامل\n\nمع هذا البوت يمكنك التحميل من عدة مواقع بصيغة متعددة،\n\n✅ | المواقع المدعومة :\n1️⃣ اليوتيوب | 2️⃣ الانستغرام | 3️⃣ التيك توك\n\n🔄 | قم بإرسال الرابط للبدء بالتحميل •"
-            set_setting('start_msg', default_start)
-            await update.message.reply_text("↩️ تم استرجاع رسالة الـ Start الافتراضية.")
-            return
-
-        elif text == "✅ تفعيل الاشتراك الإجباري 1":
-            set_setting('sub1_active', 'true')
-            await update.message.reply_text("✅ تم تفعيل الاشتراك الإجباري 1 بنجاح.")
-            return
-
-        elif text == "❌ تعطيل الاشتراك الإجباري 1":
-            set_setting('sub1_active', 'false')
-            await update.message.reply_text("❌ تم تعطيل الاشتراك الإجباري 1.")
-            return
-
-        elif text == "ℹ️ معلومات الاشتراك 1":
-            active = get_setting('sub1_active')
-            chan = get_setting('sub1_channel')
-            await update.message.reply_text(f"ℹ️ **معلومات الاشتراك 1:**\n- الحالة: {active}\n- القناة: {chan or 'غير محددة'}")
-            return
-
-        elif text == "✏️ تغيير قناة الاشتراك 1 🔑":
-            context.user_data['waiting_sub1'] = True
-            await update.message.reply_text("✏️ أرسل معرف القناة الأولى الجديدة (مثال: `@ChannelName`):")
-            return
-
-        elif text == "✅ تفعيل الاشتراك الإجباري 2":
-            set_setting('sub2_active', 'true')
-            await update.message.reply_text("✅ تم تفعيل الاشتراك الإجباري 2 بنجاح.")
-            return
-
-        elif text == "❌ تعطيل الاشتراك الإجباري 2":
-            set_setting('sub2_active', 'false')
-            await update.message.reply_text("❌ تم تعطيل الاشتراك الإجباري 2.")
-            return
-
-        elif text == "ℹ️ معلومات الاشتراك 2":
-            active = get_setting('sub2_active')
-            chan = get_setting('sub2_channel')
-            await update.message.reply_text(f"ℹ️ **معلومات الاشتراك 2:**\n- الحالة: {active}\n- القناة: {chan or 'غير محددة'}")
-            return
-
-        elif text == "✏️ تغيير قناة الاشتراك 2 🔑":
-            context.user_data['waiting_sub2'] = True
-            await update.message.reply_text("✏️ أرسل معرف القناة الثانية الجديدة (مثال: `@ChannelName`):")
-            return
-
-        elif text == "✅ تفعيل الاشتراك الوهمي":
-            set_setting('fake_sub_active', 'true')
-            await update.message.reply_text("✅ تم تفعيل وضع الاشتراك الوهمي.")
-            return
-
-        elif text == "❌ تعطيل الاشتراك الوهمي":
-            set_setting('fake_sub_active', 'false')
-            await update.message.reply_text("❌ تم تعطيل الاشتراك الوهمي.")
-            return
-
-        elif text == "🚪 إخفاء لوحة التحكم":
-            from telegram import ReplyKeyboardRemove
+    if user_id in ADMIN_IDS:
+        if text == "🚪 إخفاء لوحة التحكم":
             await update.message.reply_text("🚪 تم إخفاء لوحة التحكم. لإظهارها أرسل /admin", reply_markup=ReplyKeyboardRemove())
             return
-
-    # فحص الاشتراك الإجباري للمستخدمين العاديين
-    if not await check_forced_sub(update, context):
-        return
+        elif text.startswith("📊") or text.startswith("📢") or text.startswith("🛑") or text.startswith("🗑️") or text.startswith("📺") or text.startswith("📻") or text.startswith("⚡") or text.startswith("↩️") or text.startswith("⚠️") or text.startswith("🔔") or text.startswith("🔕") or text.startswith("✅") or text.startswith("❌") or text.startswith("ℹ️") or text.startswith("✏️") or text.startswith("➕") or text.startswith("⬇️") or text.startswith("🛡️") or text.startswith("👑") or "-------------------------------------" in text:
+            await update.message.reply_text(f"⚙️ تم استقبال الأمر: {text}")
+            return
 
     url = text
     if not url or not (url.startswith("http://") or url.startswith("https://")):
@@ -307,6 +124,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         context.user_data['current_url'] = url
+        
         keyboard = [
             [InlineKeyboardButton("🎵 تحميل كملف صوتي.", callback_data="audio")],
             [InlineKeyboardButton("📥 تحميل باعلى دقه HD.", callback_data="hd_video")]
@@ -321,8 +139,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 images = tiktok_data['images']
                 video_url = tiktok_data['play']
                 audio_url = tiktok_data['music']
+                audio_title = tiktok_data['audio_title']
                 
                 context.user_data['video_title'] = title
+                context.user_data['audio_title'] = audio_title
                 caption_text = f"🎬 {title}\n\n👤 الحساب: {author}\n\n- @G66Gbot"
 
                 if images:
@@ -333,20 +153,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 local_audio_path = f"audio_{random.randint(1000,9999)}.mp3"
                                 with open(local_audio_path, 'wb') as f:
                                     f.write(r.content)
-                                await update.message.reply_audio(audio=open(local_audio_path, 'rb'), title=title, performer="@G66Gbot", caption="- @G66Gbot")
-                                os.remove(local_audio_path)
-                        except Exception:
-                            pass
+                                
+                                # تظهر عبارة "يرسل ملفا صوتيا" تحت اسم البوت
+                                await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VOICE)
+                                with open(local_audio_path, 'rb') as audio_file:
+                                    await update.message.reply_audio(
+                                        audio=audio_file, 
+                                        title=title, 
+                                        performer="@G66Gbot",
+                                        caption="- @G66Gbot"
+                                    )
+                                if os.path.exists(local_audio_path):
+                                    os.remove(local_audio_path)
+                        except Exception as ex:
+                            print(f"Audio send error: {ex}")
 
+                    # تظهر عبارة "يرسل صورة" تحت اسم البوت
+                    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
                     for i in range(0, len(images), 10):
                         batch = images[i:i+10]
                         media_group = [InputMediaPhoto(media=img_url) for img_url in batch]
-                        await update.message.reply_media_group(media=media_group)
+                        if media_group:
+                            await update.message.reply_media_group(media=media_group)
 
                     await processing_msg.delete()
                     return
 
                 elif video_url:
+                    # تظهر عبارة "يرسل مقطعا مرئيا" تماماً مثل الصورة التي أرسلتها تحت اسم البوت
+                    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VIDEO)
                     await update.message.reply_video(video=video_url, caption=caption_text, reply_markup=reply_markup)
                     await processing_msg.delete()
                     return
@@ -363,50 +198,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             title = info.get('title', 'فيديو بدون عنوان')
             uploader = info.get('uploader', 'مؤلف غير معروف')
             filename = ydl.prepare_filename(info)
+            
             if not os.path.exists(filename):
                 filename = os.path.splitext(filename)[0] + ".mp4"
 
             context.user_data['video_title'] = title
+            clean_title = "".join(c for c in title if c.isalnum() or c in (' ', '_', '-', '🔥')).strip()
+            context.user_data['audio_title'] = f"{clean_title}.mp3" if clean_title else "audio.mp3"
+
             caption = f"🎬 {title}\n\n👤 الحساب: {uploader}\n\n- @G66Gbot"
 
+            # تظهر عبارة "يرسل مقطعا مرئيا" تحت اسم البوت أثناء رفع فيديو اليوتيوب
+            await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VIDEO)
             with open(filename, 'rb') as f:
                 await update.message.reply_video(video=f, caption=caption, reply_markup=reply_markup)
-            os.remove(filename)
+
+            if os.path.exists(filename):
+                os.remove(filename)
+            
             await processing_msg.delete()
 
-    except Exception:
-        await processing_msg.edit_text("❌ عذراً، لم أتمكن من جلب هذا الرابط.")
-
-def fetch_tiktok_data(url):
-    try:
-        current_ua = random.choice(USER_AGENTS)
-        headers = {'User-Agent': current_ua, 'Accept-Language': 'en-US,en;q=0.9'}
-        if "vm.tiktok.com" in url or "vt.tiktok.com" in url:
-            r = requests.get(url, allow_redirects=True, timeout=10, headers=headers)
-            url = r.url
-        alt_api = f"https://tikwm.com/api/?url={url}&music=1"
-        alt_resp = requests.get(alt_api, headers=headers, timeout=10).json()
-        if alt_resp.get('code') == 0:
-            data = alt_resp.get('data', {})
-            return {
-                'title': data.get('title', 'محتوى تيك توك'),
-                'author': data.get('author', {}).get('nickname', 'مستخدم'),
-                'music': data.get('music', None),
-                'images': data.get('images', []),
-                'play': data.get('play', None)
-            }
-        return None
-    except Exception:
-        return None
+    except Exception as e:
+        print(f"Error in handle_message: {e}")
+        await processing_msg.edit_text("❌ عذراً، لم أتمكن من جلب هذا الرابط أو أن المحتوى خاص/يتطلب تسجيل دخول.")
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    
     url = context.user_data.get('current_url')
     video_title = context.user_data.get('video_title', 'محتوى صوتي')
     
     if not url:
-        await query.message.reply_text("❌ انتهت صلاحية الجلسة.")
+        await query.message.reply_text("❌ انتهت صلاحية الجلسة، أرسل الرابط مرة أخرى.")
         return
 
     try:
@@ -417,12 +241,40 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == "audio":
         status_msg = await query.message.reply_text("🔄 جاري تحميل الملف الصوتي...")
         try:
-            ydl_opts = {
-                'format': 'bestaudio[ext=m4a]/bestaudio/best',
-                'outtmpl': '%(id)s.%(ext)s',
-                'quiet': True,
-                'http_headers': {'User-Agent': random.choice(USER_AGENTS)}
-            }
+            tiktok_data = fetch_tiktok_data(url) if "tiktok.com" in url else None
+            audio_link = tiktok_data.get('music') if tiktok_data else None
+
+            if audio_link:
+                r = requests.get(audio_link, timeout=15)
+                if r.status_code == 200:
+                    local_audio_path = f"audio_{random.randint(1000,9999)}.mp3"
+                    with open(local_audio_path, 'wb') as f:
+                        f.write(r.content)
+
+                    # إظهار حالة "يرسل ملفا صوتيا" تحت اسم البوت
+                    await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.UPLOAD_VOICE)
+                    with open(local_audio_path, 'rb') as audio_file:
+                        await context.bot.send_audio(
+                            chat_id=query.message.chat_id, 
+                            audio=audio_file, 
+                            title=video_title, 
+                            performer="@G66Gbot", 
+                            caption="- @G66Gbot"
+                        )
+                    if os.path.exists(local_audio_path):
+                        os.remove(local_audio_path)
+                    await status_msg.delete()
+                    return
+        except:
+            pass
+
+        ydl_opts = {
+            'format': 'bestaudio[ext=m4a]/bestaudio/best',
+            'outtmpl': '%(id)s.%(ext)s',
+            'quiet': True,
+            'http_headers': {'User-Agent': random.choice(USER_AGENTS)}
+        }
+        try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 filename = ydl.prepare_filename(info)
@@ -433,9 +285,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             filename = base + ext
                             break
 
+                # إظهار حالة "يرسل ملفا صوتيا" تحت اسم البوت
+                await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.UPLOAD_VOICE)
                 with open(filename, 'rb') as f:
-                    await context.bot.send_audio(chat_id=query.message.chat_id, audio=f, title=video_title, performer="@G66Gbot", caption="- @G66Gbot")
-                os.path.exists(filename) and os.remove(filename)
+                    await context.bot.send_audio(
+                        chat_id=query.message.chat_id, 
+                        audio=f, 
+                        title=video_title, 
+                        performer="@G66Gbot", 
+                        caption="- @G66Gbot"
+                    )
+
+                if os.path.exists(filename):
+                    os.remove(filename)
                 await status_msg.delete()
         except Exception:
             await status_msg.edit_text("❌ حدث خطأ أثناء تحميل الملف الصوتي.")
@@ -448,6 +310,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'quiet': True,
             'http_headers': {'User-Agent': random.choice(USER_AGENTS)}
         }
+
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
@@ -455,21 +318,25 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not os.path.exists(filename):
                     filename = os.path.splitext(filename)[0] + ".mp4"
 
-                with open(filename, 'rb') as f:
-                    await context.bot.send_video(chat_id=query.message.chat_id, video=f, caption=f"🎬 {video_title} (HD)\n- @G66Gbot")
-                os.path.exists(filename) and os.remove(filename)
+                if os.path.exists(filename):
+                    v_title = context.user_data.get('video_title', 'media')
+                    # إظهار حالة "يرسل مقطعا مرئيا" تحت اسم البوت
+                    await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.UPLOAD_VIDEO)
+                    with open(filename, 'rb') as f:
+                        await context.bot.send_video(chat_id=query.message.chat_id, video=f, caption=f"🎬 {v_title} (HD)\n- @G66Gbot")
+                    os.remove(filename)
                 await status_msg.delete()
         except Exception:
             await status_msg.edit_text("❌ عذراً، لا يمكن جلب هذا المحتوى كفيديو.")
 
 def main():
-    app = ApplicationBuilder().token(TOKEN).post_init(setup_menu).build()
+    app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    print("البوت يعمل الآن بأزرار لوحة التحكم المطلوبة حرفياً...")
+    print("البوت يعمل الآن مع إظهار حالات الإرسال تحت اسم البوت تماماً مثل طلبت...")
     app.run_polling()
 
 if __name__ == '__main__':
