@@ -68,7 +68,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"- @G66Gbot"
             )
 
-            # الأزرار المطابقة تماماً للصورة المطلوبة
+            # الأزرار المطابقة تماماً للشكل المطلوب
             keyboard = [
                 [
                     InlineKeyboardButton("🎵 تحميل كملف صوتي.", callback_data="audio"),
@@ -105,12 +105,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if query.data == "audio":
-        status_msg = await query.message.reply_text("🔄 جاري تحويل وتحميل الملف الصوتي...")
+        status_msg = await query.message.reply_text("🔄 جاري تحميل الملف الصوتي...")
+        
         output_template = '%(id)s.%(ext)s'
         ydl_opts = {
-            'format': 'bestaudio/best',
+            'format': 'bestaudio[ext=m4a]/bestaudio/best',
             'outtmpl': output_template,
-            'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
             'quiet': True
         }
 
@@ -118,7 +118,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 filename = ydl.prepare_filename(info)
-                filename = os.path.splitext(filename)[0] + ".mp3"
+                
+                if not os.path.exists(filename):
+                    base, _ = os.path.splitext(filename)
+                    for ext in ['.m4a', '.mp3', '.aac', '.opus', '.webm']:
+                        if os.path.exists(base + ext):
+                            filename = base + ext
+                            break
 
                 with open(filename, 'rb') as f:
                     await context.bot.send_audio(
@@ -131,8 +137,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if os.path.exists(filename):
                     os.remove(filename)
                 await status_msg.delete()
-        except Exception:
-            await status_msg.edit_text("❌ حدث خطأ أثناء تحويل الملف الصوتي.")
+        except Exception as e:
+            await status_msg.edit_text("❌ حدث خطأ أثناء تحميل الملف الصوتي.")
 
     elif query.data == "hd_video":
         status_msg = await query.message.reply_text("🔄 جاري إرسال الفيديو بأعلى دقة...")
@@ -160,7 +166,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if os.path.exists(filename):
                     os.remove(filename)
                 await status_msg.delete()
-        except Exception:
+        except Exception as e:
             await status_msg.edit_text("❌ حدث خطأ أثناء إرسال فيديو HD.")
 
 def main():
