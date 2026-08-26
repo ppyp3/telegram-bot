@@ -2,7 +2,7 @@ import os
 import logging
 import random
 import requests
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, ChatAction
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 import yt_dlp
 
@@ -86,7 +86,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['last_processed_url'] = url
     context.user_data['last_user'] = user_id
 
-    processing_msg = await update.message.reply_text("⏳ جاري جلب المحتوى وترتيبه...")
+    processing_msg = await update.message.reply_text("⏳ ¦ يرجى الانتظار, يتم قياس حجم التحميل...")
 
     try:
         context.user_data['current_url'] = url
@@ -120,18 +120,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 with open(local_audio_path, 'wb') as f:
                                     f.write(r.content)
                                 
+                                await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VOICE)
                                 with open(local_audio_path, 'rb') as audio_file:
                                     await update.message.reply_audio(
                                         audio=audio_file, 
                                         title=title, 
-                                        performer="@G66Gbot",  # تم استبدالها بيوزر البوت
-                                        caption="- @G66Gbot"      # يوزر البوت فقط بدون تكرار العنوان
+                                        performer="@G66Gbot",
+                                        caption="- @G66Gbot"
                                     )
                                 if os.path.exists(local_audio_path):
                                     os.remove(local_audio_path)
                         except Exception as ex:
                             print(f"Audio send error: {ex}")
 
+                    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
                     for i in range(0, len(images), 10):
                         batch = images[i:i+10]
                         media_group = [InputMediaPhoto(media=img_url) for img_url in batch]
@@ -142,6 +144,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
 
                 elif video_url:
+                    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VIDEO)
                     await update.message.reply_video(video=video_url, caption=caption_text, reply_markup=reply_markup)
                     await processing_msg.delete()
                     return
@@ -168,6 +171,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             caption = f"🎬 {title}\n\n👤 الحساب: {uploader}\n\n- @G66Gbot"
 
+            await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VIDEO)
             with open(filename, 'rb') as f:
                 await update.message.reply_video(video=f, caption=caption, reply_markup=reply_markup)
 
@@ -190,6 +194,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("❌ انتهت صلاحية الجلسة، أرسل الرابط مرة أخرى.")
         return
 
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
     if query.data == "audio":
         status_msg = await query.message.reply_text("🔄 جاري تحميل الملف الصوتي...")
         try:
@@ -203,13 +212,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     with open(local_audio_path, 'wb') as f:
                         f.write(r.content)
 
+                    await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.UPLOAD_VOICE)
                     with open(local_audio_path, 'rb') as audio_file:
                         await context.bot.send_audio(
                             chat_id=query.message.chat_id, 
                             audio=audio_file, 
                             title=video_title, 
-                            performer="@G66Gbot",  # يوزر البوت كاسم مؤدي
-                            caption="- @G66Gbot"      # يوزر البوت فقط في الوصف
+                            performer="@G66Gbot", 
+                            caption="- @G66Gbot"
                         )
                     if os.path.exists(local_audio_path):
                         os.remove(local_audio_path)
@@ -235,13 +245,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             filename = base + ext
                             break
 
+                await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.UPLOAD_VOICE)
                 with open(filename, 'rb') as f:
                     await context.bot.send_audio(
                         chat_id=query.message.chat_id, 
                         audio=f, 
                         title=video_title, 
-                        performer="@G66Gbot",  # يوزر البوت كاسم مؤدي
-                        caption="- @G66Gbot"      # يوزر البوت فقط في الوصف
+                        performer="@G66Gbot", 
+                        caption="- @G66Gbot"
                     )
 
                 if os.path.exists(filename):
@@ -268,6 +279,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if os.path.exists(filename):
                     v_title = context.user_data.get('video_title', 'media')
+                    await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.UPLOAD_VIDEO)
                     with open(filename, 'rb') as f:
                         await context.bot.send_video(chat_id=query.message.chat_id, video=f, caption=f"🎬 {v_title} (HD)\n- @G66Gbot")
                     os.remove(filename)
@@ -282,7 +294,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    print("البوت يعمل الآن بالتعديلات المطلوبة بدقة...")
+    print("البوت يعمل الآن مع إظهار حالات (يرسل مقطعاً مرئياً/صورة) والتعديلات كاملة...")
     app.run_polling()
 
 if __name__ == '__main__':
