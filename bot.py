@@ -53,14 +53,8 @@ def fetch_tiktok_data(url):
             data = alt_resp.get('data', {})
             music_url = data.get('music', None)
             
-            # استخراج اسم ملف الـ mp3 الأصلي ليكون مطابقاً للبوت المطلوب
-            audio_filename = "audio_tk.mp3"
-            if music_url:
-                base_name = music_url.split('/')[-1].split('?')[0]
-                if base_name.endswith('.mp3'):
-                    audio_filename = base_name
-                else:
-                    audio_filename = f"{random.randint(100000000, 999999999)}_tk.mp3"
+            # توليد اسم مرتب ونظيف شبيه بالبوت المنافس (أرقام بصيغة _tk.mp3)
+            audio_filename = f"{random.randint(100000000, 999999999)}_tk.mp3"
 
             result = {
                 'title': data.get('title', 'محتوى تيك توك'),
@@ -116,7 +110,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 # إذا كانت صور (ألبوم صور تيك توك)
                 if images:
-                    # 1. إرسال الأغنية أولاً مع اسم الـ mp3 ويوزر البوت فقط
+                    # 1. إرسال الأغنية أولاً بالاسم المرتب ويوزر البوت فقط
                     if audio_url:
                         try:
                             await update.message.reply_audio(
@@ -128,7 +122,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         except Exception:
                             pass
 
-                    # 2. إرسال جميع الصور مقسمة لألبومات (كل ألبوم 10 صور كحد أقصى) وبدون أي كتابة نهائياً
+                    # 2. إرسال الصور مقسمة لألبومات (كل ألبوم 10 صور) وبدون أي كتابة
                     for i in range(0, len(images), 10):
                         batch = images[i:i+10]
                         media_group = [InputMediaPhoto(media=img_url) for img_url in batch]
@@ -181,7 +175,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     url = context.user_data.get('current_url')
-    title = context.user_data.get('audio_title', 'audio_tk.mp3')
+    title = context.user_data.get('audio_title', f"{random.randint(100000000, 999999999)}_tk.mp3")
     if not url:
         await query.message.reply_text("❌ انتهت صلاحية الجلسة، أرسل الرابط مرة أخرى.")
         return
@@ -258,7 +252,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    print("البوت يعمل الآن بكامل الميزات وبدون أي أخطاء...")
+    print("البوت يعمل الآن بصيغة الأسماء المرتبة والنظيفة...")
     app.run_polling()
 
 if __name__ == '__main__':
