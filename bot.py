@@ -53,7 +53,6 @@ def fetch_tiktok_data(url):
             data = alt_resp.get('data', {})
             music_url = data.get('music', None)
             
-            # توليد اسم مرتب ونظيف شبيه بالبوت المنافس (أرقام بصيغة _tk.mp3)
             audio_filename = f"{random.randint(100000000, 999999999)}_tk.mp3"
 
             result = {
@@ -108,9 +107,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data['audio_title'] = audio_title
                 caption_text = f"🎬 {title}\n\n👤 الحساب: {author}\n\n- @G66Gbot"
 
-                # إذا كانت صور (ألبوم صور تيك توك)
                 if images:
-                    # 1. إرسال الأغنية أولاً بالاسم المرتب ويوزر البوت فقط
                     if audio_url:
                         try:
                             await update.message.reply_audio(
@@ -122,7 +119,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         except Exception:
                             pass
 
-                    # 2. إرسال الصور مقسمة لألبومات (كل ألبوم 10 صور) وبدون أي كتابة
                     for i in range(0, len(images), 10):
                         batch = images[i:i+10]
                         media_group = [InputMediaPhoto(media=img_url) for img_url in batch]
@@ -132,13 +128,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await processing_msg.delete()
                     return
 
-                # إذا كان فيديو عادي
                 elif video_url:
                     await update.message.reply_video(video=video_url, caption=caption_text, reply_markup=reply_markup)
                     await processing_msg.delete()
                     return
 
-        # لباقي المنصات عبر yt-dlp
         ydl_opts = {
             'format': 'best[ext=mp4]/best',
             'outtmpl': '%(id)s.%(ext)s',
@@ -175,7 +169,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     url = context.user_data.get('current_url')
-    title = context.user_data.get('audio_title', f"{random.randint(100000000, 999999999)}_tk.mp3")
+    saved_title = context.user_data.get('audio_title', f"{random.randint(100000000, 999999999)}_tk.mp3")
+    
     if not url:
         await query.message.reply_text("❌ انتهت صلاحية الجلسة، أرسل الرابط مرة أخرى.")
         return
@@ -185,10 +180,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             tiktok_data = fetch_tiktok_data(url) if "tiktok.com" in url else None
             audio_link = tiktok_data.get('music') if tiktok_data else None
-            audio_title = tiktok_data.get('audio_title', title) if tiktok_data else title
 
             if audio_link:
-                await context.bot.send_audio(chat_id=query.message.chat_id, audio=audio_link, title=audio_title, performer="المؤدي غير معروف", caption="- @G66Gbot")
+                await context.bot.send_audio(
+                    chat_id=query.message.chat_id, 
+                    audio=audio_link, 
+                    title=saved_title, 
+                    performer="المؤدي غير معروف", 
+                    caption="- @G66Gbot"
+                )
                 await status_msg.delete()
                 return
         except:
@@ -212,7 +212,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             break
 
                 with open(filename, 'rb') as f:
-                    await context.bot.send_audio(chat_id=query.message.chat_id, audio=f, title=title, performer="المؤدي غير معروف", caption="- @G66Gbot")
+                    await context.bot.send_audio(
+                        chat_id=query.message.chat_id, 
+                        audio=f, 
+                        title=saved_title, 
+                        performer="المؤدي غير معروف", 
+                        caption="- @G66Gbot"
+                    )
 
                 if os.path.exists(filename):
                     os.remove(filename)
@@ -252,7 +258,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    print("البوت يعمل الآن بصيغة الأسماء المرتبة والنظيفة...")
+    print("البوت يعمل الآن بكامل طاقته...")
     app.run_polling()
 
 if __name__ == '__main__':
