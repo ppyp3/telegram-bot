@@ -33,9 +33,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💡 *قم بإرسال الرابط الآن لنبدأ العمل 👇*"
     )
     await update.message.reply_text(welcome_msg, parse_mode="Markdown")
-    )
-    await update.message.reply_text(welcome_msg)
-
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in ADMIN_IDS:
