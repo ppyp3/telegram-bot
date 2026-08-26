@@ -12,7 +12,8 @@ import yt_dlp
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 TOKEN = os.environ.get("TOKEN")
-OWNER_ID = 123456789  # <--- ضع معرفك الأساسي (المالك) هنا
+# قراءة معرف المالك من متغيرات البيئة في المنصة مع وضع معرفك كقيمة احتياطية
+OWNER_ID = int(os.environ.get("OWNER_ID", "5782729939"))
 
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
