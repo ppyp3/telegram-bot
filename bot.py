@@ -17,7 +17,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ | المواقع المدعومة :\n\n"
         f"1️⃣- التحميل من اليوتيوب،\n"
         f"2️⃣- التحميل من انستا مع كشف التاكات،\n"
-        f"3️⃣- التحميل من تيك توك،\n"
+        f"3️⃣- التحميل من تيك توك (فيديوهات وصور)،\n"
         f"4️⃣- التحميل من تويتر،\n"
         f"5️⃣- التحميل من سناب شات،\n"
         f"6️⃣- التحميل من لايكي،\n"
@@ -55,10 +55,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # فحص نوع الرابط مع تمرير ملف cookies.txt
         ydl_opts_meta = {'extract_flat': True, 'quiet': True, 'cookiefile': 'cookies.txt'}
         is_slideshow = False
-        with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
-            meta = ydl.extract_info(url, download=False)
-            if meta and ('entries' in meta or meta.get('_type') == 'playlist'):
-                is_slideshow = True
+        
+        # إذا كان رابط صور تيك توك، نعتبره مباشرة Slideshow ليتعامل معه البوت كصور
+        if "tiktok.com" in url and "/photo/" in url:
+            is_slideshow = True
+        else:
+            with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
+                meta = ydl.extract_info(url, download=False)
+                if meta and ('entries' in meta or meta.get('_type') == 'playlist'):
+                    is_slideshow = True
 
         context.user_data['current_url'] = url
         
@@ -84,7 +89,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             downloaded_images = []
             with yt_dlp.YoutubeDL(image_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
-                if 'entries' in info:
+                if info and 'entries' in info:
                     for entry in info['entries']:
                         if entry:
                             img_url = entry.get('url') or entry.get('webpage_url')
