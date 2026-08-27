@@ -95,7 +95,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ أرسل رابط تيك توك صحيحاً من فضلك.")
         return
 
-    # تم استبدال رسالة الانتظار بالشكل المطلوب بالضبط
     processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم قياس حجم التحميل...")
 
     try:
@@ -165,11 +164,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await processing_msg.delete()
                 return
 
-        await processing_msg.edit_text("❌ عذراً، لم أتمكن من جلب هذا الرابط أو أن المحتوى خاص.")
+        # رسالة الخطأ المخصصة في حال كان الملف كبير جداً أو مرفوض من الـ API
+        error_custom_msg = (
+            "⚠️┇هذا الملف لا يمكنني تحميله،\n"
+            "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
+            "⚠️┇أعد المحاوله مع ملف اخر."
+        )
+        await processing_msg.edit_text(error_custom_msg)
 
     except Exception as e:
         print(f"Error in handle_message: {e}")
-        await processing_msg.edit_text("❌ حدث خطأ غير متوقع أثناء معالجة الرابط.")
+        error_custom_msg = (
+            "⚠️┇هذا الملف لا يمكنني تحميله،\n"
+            "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
+            "⚠️┇أعد المحاوله مع ملف اخر."
+        )
+        await processing_msg.edit_text(error_custom_msg)
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -244,9 +254,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 await status_msg.delete()
             else:
-                await status_msg.edit_text("❌ عذراً، لا يمكن جلب هذا الفيديو.")
+                error_custom_msg = (
+                    "⚠️┇هذا الملف لا يمكنني تحميله،\n"
+                    "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
+                    "⚠️┇أعد المحاوله مع ملف اخر."
+                )
+                await status_msg.edit_text(error_custom_msg)
         except Exception:
-            await status_msg.edit_text("❌ حدث خطأ أثناء جلب الفيديو.")
+            error_custom_msg = (
+                "⚠️┇هذا الملف لا يمكنني تحميله،\n"
+                "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
+                "⚠️┇أعد المحاوله مع ملف اخر."
+            )
+            await status_msg.edit_text(error_custom_msg)
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
