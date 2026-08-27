@@ -95,7 +95,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ أرسل رابط تيك توك صحيحاً من فضلك.")
         return
 
-    processing_msg = await update.message.reply_text("⏳ ¦ يرجى الانتظار, جاري جلب المحتوى...")
+    # تم استبدال رسالة الانتظار بالشكل المطلوب بالضبط
+    processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم قياس حجم التحميل...")
 
     try:
         context.user_data['current_url'] = url
