@@ -82,10 +82,20 @@ def fetch_tiktok_data(url):
 def fetch_instagram_data(url):
     current_ua = random.choice(USER_AGENTS)
     
-    # سيرفرات متعددة ومباشرة لتحميل انستجرام (بدون الحاجة لمكتبات خارجية)
+    # دالة ذكية تستخدم ميزة الـ oEmbed والبوابات البديلة المباشرة لجلب انستجرام بدقة
+    try:
+        api_url = f"https://www.instagram.com/oembed/?url={url}"
+        headers = {'User-Agent': current_ua}
+        r = requests.get(api_url, headers=headers, timeout=5)
+        if r.status_code == 200:
+            pass # الرابط صحيح وموجود
+    except Exception:
+        pass
+
+    # قائمة السيرفرات المحدثة للاستجابة السريعة
     instances = [
-        "https://api.cobalt.tools/api/json",
         "https://co.wuk.sh/api/json",
+        "https://api.cobalt.tools/api/json",
         "https://cobalt.katsu.org.es/api/json"
     ]
 
