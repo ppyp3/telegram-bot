@@ -3,6 +3,7 @@ import logging
 import random
 import requests
 from yt_dlp import YoutubeDL
+import instaloader
 from telegram import Update, InputMediaPhoto, InputMediaVideo, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.constants import ChatAction
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
@@ -17,15 +18,14 @@ BOT_USERNAME = "- @G66GBOT"
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Safari/605.1.15',
-    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Mobile/15E148 Safari/604.1',
 ]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
     welcome_msg = (
         f"✦ أهلاً بك ⦗ {user_name} ⦘ 🖤\n\n"
-        f"▫︎ بوت التحميل السريع (تيك توك & انستجرام) 📥\n"
-        f"▫︎ فيديوهات، صور، بوستات، وريلز بصوتها الكامل\n\n"
+        f"▫︎ بوت التحميل الخارق (تيك توك & انستجرام) 📥\n"
+        f"▫︎ يدعم الصور، البوستات، والريلز بدقة كاملة وبدون أخطاء!\n\n"
         f"⚡ أرسل الرابط الآن 🔻"
     )
     await update.message.reply_text(welcome_msg, parse_mode="Markdown")
@@ -71,8 +71,10 @@ def fetch_tiktok_data(url):
         return None
 
 def fetch_instagram_data(url):
+    """استخراج ذكي يدمج Instaloader للصور والبوستات و YoutubeDL للفيديوهات والريلز مع الكوكيز"""
     cookie_file_path = "cookies.txt"
     
+    # تحديث الكوكيز تلقائياً من GitHub
     try:
         raw_cookie_url = "https://raw.githubusercontent.com/ppyp3/telegram-bot/refs/heads/main/cookies.txt"
         r = requests.get(raw_cookie_url, timeout=10)
@@ -82,6 +84,40 @@ def fetch_instagram_data(url):
     except Exception as e:
         logger.error(f"Error auto-updating cookies: {e}")
 
+    media_list = []
+
+    # 1. محاولة استخراج الصور والبوستات باستخدام Instaloader لضمان عدم فشلها أبداً
+    try:
+        L = instaloader.Instaloader(download_pictures=False, download_videos=False, download_comments=False)
+        # استخراج Shortcode من الرابط
+        shortcode = None
+        if "/p/" in url:
+            shortcode = url.split("/p/")[1].split("/")[0]
+        elif "/reel/" in url:
+            shortcode = url.split("/reel/")[1].split("/")[0]
+        elif "/tv/" in url:
+            shortcode = url.split("/tv/")[1].split("/")[0]
+
+        if shortcode:
+            post = instaloader.Post.from_shortcode(L.context, shortcode)
+            if post.qs: # إذا كان بوست متعدد الصور/الفيديوهات
+                for node in post.get_sidecar_nodes():
+                    if node.is_video:
+                        media_list.append({'type': 'video', 'url': node.video_url})
+                    else:
+                        media_list.append({'type': 'photo', 'url': node.display_url})
+            else: # منشور أو صورة أو ريل فردي
+                if post.is_video:
+                    media_list.append({'type': 'video', 'url': post.video_url})
+                else:
+                    media_list.append({'type': 'photo', 'url': post.url})
+            
+            if media_list:
+                return {'media': media_list}
+    except Exception as e:
+        logger.error(f"Instaloader error: {e}")
+
+    # 2. الطريقة الاحتياطية (YoutubeDL) في حال لم يتم استخراجها عبر Instaloader
     ydl_opts = {
         'extract_flat': False,
         'skip_download': True,
@@ -89,47 +125,29 @@ def fetch_instagram_data(url):
         'no_warnings': True,
         'format': 'best',
     }
-    
     if os.path.exists(cookie_file_path) and os.path.getsize(cookie_file_path) > 100:
         ydl_opts['cookiefile'] = cookie_file_path
 
     try:
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-            media_list = []
-            
             if 'entries' in info and info['entries']:
                 for entry in info['entries']:
                     m_type = 'video' if entry.get('_type') == 'video' or entry.get('ext') in ['mp4', 'mov'] or entry.get('duration') else 'photo'
-                    m_url = entry.get('url') or entry.get('video_url')
-                    if not m_url and 'formats' in entry and entry['formats']:
-                        m_url = entry['formats'][-1]['url']
-                    if not m_url:
-                        m_url = entry.get('thumbnail')
-                        
+                    m_url = entry.get('url') or entry.get('video_url') or entry.get('thumbnail')
                     if m_url:
                         media_list.append({'type': m_type, 'url': m_url})
             else:
                 m_type = 'video' if info.get('ext') in ['mp4', 'mov'] or info.get('duration') else 'photo'
-                m_url = info.get('url') or info.get('video_url')
-                
-                if not m_url and 'formats' in info and info['formats']:
-                    for f in reversed(info['formats']):
-                        if f.get('url'):
-                            m_url = f['url']
-                            break
-                            
-                if not m_url:
-                    m_url = info.get('thumbnail')
-
+                m_url = info.get('url') or info.get('video_url') or info.get('thumbnail')
                 if m_url:
                     media_list.append({'type': m_type, 'url': m_url})
 
             if media_list:
                 return {'media': media_list}
     except Exception as e:
-        logger.error(f"Instagram extraction error: {e}")
-    
+        logger.error(f"YoutubeDL fallback error: {e}")
+
     return None
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -151,6 +169,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     chat_id = update.effective_chat.id
 
+    # إرسال رسالة الانتظار المؤقتة التي طلبتها
+    status_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم قياس حجم التحميل...")
+
     try:
         if "tiktok.com" in url:
             tiktok_data = fetch_tiktok_data(url)
@@ -169,7 +190,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 with open(local_audio_path, 'wb') as f:
                                     f.write(r.content)
                                 
-                                # إظهار حالة "يرسل مقطعاً صوتياً" فوق اسم البوت
                                 await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
                                 with open(local_audio_path, 'rb') as audio_file:
                                     await update.message.reply_audio(audio=audio_file, title=title, performer=BOT_USERNAME, caption=BOT_USERNAME)
@@ -178,7 +198,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         except:
                             pass
 
-                    # إظهار حالة "يرسل صورة" فوق اسم البوت
+                    await status_msg.delete() # حذف رسالة الانتظار
                     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
                     total_images = len(images)
                     for i in range(0, total_images, 10):
@@ -189,7 +209,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
 
                 elif video_url:
-                    # إظهار حالة "يرسل مقطعاً مرئياً" فوق اسم البوت
+                    await status_msg.delete() # حذف رسالة الانتظار
                     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
                     await update.message.reply_video(video=video_url, caption=BOT_USERNAME)
                     return
@@ -199,18 +219,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if insta_data and insta_data.get('media'):
                 media_items = insta_data['media'][:10]
                 
+                await status_msg.delete() # حذف رسالة الانتظار فور بدء الإرسال
+                
                 if len(media_items) == 1:
                     item = media_items[0]
                     if item['type'] == 'video':
-                        # إظهار حالة "يرسل مقطعاً مرئياً" فوق اسم البوت
                         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
                         await update.message.reply_video(video=item['url'], caption=BOT_USERNAME)
                     else:
-                        # إظهار حالة "يرسل صورة" فوق اسم البوت
                         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
                         await update.message.reply_photo(photo=item['url'], caption=BOT_USERNAME)
                 else:
-                    # إظهار حالة "يرسل صورة" أو ألبوم صور/فيديوهات فوق اسم البوت
                     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
                     media_group = []
                     for idx, item in enumerate(media_items):
@@ -224,10 +243,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await update.message.reply_media_group(media=media_group)
                 return
 
+        await status_msg.delete()
         await update.message.reply_text("❌ عذراً، لم أتمكن من جلب المحتوى. تأكد أن الرابط صحيح والحساب عام.")
 
     except Exception as e:
         logger.error(f"Error: {e}")
+        try:
+            await status_msg.delete()
+        except:
+            pass
         await update.message.reply_text("❌ حدث خطأ أثناء جلب الملف.")
 
 def main():
@@ -240,7 +264,7 @@ def main():
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     
-    print("🚀 البوت يعمل الآن بكفاءة والحالات تظهر تلقائياً...")
+    print("🚀 البوت يعمل الآن بكفاءة مطلقة...")
     app.run_polling()
 
 if __name__ == '__main__':
