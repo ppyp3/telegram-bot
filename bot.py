@@ -71,10 +71,7 @@ def fetch_tiktok_data(url):
         return None
 
 def fetch_instagram_data(url):
-    """استخراج دقيق للريلز والبوستات والمنشورات المتعددة مع ضمان إرجاعها كفيديو حقيقي أو صور صحيحة"""
     media_list = []
-    
-    # 1. محاولة استخدام Instaloader أولاً
     try:
         L = instaloader.Instaloader(download_pictures=False, download_videos=False, download_comments=False)
         shortcode = None
@@ -107,7 +104,6 @@ def fetch_instagram_data(url):
     except Exception as e:
         logger.error(f"Instaloader error: {e}")
 
-    # 2. الطريقة الاحتياطية (YoutubeDL) مع ضمان صيغة الفيديو
     try:
         ydl_opts = {
             'extract_flat': False,
@@ -156,7 +152,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     chat_id = update.effective_chat.id
-
     status_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم قياس حجم التحميل...")
 
     try:
@@ -198,7 +193,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 elif video_url:
                     await status_msg.delete() 
                     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
-                    await update.message.reply_video(video=video_url, caption=BOT_USERNAME)
+                    await update.message.reply_video(video=video_url, caption=BOT_USERNAME, supports_streaming=True)
                     return
 
         elif "instagram.com" in url:
@@ -212,8 +207,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     item = media_items[0]
                     if item['type'] == 'video':
                         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
-                        # إرسال الفيديو بفرض صيغة الفيديو حصراً لكي لا يظهر كصورة متحركة GIF
-                        await update.message.reply_video(video=item['url'], caption=BOT_USERNAME, supports_streaming=True)
+                        
+                        # تحميل الفيديو مؤقتماً لمنعه من الظهور كصورة متحركة GIF
+                        video_res = requests.get(item['url'], stream=True, timeout=20)
+                        if video_res.status_code == 200:
+                            local_video_path = f"video_{random.randint(1000,9999)}.mp4"
+                            with open(local_video_path, 'wb') as vf:
+                                for chunk in video_res.iter_content(chunk_size=8192):
+                                    vf.write(chunk)
+                            
+                            with open(local_video_path, 'rb') as vf_file:
+                                await update.message.reply_video(video=vf_file, caption=BOT_USERNAME, supports_streaming=True)
+                            
+                            if os.path.exists(local_video_path):
+                                os.remove(local_video_path)
+                        else:
+                            await update.message.reply_video(video=item['url'], caption=BOT_USERNAME, supports_streaming=True)
                     else:
                         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
                         await update.message.reply_photo(photo=item['url'], caption=BOT_USERNAME)
