@@ -3,7 +3,7 @@ import logging
 import random
 import requests
 from urllib.parse import urlparse, urlunparse
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.constants import ChatAction
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 
@@ -81,7 +81,7 @@ def fetch_instagram_data(original_url):
     current_ua = random.choice(USER_AGENTS)
     clean_url = clean_instagram_url(original_url)
     
-    # محاولة سحب البيانات عبر عدة بوابات قوية مخصصة للصور والفيديوهات
+    # بوابات قوية تدعم استخراج العناصر بأقصى عدد ممكن (حتى 100 عنصر)
     endpoints = [
         ("https://api.cobalt.tools/api/json", {"url": clean_url, "vQuality": "max"}),
         ("https://co.wuk.sh/api/json", {"url": clean_url, "vQuality": "max"}),
@@ -99,50 +99,30 @@ def fetch_instagram_data(original_url):
             }
             resp = requests.post(api, json=payload, headers=headers, timeout=10).json()
             
-            if resp.get('status') in ['stream', 'redirect', 'picker']:
+            status = resp.get('status')
+            if status in ['stream', 'redirect', 'picker']:
                 media_url = resp.get('url')
                 picker_items = resp.get('picker', [])
                 
-                images_list = []
-                video_url = media_url
+                media_list = []
                 
                 if picker_items:
-                    for item in picker_items:
+                    for item in picker_items[:100]: # أقصى حد عالمي (100 عنصر)
                         item_url = item.get('url')
-                        if item.get('type') == 'photo':
-                            images_list.append(item_url)
-                        elif item.get('type') == 'video' and not video_url:
-                            video_url = item_url
+                        item_type = item.get('type')
+                        if item_url:
+                            media_list.append({'type': item_type, 'url': item_url})
+                elif media_url:
+                    media_list.append({'type': 'video', 'url': media_url})
 
-                return {
-                    'images': images_list,
-                    'play': video_url if not images_list else None
-                }
+                if media_list:
+                    return {'media': media_list}
             
             if 'url' in resp and resp['url']:
-                return {'images': [], 'play': resp['url']}
+                return {'media': [{'type': 'video', 'url': resp['url']}]}
                 
         except Exception:
             continue
-
-    # بديل إضافي مباشر لسحب صور انستجرام بدقة عالية جداً
-    try:
-        fallback_api = f"https://saveig.app/api/ajaxSearch"
-        headers = {'User-Agent': current_ua, 'X-Requested-With': 'XMLHttpRequest'}
-        fb_resp = requests.post(fallback_api, data={"q": clean_url, "t": "media", "lang": "en"}, headers=headers, timeout=10).json()
-        
-        if fb_resp.get('status') == 'ok':
-            # استخراج روابط الصور من الرد المباشر إن وجد
-            import re
-            html_content = fb_resp.get('data', '')
-            img_urls = re.findall(r'href="(https://[^"]+instagram[^"]+?)"', html_content)
-            if not img_urls:
-                img_urls = re.findall(r'src="(https://[^"]+cdninstagram[^"]+?)"', html_content)
-            if img_urls:
-                clean_imgs = list(set(img_urls))
-                return {'images': clean_imgs, 'play': None}
-    except Exception as e:
-        print(f"Fallback insta error: {e}")
 
     return None
 
@@ -224,26 +204,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif "instagram.com" in url:
             insta_data = fetch_instagram_data(url)
-            if insta_data:
-                images = insta_data.get('images', [])
-                video_url = insta_data.get('play')
-
-                if images:
-                    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
-                    total_images = len(images)
-                    for i in range(0, total_images, 10):
-                        batch = images[i:i+10]
-                        media_group = [InputMediaPhoto(media=img_url, caption=f"{BOT_USERNAME} - {i+idx+1}/{total_images}" if i+idx+1 == total_images else None) for idx, img_url in enumerate(batch)]
-                        if media_group:
-                            await update.message.reply_media_group(media=media_group)
-                    await processing_msg.delete()
-                    return
-
-                elif video_url:
-                    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VIDEO)
-                    await update.message.reply_video(video=video_url, caption=BOT_USERNAME)
-                    await processing_msg.delete()
-                    return
+            if insta_data and insta_data.get('media'):
+                media_items = insta_data['media'][:100] # دعم أقصى حد عالمي (100 عنصر)
+                await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
+                
+                total_items = len(media_items)
+                for i in range(0, total_items, 10):
+                    batch = media_items[i:i+10]
+                    media_group = []
+                    for idx, item in enumerate(batch):
+                        caption_text = f"{BOT_USERNAME}" if (i + idx + 1) == total_items else None
+                        if item['type'] == 'video':
+                            media_group.append(InputMediaVideo(media=item['url'], caption=caption_text))
+                        else:
+                            media_group.append(InputMediaPhoto(media=item['url'], caption=caption_text))
+                    
+                    if media_group:
+                        await update.message.reply_media_group(media=media_group)
+                
+                await processing_msg.delete()
+                return
 
         await processing_msg.edit_text("❌ عذراً، لم أتمكن من جلب هذا الرابط. تأكد من صحة الرابط أو أن الحساب عام.")
 
