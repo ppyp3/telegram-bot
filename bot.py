@@ -3,9 +3,9 @@ import logging
 import random
 import requests
 from yt_dlp import YoutubeDL
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from telegram import Update, InputMediaPhoto, InputMediaVideo, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.constants import ChatAction
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -24,8 +24,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
     welcome_msg = (
         f"✦ أهلاً بك ⦗ {user_name} ⦘ 🖤\n\n"
-        f"▫︎ بوت التحميل الخارق والذكي (تيك توك & انستجرام) 📥\n"
-        f"▫︎ يدعم التحديث الذكي للكوكيز ولا يواجه أي حظر!\n\n"
+        f"▫︎ بوت التحميل السريع (تيك توك & انستجرام) 📥\n"
+        f"▫︎ فيديوهات، صور، بوستات، وريلز بصوتها الكامل\n\n"
         f"⚡ أرسل الرابط الآن 🔻"
     )
     await update.message.reply_text(welcome_msg, parse_mode="Markdown")
@@ -71,7 +71,6 @@ def fetch_tiktok_data(url):
         return None
 
 def fetch_instagram_data(url):
-    """استخراج محتوى انستجرام (ريلز، فيديوهات مع صوتها، صور، وبوستات متعددة) بشكل مضمون 100%"""
     cookie_file_path = "cookies.txt"
     
     try:
@@ -88,7 +87,7 @@ def fetch_instagram_data(url):
         'skip_download': True,
         'quiet': True,
         'no_warnings': True,
-        'format': 'best',  # لضمان اختيار أفضل دفعة تحتوي على الفيديو والصوت مدمجين معاً
+        'format': 'best',
     }
     
     if os.path.exists(cookie_file_path) and os.path.getsize(cookie_file_path) > 100:
@@ -99,14 +98,11 @@ def fetch_instagram_data(url):
             info = ydl.extract_info(url, download=False)
             media_list = []
             
-            # إذا كان بوست يحتوي على عدة عناصر (Carousel أو منشور متعدد)
             if 'entries' in info and info['entries']:
                 for entry in info['entries']:
                     m_type = 'video' if entry.get('_type') == 'video' or entry.get('ext') in ['mp4', 'mov'] or entry.get('duration') else 'photo'
-                    # البحث عن الرابط المباشر بدقة
                     m_url = entry.get('url') or entry.get('video_url')
                     if not m_url and 'formats' in entry and entry['formats']:
-                        # اختيار أفضل صيغة فيديو أو صورة متاحة
                         m_url = entry['formats'][-1]['url']
                     if not m_url:
                         m_url = entry.get('thumbnail')
@@ -114,11 +110,9 @@ def fetch_instagram_data(url):
                     if m_url:
                         media_list.append({'type': m_type, 'url': m_url})
             else:
-                # عنصر فردي (ريل، فيديو مفرد، أو صورة منفردة)
                 m_type = 'video' if info.get('ext') in ['mp4', 'mov'] or info.get('duration') else 'photo'
                 m_url = info.get('url') or info.get('video_url')
                 
-                # إذا لم نجد رابط مباشر، نبحث في الـ formats المتاحة (لضمان جلب الفيديو بصوته الكامل)
                 if not m_url and 'formats' in info and info['formats']:
                     for f in reversed(info['formats']):
                         if f.get('url'):
@@ -128,37 +122,6 @@ def fetch_instagram_data(url):
                 if not m_url:
                     m_url = info.get('thumbnail')
 
-                if m_url:
-                    media_list.append({'type': m_type, 'url': m_url})
-
-            if media_list:
-                return {'media': media_list}
-    except Exception as e:
-        logger.error(f"Instagram extraction error: {e}")
-    
-    return None
-    
-    if os.path.exists(cookie_file_path) and os.path.getsize(cookie_file_path) > 100:
-        ydl_opts['cookiefile'] = cookie_file_path
-
-    try:
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            media_list = []
-            
-            if 'entries' in info:
-                for entry in info['entries']:
-                    m_type = 'video' if entry.get('_type') == 'video' or entry.get('ext') in ['mp4', 'mov'] else 'photo'
-                    m_url = entry.get('url') or entry.get('video_url') or entry.get('thumbnail')
-                    if not m_url and 'formats' in entry and entry['formats']:
-                        m_url = entry['formats'][-1]['url']
-                    if m_url:
-                        media_list.append({'type': m_type, 'url': m_url})
-            else:
-                m_type = 'video' if info.get('ext') in ['mp4', 'mov'] or info.get('duration') else 'photo'
-                m_url = info.get('url') or info.get('video_url') or info.get('thumbnail')
-                if not m_url and 'formats' in info and info['formats']:
-                    m_url = info['formats'][-1]['url']
                 if m_url:
                     media_list.append({'type': m_type, 'url': m_url})
 
@@ -186,26 +149,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ أرسل رابط تيك توك أو انستجرام صحيح.")
         return
 
-    processing_msg = await update.message.reply_text("🔄 جاري التحميل بكفاءة عالية...")
+    chat_id = update.effective_chat.id
 
     try:
-        context.user_data['current_url'] = url
-
         if "tiktok.com" in url:
-            keyboard = [
-                [InlineKeyboardButton("🎵 تحميل كملف صوتي", callback_data="audio")],
-                [InlineKeyboardButton("📥 تحميل بجودة عالية HD", callback_data="hd_video")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-
             tiktok_data = fetch_tiktok_data(url)
             if tiktok_data:
                 title = tiktok_data['title']
                 images = tiktok_data['images']
                 video_url = tiktok_data['play']
                 audio_url = tiktok_data['music']
-                
-                context.user_data['video_title'] = title
                 
                 if images:
                     if audio_url:
@@ -216,7 +169,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 with open(local_audio_path, 'wb') as f:
                                     f.write(r.content)
                                 
-                                await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VOICE)
+                                # إظهار حالة "يرسل مقطعاً صوتياً" فوق اسم البوت
+                                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
                                 with open(local_audio_path, 'rb') as audio_file:
                                     await update.message.reply_audio(audio=audio_file, title=title, performer=BOT_USERNAME, caption=BOT_USERNAME)
                                 if os.path.exists(local_audio_path):
@@ -224,34 +178,43 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         except:
                             pass
 
-                    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
+                    # إظهار حالة "يرسل صورة" فوق اسم البوت
+                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
                     total_images = len(images)
                     for i in range(0, total_images, 10):
                         batch = images[i:i+10]
                         media_group = [InputMediaPhoto(media=img_url, caption=BOT_USERNAME if (i + idx + 1) == total_images else None) for idx, img_url in enumerate(batch)]
                         if media_group:
                             await update.message.reply_media_group(media=media_group)
-                    await processing_msg.delete()
                     return
 
                 elif video_url:
-                    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VIDEO)
-                    await update.message.reply_video(video=video_url, caption=BOT_USERNAME, reply_markup=reply_markup)
-                    await processing_msg.delete()
+                    # إظهار حالة "يرسل مقطعاً مرئياً" فوق اسم البوت
+                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
+                    await update.message.reply_video(video=video_url, caption=BOT_USERNAME)
                     return
 
         elif "instagram.com" in url:
             insta_data = fetch_instagram_data(url)
             if insta_data and insta_data.get('media'):
-                media_items = insta_data['media'][:100]
-                await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
+                media_items = insta_data['media'][:10]
                 
-                total_items = len(media_items)
-                for i in range(0, total_items, 10):
-                    batch = media_items[i:i+10]
+                if len(media_items) == 1:
+                    item = media_items[0]
+                    if item['type'] == 'video':
+                        # إظهار حالة "يرسل مقطعاً مرئياً" فوق اسم البوت
+                        await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
+                        await update.message.reply_video(video=item['url'], caption=BOT_USERNAME)
+                    else:
+                        # إظهار حالة "يرسل صورة" فوق اسم البوت
+                        await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
+                        await update.message.reply_photo(photo=item['url'], caption=BOT_USERNAME)
+                else:
+                    # إظهار حالة "يرسل صورة" أو ألبوم صور/فيديوهات فوق اسم البوت
+                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
                     media_group = []
-                    for idx, item in enumerate(batch):
-                        caption_text = BOT_USERNAME if (i + idx + 1) == total_items else None
+                    for idx, item in enumerate(media_items):
+                        caption_text = BOT_USERNAME if idx == 0 else None
                         if item['type'] == 'video':
                             media_group.append(InputMediaVideo(media=item['url'], caption=caption_text))
                         else:
@@ -259,78 +222,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
                     if media_group:
                         await update.message.reply_media_group(media=media_group)
-                
-                await processing_msg.delete()
                 return
 
-        await processing_msg.edit_text("❌ عذراً، تأكد من صحة الرابط وأن الحساب عام.")
+        await update.message.reply_text("❌ عذراً، لم أتمكن من جلب المحتوى. تأكد أن الرابط صحيح والحساب عام.")
 
     except Exception as e:
         logger.error(f"Error: {e}")
-        await processing_msg.edit_text("❌ حدث خطأ، يرجى المحاولة مرة أخرى.")
-
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    chat_id = query.message.chat_id
-    url = context.user_data.get('current_url')
-    video_title = context.user_data.get('video_title', 'محتوى صوتي')
-    
-    if not url:
-        await query.message.reply_text("❌ انتهت الجلسة، أرسل الرابط مرة أخرى.")
-        return
-
-    if query.data == "audio":
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except:
-            pass
-
-        status_msg = await query.message.reply_text("🔄 جاري تحميل الملف الصوتي...")
-        try:
-            tiktok_data = fetch_tiktok_data(url)
-            audio_link = tiktok_data.get('music') if tiktok_data else None
-
-            if audio_link:
-                r = requests.get(audio_link, timeout=15)
-                if r.status_code == 200:
-                    local_audio_path = f"audio_{random.randint(1000,9999)}.mp3"
-                    with open(local_audio_path, 'wb') as f:
-                        f.write(r.content)
-
-                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
-                    with open(local_audio_path, 'rb') as audio_file:
-                        await context.bot.send_audio(chat_id=chat_id, audio=audio_file, title=video_title, performer=BOT_USERNAME, caption=BOT_USERNAME)
-                    if os.path.exists(local_audio_path):
-                        os.remove(local_audio_path)
-                    await status_msg.delete()
-                    return
-        except:
-            pass
-        await status_msg.edit_text("❌ تعذر تحميل الملف الصوتي.")
-
-    elif query.data == "hd_video":
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except:
-            pass
-
-        status_msg = await query.message.reply_text("🔄 جاري إرسال الفيديو...")
-        try:
-            tiktok_data = fetch_tiktok_data(url)
-            video_url = tiktok_data.get('play') if tiktok_data else None
-
-            if video_url:
-                audio_only_keyboard = [[InlineKeyboardButton("🎵 تحميل كملف صوتي", callback_data="audio")]]
-                audio_reply_markup = InlineKeyboardMarkup(audio_only_keyboard)
-
-                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
-                await context.bot.send_video(chat_id=chat_id, video=video_url, caption=BOT_USERNAME, reply_markup=audio_reply_markup)
-                await status_msg.delete()
-            else:
-                await status_msg.edit_text("❌ تعذر إرسال الفيديو.")
-        except:
-            await status_msg.edit_text("❌ حدث خطأ أثناء إرسال الفيديو.")
+        await update.message.reply_text("❌ حدث خطأ أثناء جلب الملف.")
 
 def main():
     if TOKEN == "YOUR_BOT_TOKEN":
@@ -341,9 +239,8 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
-    app.add_handler(CallbackQueryHandler(button_callback))
     
-    print("🚀 البوت الذكي والمحدث تلقائياً يعمل الآن بكفاءة مطلقة...")
+    print("🚀 البوت يعمل الآن بكفاءة والحالات تظهر تلقائياً...")
     app.run_polling()
 
 if __name__ == '__main__':
