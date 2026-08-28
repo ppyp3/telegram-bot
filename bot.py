@@ -7,12 +7,11 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMe
 from telegram.constants import ChatAction
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 
-# إعداد السجلات
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 TOKEN = os.environ.get("TOKEN")
 BOT_USERNAME = "@G66GBOT"
-ADMIN_IDS = [5782729939] # ضع معرف الآدمن الخاص بك هنا
+ADMIN_IDS = [5782729939]
 
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -46,12 +45,9 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("👑 **مرحباً بك في لوحة تحكم البوت:**", reply_markup=reply_markup)
 
-# ==================== قسم يوتيوب (روابط ومعاينة بدون زر شارك) ====================
+# ==================== قسم يوتيوب (معاينة) ====================
 async def handle_youtube_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    url = update.message.text
-    if "youtube.com" not in url and "youtu.be" not in url:
-        return
-
+    url = update.message.text.strip()
     sent_msg = await update.message.reply_text("⏳ جاري جلب معلومات الفيديو...")
 
     ydl_opts = {"quiet": True, "skip_download": True}
@@ -82,7 +78,6 @@ async def handle_youtube_link(update: Update, context: ContextTypes.DEFAULT_TYPE
     caption += f"👤 {uploader}\n"
     caption += f"⏱ {duration_str} - 👁 {views_str}\n"
 
-    # تم حذف زر المشاركة بناءً على طلبك
     keyboard = [
         [
             InlineKeyboardButton("🎞 | مقطع فيديو.", callback_data=f"yt_vid|{url}"),
@@ -96,9 +91,7 @@ async def handle_youtube_link(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await sent_msg.delete()
     if thumbnail:
-        await update.message.reply_photo(
-            photo=thumbnail, caption=caption, reply_markup=reply_markup
-        )
+        await update.message.reply_photo(photo=thumbnail, caption=caption, reply_markup=reply_markup)
     else:
         await update.message.reply_text(caption, reply_markup=reply_markup)
 
@@ -127,7 +120,7 @@ async def search_youtube_paginated(update: Update, context: ContextTypes.DEFAULT
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             results = ydl.extract_info(query, download=False)
             all_entries = results.get("entries", [])
-    except Exception as e:
+    except Exception:
         if is_callback:
             await update.callback_query.answer("❌ حدث خطأ أثناء البحث.")
         else:
@@ -155,12 +148,9 @@ async def search_youtube_paginated(update: Update, context: ContextTypes.DEFAULT
         views = item.get("view_count", 0)
         video_id = item.get("id", "")
 
-        if duration_sec:
-            minutes = duration_sec // 60
-            seconds = duration_sec % 60
-            duration_str = f"{minutes:02d}:{seconds:02d}"
-        else:
-            duration_str = "00:00"
+        minutes = duration_sec // 60
+        seconds = duration_sec % 60
+        duration_str = f"{minutes:02d}:{seconds:02d}"
 
         if views and views >= 1_000_000:
             views_str = f"{views / 1_000_000:.1f}M"
@@ -169,20 +159,14 @@ async def search_youtube_paginated(update: Update, context: ContextTypes.DEFAULT
         else:
             views_str = str(views or 0)
 
-        response_text += f"🎬 {title}\n"
-        response_text += f"👤 {BOT_USERNAME}\n"
-        response_text += f"⏱ {duration_str} - 👁 {views_str}\n"
-        response_text += f"🔗 https://youtu.be/{video_id}\n\n"
+        response_text += f"🎬 {title}\n👤 {BOT_USERNAME}\n⏱ {duration_str} - 👁 {views_str}\n🔗 https://youtu.be/{video_id}\n\n"
 
     keyboard = []
     nav_buttons = []
-
     if page > 1:
         nav_buttons.append(InlineKeyboardButton("« السابق", callback_data=f"search_page|{query}|{page - 1}"))
-
     if len(all_entries) > offset + results_per_page:
         nav_buttons.append(InlineKeyboardButton("التالي »", callback_data=f"search_page|{query}|{page + 1}"))
-
     if nav_buttons:
         keyboard.append(nav_buttons)
 
@@ -194,7 +178,7 @@ async def search_youtube_paginated(update: Update, context: ContextTypes.DEFAULT
     else:
         await sent_msg.edit_text(response_text, reply_markup=reply_markup)
 
-# ==================== قسم تيك توك (بدون أي تعديل على كودك الأساسي) ====================
+# ==================== قسم تيك توك ====================
 def fetch_tiktok_data(url):
     try:
         current_ua = random.choice(USER_AGENTS)
@@ -209,34 +193,23 @@ def fetch_tiktok_data(url):
         
         if alt_resp.get('code') == 0:
             data = alt_resp.get('data', {})
-            music_url = data.get('music', None)
-            title = data.get('title', 'محتوى تيك توك')
-            
-            clean_title = "".join(c for c in title if c.isalnum() or c in (' ', '_', '-', '🔥')).strip()
-            if not clean_title:
-                clean_title = "tiktok_audio"
-
-            result = {
-                'title': title,
+            return {
+                'title': data.get('title', 'محتوى تيك توك'),
                 'author': data.get('author', {}).get('nickname', 'مستخدم تيك توك'),
-                'music': music_url,
-                'audio_title': f"{clean_title}.mp3",
+                'music': data.get('music', None),
                 'images': data.get('images', []),
                 'play': data.get('play', None)
             }
-            return result
         return None
-    except Exception as e:
-        print(f"Error fetching tiktok data: {e}")
+    except Exception:
         return None
 
 async def handle_tiktok_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    url = update.message.text
+    url = update.message.text.strip()
     processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم قياس حجم التحميل...")
 
     try:
         context.user_data['current_url'] = url
-        
         keyboard = [
             [InlineKeyboardButton("🎵 تحميل كملف صوتي.", callback_data="audio")],
             [InlineKeyboardButton("📥 تحميل باعلى دقه HD.", callback_data="hd_video")]
@@ -261,129 +234,73 @@ async def handle_tiktok_message(update: Update, context: ContextTypes.DEFAULT_TY
                             local_audio_path = f"audio_{random.randint(1000,9999)}.mp3"
                             with open(local_audio_path, 'wb') as f:
                                 f.write(r.content)
-                            
-                            await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VOICE)
-                            with open(local_audio_path, 'rb') as audio_file:
-                                await update.message.reply_audio(
-                                    audio=audio_file, 
-                                    title=title, 
-                                    performer="@G66Gbot",
-                                    caption="- @G66Gbot - 1/1"
-                                )
+                            await update.message.reply_audio(audio=open(local_audio_path, 'rb'), title=title, performer="@G66Gbot", caption="- @G66Gbot")
                             if os.path.exists(local_audio_path):
                                 os.remove(local_audio_path)
-                    except Exception as ex:
-                        print(f"Audio send error: {ex}")
+                    except Exception:
+                        pass
 
-                await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
-                
                 total_images = len(images)
                 for i in range(0, total_images, 10):
                     batch = images[i:i+10]
-                    media_group = []
-                    
-                    for idx, img_url in enumerate(batch):
-                        absolute_index = i + idx + 1
-                        if absolute_index == total_images:
-                            media_group.append(InputMediaPhoto(media=img_url, caption=f"- @G66Gbot - {absolute_index}/{total_images}"))
-                        else:
-                            media_group.append(InputMediaPhoto(media=img_url))
-
-                    if media_group:
-                        await update.message.reply_media_group(media=media_group)
+                    media_group = [InputMediaPhoto(media=img_url, caption=f"- @G66Gbot - {i+idx+1}/{total_images}" if i+idx+1==total_images else None) for idx, img_url in enumerate(batch)]
+                    await update.message.reply_media_group(media=media_group)
 
                 await processing_msg.delete()
                 return
 
             elif video_url:
-                await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VIDEO)
                 await update.message.reply_video(video=video_url, caption=caption_text, reply_markup=reply_markup)
                 await processing_msg.delete()
                 return
 
-        error_custom_msg = (
-            "⚠️┇هذا الملف لا يمكنني تحميله،\n"
-            "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
-            "⚠️┇أعد المحاوله مع ملف اخر."
-        )
-        await processing_msg.edit_text(error_custom_msg)
+        await processing_msg.edit_text("⚠️┇هذا الملف لا يمكنني تحميله، لأن حجمه يتجاوز ( 50 Mbps ).")
+    except Exception:
+        await processing_msg.edit_text("⚠️┇حدث خطأ أثناء تحميل الملف.")
 
-    except Exception as e:
-        print(f"Error in handle_tiktok_message: {e}")
-        error_custom_msg = (
-            "⚠️┇هذا الملف لا يمكنني تحميله،\n"
-            "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
-            "⚠️┇أعد المحاوله مع ملف اخر."
-        )
-        await processing_msg.edit_text(error_custom_msg)
-
-# ==================== الموجه العام للرسائل ====================
+# ==================== الموجه العام للرسائل (محدث بدقة) ====================
 async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
     text = update.message.text if update.message and update.message.text else ""
 
-    if user_id in ADMIN_IDS:
-        if text == "🚪 إخفاء لوحة التحكم":
-            await update.message.reply_text("🚪 تم إخفاء لوحة التحكم. لإظهارها أرسل /admin", reply_markup=ReplyKeyboardRemove())
-            return
-        elif text.startswith("📊") or text.startswith("📢") or text.startswith("🛑") or text.startswith("🗑️") or "-------------------------------------" in text:
-            await update.message.reply_text(f"⚙️ تم استقبال الأمر: {text}")
-            return
-
-    if "tiktok.com" in text:
+    if "tiktok.com" in text or "vm.tiktok.com" in text or "vt.tiktok.com" in text:
         await handle_tiktok_message(update, context)
     elif "youtube.com" in text or "youtu.be" in text:
         await handle_youtube_link(update, context)
     else:
         await search_youtube_paginated(update, context)
 
-# ==================== معالج الأزرار الموحد (إخفاء الأزرار عند الضغط) ====================
+# ==================== معالج الأزرار ====================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
     chat_id = query.message.chat_id
 
-    # 1. إخفاء الأزرار فوراً من الرسالة الأصلية عند الضغط عليها
     try:
         await query.edit_message_reply_markup(reply_markup=None)
     except Exception:
         pass
 
-    # 2. معالجة صفحات البحث لليوتيوب
     if data.startswith("search_page|"):
         _, search_query, page_str = data.split("|", 2)
         await search_youtube_paginated(update, context, page=int(page_str), query=search_query)
         return
 
-    # 3. معالجة تحميل أزرار يوتيوب
     if data.startswith("yt_"):
         try:
             action, url = data.split("|", 1)
         except ValueError:
             return
 
-        await query.answer("⏳ جاري التحميل والمعالجة، يرجى الانتظار...")
+        await query.answer("⏳ جاري التحميل والمعالجة...")
         os.makedirs("downloads", exist_ok=True)
 
-        if action == "yt_vid":
-            ydl_opts = {
-                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-                'outtmpl': 'downloads/%(id)s.%(ext)s',
-                'quiet': True
-            }
-        elif action in ["yt_audio", "yt_voice"]:
-            ydl_opts = {
-                'format': 'bestaudio/best',
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192',
-                }],
-                'outtmpl': 'downloads/%(id)s.%(ext)s',
-                'quiet': True
-            }
-        else:
-            return
+        ydl_opts = {
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' if action == 'yt_vid' else 'bestaudio/best',
+            'outtmpl': 'downloads/%(id)s.%(ext)s',
+            'quiet': True
+        }
+        if action in ["yt_audio", "yt_voice"]:
+            ydl_opts['postprocessors'] = [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}]
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -394,47 +311,27 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 title = info.get('title', 'media')
                 duration_sec = info.get('duration', 0)
+                minutes, seconds = divmod(duration_sec, 60)
+                file_size_mb = f"{os.path.getsize(filename) / (1024 * 1024):.1f}MB"
 
-                minutes = duration_sec // 60
-                seconds = duration_sec % 60
-                duration_str = f"{minutes:02d}:{seconds:02d}"
-
-                file_size_bytes = os.path.getsize(filename)
-                file_size_mb = f"{file_size_bytes / (1024 * 1024):.1f}MB"
-
-            footer_caption = f"{BOT_USERNAME} - {duration_str}, {file_size_mb}"
+            footer = f"{BOT_USERNAME} - {minutes:02d}:{seconds:02d}, {file_size_mb}"
 
             if action == "yt_vid":
-                await query.message.reply_video(
-                    video=open(filename, 'rb'),
-                    caption=f"🎬 {title}\n{footer_caption}",
-                    supports_streaming=True
-                )
+                await query.message.reply_video(video=open(filename, 'rb'), caption=f"🎬 {title}\n{footer}", supports_streaming=True)
             elif action == "yt_voice":
-                await query.message.reply_voice(
-                    video=open(filename, 'rb') if False else open(filename, 'rb'), # استخدام الملف المرفوع كبصمة
-                    caption=f"🎵 {title}\n{footer_caption}"
-                )
+                await query.message.reply_voice(voice=open(filename, 'rb'), caption=f"🎵 {title}\n{footer}")
             elif action == "yt_audio":
-                await query.message.reply_audio(
-                    audio=open(filename, 'rb'),
-                    title=title,
-                    caption=f"🎵 {title}\n{footer_caption}"
-                )
+                await query.message.reply_audio(audio=open(filename, 'rb'), title=title, caption=f"🎵 {title}\n{footer}")
 
             if os.path.exists(filename):
                 os.remove(filename)
-
-        except Exception as e:
+        except Exception:
             await query.message.reply_text("❌ حدث خطأ أثناء تحميل الملف، يرجى المحاولة لاحقاً.")
         return
 
-    # 4. معالجة أزرار تيك توك الأساسية (تختفي الأزرار تلقائياً لأننا أضفنا query.edit_message_reply_markup فوق)
     url = context.user_data.get('current_url')
     video_title = context.user_data.get('video_title', 'محتوى صوتي')
-    
     if not url:
-        await query.message.reply_text("❌ انتهت صلاحية الجلسة، أرسل الرابط مرة أخرى.")
         return
 
     if query.data == "audio":
@@ -442,59 +339,33 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             tiktok_data = fetch_tiktok_data(url)
             audio_link = tiktok_data.get('music') if tiktok_data else None
-
             if audio_link:
                 r = requests.get(audio_link, timeout=15)
                 if r.status_code == 200:
-                    local_audio_path = f"audio_{random.randint(1000,9999)}.mp3"
-                    with open(local_audio_path, 'wb') as f:
+                    local_path = f"audio_{random.randint(1000,9999)}.mp3"
+                    with open(local_path, 'wb') as f:
                         f.write(r.content)
-
-                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
-                    with open(local_audio_path, 'rb') as audio_file:
-                        await context.bot.send_audio(
-                            chat_id=chat_id, 
-                            audio=audio_file, 
-                            title=video_title, 
-                            performer="@G66Gbot", 
-                            caption="- @G66Gbot"
-                        )
-                    if os.path.exists(local_audio_path):
-                        os.remove(local_audio_path)
+                    await context.bot.send_audio(chat_id=chat_id, audio=open(local_path, 'rb'), title=video_title, performer="@G66Gbot", caption="- @G66Gbot")
+                    if os.path.exists(local_path):
+                        os.remove(local_path)
                     await status_msg.delete()
                     return
-        except:
+        except Exception:
             pass
-        await status_msg.edit_text("❌ حدث خطأ أثناء تحميل الملف الصوتي.")
+        await status_msg.edit_text("❌ حدث خطأ.")
 
     elif query.data == "hd_video":
         status_msg = await query.message.reply_text("🔄 جاري إرسال الفيديو...")
         try:
             tiktok_data = fetch_tiktok_data(url)
             video_url = tiktok_data.get('play') if tiktok_data else None
-
             if video_url:
-                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
-                await context.bot.send_video(
-                    chat_id=chat_id, 
-                    video=video_url, 
-                    caption="- @G66Gbot"
-                )
+                await context.bot.send_video(chat_id=chat_id, video=video_url, caption="- @G66Gbot")
                 await status_msg.delete()
             else:
-                error_custom_msg = (
-                    "⚠️┇هذا الملف لا يمكنني تحميله،\n"
-                    "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
-                    "⚠️┇أعد المحاوله مع ملف اخر."
-                )
-                await status_msg.edit_text(error_custom_msg)
+                await status_msg.edit_text("⚠️ حجم الملف يتجاوز الحد المسموح.")
         except Exception:
-            error_custom_msg = (
-                "⚠️┇هذا الملف لا يمكنني تحميله،\n"
-                "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
-                "⚠️┇أعد المحاوله مع ملف اخر."
-            )
-            await status_msg.edit_text(error_custom_msg)
+            await status_msg.edit_text("⚠️ حدث خطأ.")
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
@@ -503,8 +374,8 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_router))
     app.add_handler(CallbackQueryHandler(button_handler))
     
-    print("بوت يوتيوب وتيك توك يعمل الآن بكفاءة وسرعة عالية...")
+    print("البوت يعمل الآن بكفاءة...")
     app.run_polling()
 
-if __name__ == 'main__':
+if __name__ == '__main__':
     main()
