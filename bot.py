@@ -71,40 +71,34 @@ def fetch_tiktok_data(url):
         return None
 
 def fetch_instagram_data(url):
-    """استخراج ذكي يدمج Instaloader للصور والبوستات و YoutubeDL للفيديوهات والريلز مع الكوكيز"""
-    cookie_file_path = "cookies.txt"
-    
-    try:
-        raw_cookie_url = "https://raw.githubusercontent.com/ppyp3/telegram-bot/refs/heads/main/cookies.txt"
-        r = requests.get(raw_cookie_url, timeout=10)
-        if r.status_code == 200 and b"Netscape" in r.content:
-            with open(cookie_file_path, "wb") as f:
-                f.write(r.content)
-    except Exception as e:
-        logger.error(f"Error auto-updating cookies: {e}")
-
+    """استخراج متطور للصور والريلز والبوستات يدمج أحدث تقنيات الجلب"""
     media_list = []
-
-    # 1. محاولة استخراج الصور والبوستات باستخدام Instaloader
+    
+    # 1. محاولة استخدام Instaloader للصور والبوستات المتعددة والريلز
     try:
         L = instaloader.Instaloader(download_pictures=False, download_videos=False, download_comments=False)
         shortcode = None
-        if "/p/" in url:
-            shortcode = url.split("/p/")[1].split("/")[0]
-        elif "/reel/" in url:
-            shortcode = url.split("/reel/")[1].split("/")[0]
-        elif "/tv/" in url:
-            shortcode = url.split("/tv/")[1].split("/")[0]
+        clean_url = url.split("?")[0].rstrip("/")
+        parts = clean_url.split("/")
+        if "p" in parts:
+            shortcode = parts[parts.index("p") + 1]
+        elif "reel" in parts:
+            shortcode = parts[parts.index("reel") + 1]
+        elif "tv" in parts:
+            shortcode = parts[parts.index("tv") + 1]
 
         if shortcode:
             post = instaloader.Post.from_shortcode(L.context, shortcode)
-            if post.qs: 
+            
+            # إذا كان بوست يحتوي على أكثر من صورة/فيديو (Carousel)
+            if post.mediacount > 1:
                 for node in post.get_sidecar_nodes():
                     if node.is_video:
                         media_list.append({'type': 'video', 'url': node.video_url})
                     else:
                         media_list.append({'type': 'photo', 'url': node.display_url})
-            else: 
+            else:
+                # منشور فردي أو ريلز
                 if post.is_video:
                     media_list.append({'type': 'video', 'url': post.video_url})
                 else:
@@ -115,20 +109,19 @@ def fetch_instagram_data(url):
     except Exception as e:
         logger.error(f"Instaloader error: {e}")
 
-    # 2. الطريقة الاحتياطية (YoutubeDL)
-    ydl_opts = {
-        'extract_flat': False,
-        'skip_download': True,
-        'quiet': True,
-        'no_warnings': True,
-        'format': 'best',
-    }
-    if os.path.exists(cookie_file_path) and os.path.getsize(cookie_file_path) > 100:
-        ydl_opts['cookiefile'] = cookie_file_path
-
+    # 2. الطريقة الاحتياطية القوية جداً (YoutubeDL) لضمان جلب الصور المفردة والريلز إذا تعثر الأول
     try:
+        ydl_opts = {
+            'extract_flat': False,
+            'skip_download': True,
+            'quiet': True,
+            'no_warnings': True,
+            'format': 'best',
+        }
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
+            
+            # معالجة الروابط التي تحتوي على عدة محتويات في YoutubeDL
             if 'entries' in info and info['entries']:
                 for entry in info['entries']:
                     m_type = 'video' if entry.get('_type') == 'video' or entry.get('ext') in ['mp4', 'mov'] or entry.get('duration') else 'photo'
@@ -137,7 +130,8 @@ def fetch_instagram_data(url):
                         media_list.append({'type': m_type, 'url': m_url})
             else:
                 m_type = 'video' if info.get('ext') in ['mp4', 'mov'] or info.get('duration') else 'photo'
-                m_url = info.get('url') or info.get('video_url') or info.get('thumbnail')
+                # سحب الصورة بأعلى جودة متوفرة في حالة البوستات أو الصور الثابتة
+                m_url = info.get('url') or info.get('video_url') or info.get('thumbnail') or info.get('display_url')
                 if m_url:
                     media_list.append({'type': m_type, 'url': m_url})
 
@@ -167,7 +161,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     chat_id = update.effective_chat.id
 
-    # إرسال رسالة الانتظار المؤقتة وتخزينها لحذفها لاحقاً
+    # إرسال رسالة الانتظار بالصيغة المطلوبة فوراً
     status_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم قياس حجم التحميل...")
 
     try:
@@ -217,7 +211,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if insta_data and insta_data.get('media'):
                 media_items = insta_data['media'][:10]
                 
-                await status_msg.delete() # حذف رسالة الانتظار فوراً قبل إرسال المحتوى
+                await status_msg.delete() # حذف رسالة الانتظار فوراً قبل الإرسال
                 
                 if len(media_items) == 1:
                     item = media_items[0]
