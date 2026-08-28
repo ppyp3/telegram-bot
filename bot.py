@@ -71,10 +71,10 @@ def fetch_tiktok_data(url):
         return None
 
 def fetch_instagram_media(url):
-    """دالة شاملة لاستخراج الصور عبر Instaloader والفيديوهات/الريلز عبر YoutubeDL مع ضمان الصوت"""
+    """دالة مطورة لجب محتوى انستجرام مع تجنب الحاجة لـ FFmpeg عبر اختيار التنسيقات المدمجة"""
     media_list = []
     
-    # 1. جلب الصور والبوستات عبر Instaloader
+    # 1. جلب الصور والبوستات المتعددة عبر Instaloader
     try:
         L = instaloader.Instaloader(download_pictures=False, download_videos=False, download_comments=False)
         shortcode = None
@@ -99,14 +99,15 @@ def fetch_instagram_media(url):
     except Exception as e:
         logger.error(f"Instaloader photo error: {e}")
 
-    # 2. جلب الريلز والفيديوهات مع الصوت عبر YoutubeDL وتنزيلها كملف مؤقت
+    # 2. جلب الريلز والفيديوهات عبر YoutubeDL باستخدام صيغ مدمجة جاهزة (لا تتطلب FFmpeg)
     try:
         output_template = f"temp_reel_{random.randint(1000, 9999)}.mp4"
         ydl_opts = {
-            'format': 'best',
+            'format': 'best[ext=mp4]/best', # اجبارها على جلب صيغة مدمجة بالصوت والصورة إن امكن
             'outtmpl': output_template,
             'quiet': True,
             'no_warnings': True,
+            'noplaylist': True,
         }
         with YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
@@ -114,6 +115,17 @@ def fetch_instagram_media(url):
                 return {'type': 'video_file', 'path': output_template}
     except Exception as e:
         logger.error(f"YoutubeDL download error: {e}")
+
+    # 3. خطة بديلة سريعة جداً في حال فشل تنزيل الملف المباشر (سحب رابط الفيديو المباشر الأصلي)
+    try:
+        ydl_opts = {'extract_flat': False, 'skip_download': True, 'quiet': True}
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            video_url = info.get('url') or info.get('video_url')
+            if video_url:
+                return {'type': 'video_url', 'url': video_url}
+    except Exception as e:
+        logger.error(f"YoutubeDL fallback link error: {e}")
 
     return None
 
@@ -191,6 +203,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await update.message.reply_video(video=vf, caption=BOT_USERNAME, supports_streaming=True)
                     if os.path.exists(video_path):
                         os.remove(video_path)
+                    return
+
+                elif result['type'] == 'video_url':
+                    video_link = result['url']
+                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
+                    await update.message.reply_video(video=video_link, caption=BOT_USERNAME, supports_streaming=True)
                     return
 
                 elif result['type'] == 'photos':
