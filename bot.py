@@ -2,8 +2,6 @@ import os
 import logging
 import random
 import requests
-from yt_dlp import YoutubeDL
-import instaloader
 from telegram import Update, InputMediaPhoto, InputMediaVideo, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.constants import ChatAction
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
@@ -25,7 +23,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_msg = (
         f"✦ أهلاً بك ⦗ {user_name} ⦘ 🖤\n\n"
         f"▫︎ بوت التحميل الخارق (تيك توك & انستجرام) 📥\n"
-        f"▫︎ يدعم الصور، البوستات، والريلز بدقة كاملة وبدون أخطاء!\n\n"
+        f"▫︎ يدعم الصور، البوستات، والريلز بدقة كاملة وبصوت حقيقي!\n\n"
         f"⚡ أرسل الرابط الآن 🔻"
     )
     await update.message.reply_text(welcome_msg, parse_mode="Markdown")
@@ -70,59 +68,49 @@ def fetch_tiktok_data(url):
         logger.error(f"TikTok error: {e}")
         return None
 
-def fetch_instagram_media(url):
-    """استخراج محتوى انستجرام (صور أو فيديو/ريلز مع الصوت) عبر Instaloader بدقة"""
-    media_list = []
-    try:
-        L = instaloader.Instaloader(download_pictures=False, download_videos=False, download_comments=False)
-        shortcode = None
-        clean_url = url.split("?")[0].rstrip("/")
-        parts = clean_url.split("/")
-        if "p" in parts:
-            shortcode = parts[parts.index("p") + 1]
-        elif "reel" in parts:
-            shortcode = parts[parts.index("reel") + 1]
-        elif "tv" in parts:
-            shortcode = parts[parts.index("tv") + 1]
-
-        if shortcode:
-            post = instaloader.Post.from_shortcode(L.context, shortcode)
-            
-            # إذا كان فيديو أو ريلز (يحتوي على الصوت الأصلي مجتمعاً في رابط الـ video_url الخاص بـ instaloader)
-            if post.is_video:
-                return {'type': 'video_url', 'url': post.video_url}
-            
-            # إذا كان بوست صور متعدد أو صورة واحدة
-            if post.mediacount > 1:
-                for node in post.get_sidecar_nodes():
-                    if node.is_video:
-                        media_list.append({'type': 'video', 'url': node.video_url})
-                    else:
-                        media_list.append({'type': 'photo', 'url': node.display_url})
-            else:
-                media_list.append({'type': 'photo', 'url': post.url})
-            
-            if media_list:
-                return {'type': 'media_group', 'media': media_list}
-    except Exception as e:
-        logger.error(f"Instaloader error: {e}")
-
-    # خطة احتياطية عبر YoutubeDL في حال لم يتعرف عليها Instaloader
+def fetch_instagram_data(url):
+    """جلب انستجرام عبر خدمة مجانية مضمونة تدمج الصوت والصورة تلقائياً"""
     try:
         current_ua = random.choice(USER_AGENTS)
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'http_headers': {'User-Agent': current_ua},
-        }
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            video_url = info.get('url') or info.get('video_url')
-            if video_url:
-                return {'type': 'video_url', 'url': video_url}
-    except Exception as e:
-        logger.error(f"YoutubeDL fallback error: {e}")
+        headers = {'User-Agent': current_ua}
+        
+        # استخدام خدمة سحب آمنة ومستقرة للريلز والصور
+        api_url = f"https://apis.davidcyriltech.my.id/instagram?url={url}"
+        response = requests.get(api_url, headers=headers, timeout=15)
+        if response.status_code == 200:
+            res_json = response.json()
+            if res_json.get("success") or res_json.get("status") == 200 or "data" in res_json:
+                data = res_json.get("data", res_json.get("result", res_json))
+                
+                # إذا كان مقطع فيديو أو ريلز
+                if isinstance(data, list) and len(data) > 0:
+                    media_list = []
+                    for item in data:
+                        m_url = item.get('url') or item.get('download_url')
+                        m_type = 'video' if ('mp4' in str(m_url) or item.get('type') == 'video') else 'photo'
+                        media_list.append({'type': m_type, 'url': m_url})
+                    return {'type': 'media_group', 'media': media_list}
+                
+                elif isinstance(data, dict):
+                    video_url = data.get('url') or data.get('download_url') or data.get('video_url')
+                    if video_url:
+                        return {'type': 'video_url', 'url': video_url}
+                    
+                    # لو صور متعددة
+                    images = data.get('images') or data.get('carousel_media')
+                    if images:
+                        media_list = [{'type': 'photo', 'url': img.get('url', img)} for img in images]
+                        return {'type': 'media_group', 'media': media_list}
+        
+        # خطة بديلة ثانية في حال فشل الأولى
+        fallback_api = f"https://qi-api.xyz/instagram?url={url}"
+        fb_resp = requests.get(fallback_api, headers=headers, timeout=15).json()
+        if fb_resp.get('url') or fb_resp.get('video_url'):
+            return {'type': 'video_url', 'url': fb_resp.get('url') or fb_resp.get('video_url')}
 
+    except Exception as e:
+        logger.error(f"Instagram API error: {e}")
+    
     return None
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -143,7 +131,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     chat_id = update.effective_chat.id
-    status_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم جلب الملف...")
+    status_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم جلب الملف بالصوت والصورة...")
 
     try:
         if "tiktok.com" in url:
@@ -188,7 +176,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
 
         elif "instagram.com" in url:
-            result = fetch_instagram_media(url)
+            result = fetch_instagram_data(url)
             await status_msg.delete() 
 
             if result:
@@ -196,7 +184,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     video_link = result['url']
                     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
                     
-                    # تحميل الفيديو مؤقتماً وإرساله كملف لضمان عمل الصوت والصورة وعدم تحوله لـ GIF
+                    # تحميل الفيديو مؤقتماً للتأكد من إرساله كملف فيديو نظامي مع الصوت
                     video_res = requests.get(video_link, stream=True, timeout=25)
                     if video_res.status_code == 200:
                         local_video_path = f"insta_{random.randint(1000,9999)}.mp4"
