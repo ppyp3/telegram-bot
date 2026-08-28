@@ -2,13 +2,16 @@ import os
 import logging
 import random
 import requests
+import yt_dlp
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.constants import ChatAction
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 
+# إعداد السجلات
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 TOKEN = os.environ.get("TOKEN")
+BOT_USERNAME = "@G66GBOT"
 ADMIN_IDS = [5782729939] # ضع معرف الآدمن الخاص بك هنا
 
 USER_AGENTS = [
@@ -22,9 +25,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
     welcome_msg = (
         f"✦ أهلاً بك ⦗ {user_name} ⦘ 🖤\n\n"
-        f"▫︎ بوت تحميل التيك توك السريع 📥\n"
-        f"▫︎ فيديوهات بدون حقوق • صور • صوتيات\n\n"
-        f"⚡ أرسل الرابط الآن للبدء 🔻"
+        f"▫︎ بوت تحميل يوتيوب وتيك توك السريع 📥\n"
+        f"▫︎ فيديوهات • صور • صوتيات\n\n"
+        f"⚡ أرسل الرابط أو ابحث بالاسم الآن للبدء 🔻"
     )
     await update.message.reply_text(welcome_msg, parse_mode="Markdown")
 
@@ -43,6 +46,157 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("👑 **مرحباً بك في لوحة تحكم البوت:**", reply_markup=reply_markup)
 
+# ==================== قسم يوتيوب (روابط ومعاينة) ====================
+async def handle_youtube_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    url = update.message.text
+    if "youtube.com" not in url and "youtu.be" not in url:
+        return
+
+    sent_msg = await update.message.reply_text("⏳ جاري جلب معلومات الفيديو...")
+
+    ydl_opts = {"quiet": True, "skip_download": True}
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            title = info.get("title", "فيديو يوتيوب")
+            uploader = info.get("uploader", "قناة غير معروفة")
+            duration_sec = info.get("duration", 0)
+            views = info.get("view_count", 0)
+            thumbnail = info.get("thumbnail", None)
+
+            minutes = duration_sec // 60
+            seconds = duration_sec % 60
+            duration_str = f"{minutes:02d}:{seconds:02d}"
+
+            if views and views >= 1_000_000:
+                views_str = f"{views / 1_000_000:.1f}M"
+            elif views and views >= 1_000:
+                views_str = f"{views / 1_000:.1f}K"
+            else:
+                views_str = str(views or 0)
+    except Exception as e:
+        await sent_msg.edit_text("❌ عذراً، لم أتمكن من جلب معلومات هذا الرابط.")
+        return
+
+    caption = f"🎬 {title}\n"
+    caption += f"👤 {uploader}\n"
+    caption += f"⏱ {duration_str} - 👁 {views_str}\n"
+
+    keyboard = [
+        [
+            InlineKeyboardButton("🎞 | مقطع فيديو.", callback_data=f"yt_vid|{url}"),
+        ],
+        [
+            InlineKeyboardButton("🔊 | بصمة صوتية.", callback_data=f"yt_voice|{url}"),
+            InlineKeyboardButton("🎵 | ملف صوتي.", callback_data=f"yt_audio|{url}"),
+        ],
+        [
+            InlineKeyboardButton("🔄 | شارك.", url=f"https://t.me/share/url?url={url}")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await sent_msg.delete()
+    if thumbnail:
+        await update.message.reply_photo(
+            photo=thumbnail, caption=caption, reply_markup=reply_markup
+        )
+    else:
+        await update.message.reply_text(caption, reply_markup=reply_markup)
+
+# ==================== قسم يوتيوب (البحث المتقدم) ====================
+async def search_youtube_paginated(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 1, query: str = None):
+    is_callback = update.callback_query is not None
+
+    if not query:
+        query = update.message.text
+        if query.startswith("/"):
+            return
+        sent_msg = await update.message.reply_text("🔍 | جاري البحث في اليوتيوب...")
+    else:
+        sent_msg = update.callback_query.message
+
+    results_per_page = 5
+    offset = (page - 1) * results_per_page
+
+    ydl_opts = {
+        "quiet": True,
+        "extract_flat": True,
+        "default_search": f"ytsearch{offset + results_per_page}",
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            results = ydl.extract_info(query, download=False)
+            all_entries = results.get("entries", [])
+    except Exception as e:
+        if is_callback:
+            await update.callback_query.answer("❌ حدث خطأ أثناء البحث.")
+        else:
+            await sent_msg.edit_text("❌ حدث خطأ أثناء البحث، حاول مرة أخرى.")
+        return
+
+    if not all_entries:
+        if is_callback:
+            await update.callback_query.answer("❌ لم يتم العثور على نتائج.")
+        else:
+            await sent_msg.edit_text("❌ لم يتم العثور على نتائج مطابقة لبحثك.")
+        return
+
+    entries = all_entries[offset:offset + results_per_page]
+    if not entries:
+        if is_callback:
+            await update.callback_query.answer("هذه هي الصفحة الأخيرة.")
+        return
+
+    response_text = f"🔎 | نتائج بحث اليوتيوب لـ \"{query}\"\n\n"
+
+    for item in entries:
+        title = item.get("title", "بدون عنوان")
+        duration_sec = item.get("duration", 0)
+        views = item.get("view_count", 0)
+        video_id = item.get("id", "")
+
+        if duration_sec:
+            minutes = duration_sec // 60
+            seconds = duration_sec % 60
+            duration_str = f"{minutes:02d}:{seconds:02d}"
+        else:
+            duration_str = "00:00"
+
+        if views and views >= 1_000_000:
+            views_str = f"{views / 1_000_000:.1f}M"
+        elif views and views >= 1_000:
+            views_str = f"{views / 1_000:.1f}K"
+        else:
+            views_str = str(views or 0)
+
+        response_text += f"🎬 {title}\n"
+        response_text += f"👤 {BOT_USERNAME}\n"
+        response_text += f"⏱ {duration_str} - 👁 {views_str}\n"
+        response_text += f"🔗 https://youtu.be/{video_id}\n\n"
+
+    keyboard = []
+    nav_buttons = []
+
+    if page > 1:
+        nav_buttons.append(InlineKeyboardButton("« السابق", callback_data=f"search_page|{query}|{page - 1}"))
+
+    if len(all_entries) > offset + results_per_page:
+        nav_buttons.append(InlineKeyboardButton("التالي »", callback_data=f"search_page|{query}|{page + 1}"))
+
+    if nav_buttons:
+        keyboard.append(nav_buttons)
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if is_callback:
+        await update.callback_query.edit_message_text(response_text, reply_markup=reply_markup)
+        await update.callback_query.answer()
+    else:
+        await sent_msg.edit_text(response_text, reply_markup=reply_markup)
+
+# ==================== قسم تيك توك (بدون أي تعديل على كودك الأساسي) ====================
 def fetch_tiktok_data(url):
     try:
         current_ua = random.choice(USER_AGENTS)
@@ -78,23 +232,8 @@ def fetch_tiktok_data(url):
         print(f"Error fetching tiktok data: {e}")
         return None
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    text = update.message.text if update.message and update.message.text else ""
-
-    if user_id in ADMIN_IDS:
-        if text == "🚪 إخفاء لوحة التحكم":
-            await update.message.reply_text("🚪 تم إخفاء لوحة التحكم. لإظهارها أرسل /admin", reply_markup=ReplyKeyboardRemove())
-            return
-        elif text.startswith("📊") or text.startswith("📢") or text.startswith("🛑") or text.startswith("🗑️") or "-------------------------------------" in text:
-            await update.message.reply_text(f"⚙️ تم استقبال الأمر: {text}")
-            return
-
-    url = text
-    if not url or not ("tiktok.com" in url):
-        await update.message.reply_text("❌ أرسل رابط تيك توك صحيحاً من فضلك.")
-        return
-
+async def handle_tiktok_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    url = update.message.text
     processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم قياس حجم التحميل...")
 
     try:
@@ -164,7 +303,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await processing_msg.delete()
                 return
 
-        # رسالة الخطأ المخصصة في حال كان الملف كبير جداً أو مرفوض من الـ API
         error_custom_msg = (
             "⚠️┇هذا الملف لا يمكنني تحميله،\n"
             "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
@@ -173,7 +311,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await processing_msg.edit_text(error_custom_msg)
 
     except Exception as e:
-        print(f"Error in handle_message: {e}")
+        print(f"Error in handle_tiktok_message: {e}")
         error_custom_msg = (
             "⚠️┇هذا الملف لا يمكنني تحميله،\n"
             "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
@@ -181,11 +319,122 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await processing_msg.edit_text(error_custom_msg)
 
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ==================== الموجه العام للرسائل ====================
+async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text if update.message and update.message.text else ""
+
+    if user_id in ADMIN_IDS:
+        if text == "🚪 إخفاء لوحة التحكم":
+            await update.message.reply_text("🚪 تم إخفاء لوحة التحكم. لإظهارها أرسل /admin", reply_markup=ReplyKeyboardRemove())
+            return
+        elif text.startswith("📊") or text.startswith("📢") or text.startswith("🛑") or text.startswith("🗑️") or "-------------------------------------" in text:
+            await update.message.reply_text(f"⚙️ تم استقبال الأمر: {text}")
+            return
+
+    if "tiktok.com" in text:
+        await handle_tiktok_message(update, context)
+    elif "youtube.com" in text or "youtu.be" in text:
+        await handle_youtube_link(update, context)
+    else:
+        # إذا مو رابط تيك توك أو يوتيوب، يعتبره بحث في يوتيوب
+        await search_youtube_paginated(update, context)
+
+# ==================== معالج الأزرار الموحد (يوتيوب + تيك توك) ====================
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    data = query.data
     chat_id = query.message.chat_id
-    
+
+    # 1. معالجة صفحات البحث لليوتيوب
+    if data.startswith("search_page|"):
+        _, search_query, page_str = data.split("|", 2)
+        await search_youtube_paginated(update, context, page=int(page_str), query=search_query)
+        return
+
+    # 2. معالجة تحميل أزرار يوتيوب
+    if data.startswith("yt_"):
+        try:
+            action, url = data.split("|", 1)
+        except ValueError:
+            return
+
+        await query.answer("⏳ جاري التحميل والمعالجة، يرجى الانتظار...")
+        os.makedirs("downloads", exist_ok=True)
+
+        if action == "yt_vid":
+            ydl_opts = {
+                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                'outtmpl': 'downloads/%(id)s.%(ext)s',
+                'quiet': True
+            }
+        elif action in ["yt_audio", "yt_voice"]:
+            ydl_opts = {
+                'format': 'bestaudio/best',
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }],
+                'outtmpl': 'downloads/%(id)s.%(ext)s',
+                'quiet': True
+            }
+        else:
+            return
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                filename = ydl.prepare_filename(info)
+                if action in ["yt_audio", "yt_voice"]:
+                    filename = os.path.splitext(filename)[0] + ".mp3"
+                
+                title = info.get('title', 'media')
+                duration_sec = info.get('duration', 0)
+
+                minutes = duration_sec // 60
+                seconds = duration_sec % 60
+                duration_str = f"{minutes:02d}:{seconds:02d}"
+
+                file_size_bytes = os.path.getsize(filename)
+                file_size_mb = f"{file_size_bytes / (1024 * 1024):.1f}MB"
+
+            footer_caption = f"{BOT_USERNAME} - {duration_str}, {file_size_mb}"
+
+            share_keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 | شارك.", url=f"https://t.me/share/url?url=https://t.me/{BOT_USERNAME.replace('@','')}")]
+            ])
+
+            if action == "yt_vid":
+                await query.message.reply_video(
+                    video=open(filename, 'rb'),
+                    caption=f"🎬 {title}\n{footer_caption}",
+                    reply_markup=share_keyboard,
+                    supports_streaming=True
+                )
+            elif action == "yt_voice":
+                await query.message.reply_voice(
+                    voice=open(filename, 'rb'),
+                    caption=f"🎵 {title}\n{footer_caption}",
+                    reply_markup=share_keyboard
+                )
+            elif action == "yt_audio":
+                await query.message.reply_audio(
+                    audio=open(filename, 'rb'),
+                    title=title,
+                    caption=f"🎵 {title}\n{footer_caption}",
+                    reply_markup=share_keyboard
+                )
+
+            if os.path.exists(filename):
+                os.remove(filename)
+
+        except Exception as e:
+            await query.message.reply_text("❌ حدث خطأ أثناء تحميل الملف، يرجى المحاولة لاحقاً.")
+        return
+
+    # 3. معالجة أزرار تيك توك الأساسية (كما هي بدون تغيير)
+    await query.answer()
     url = context.user_data.get('current_url')
     video_title = context.user_data.get('video_title', 'محتوى صوتي')
     
@@ -272,10 +521,10 @@ def main():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_panel))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
-    app.add_handler(CallbackQueryHandler(button_callback))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_router))
+    app.add_handler(CallbackQueryHandler(button_handler))
     
-    print("بوت تيك توك يعمل الآن بكفاءة وسرعة عالية...")
+    print("بوت يوتيوب وتيك توك يعمل الآن بكفاءة وسرعة عالية...")
     app.run_polling()
 
 if __name__ == '__main__':
