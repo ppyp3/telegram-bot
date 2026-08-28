@@ -43,30 +43,48 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👑 **مرحباً بك في لوحة تحكم البوت:**", reply_markup=reply_markup)
 
 def fetch_media_data(url):
+    current_ua = random.choice(USER_AGENTS)
+    headers = {'User-Agent': current_ua, 'Accept-Language': 'en-US,en;q=0.9'}
+
+    # 1. محاولة استخدام SnapTik / TikWM لتيك توك
+    if "tiktok.com" in url:
+        try:
+            if "vm.tiktok.com" in url or "vt.tiktok.com" in url:
+                r = requests.get(url, allow_redirects=True, timeout=10, headers=headers)
+                url = r.url
+            api_url = f"https://tikwm.com/api/?url={url}&music=1"
+            resp = requests.get(api_url, headers=headers, timeout=10).json()
+            if resp.get('code') == 0:
+                data = resp.get('data', {})
+                username = data.get('author', {}).get('unique_id', 'tiktok_user')
+                return {
+                    'author': f"@{username}",
+                    'images': data.get('images', []),
+                    'play': data.get('play', None)
+                }
+        except Exception as e:
+            print(f"TikTok fetch error: {e}")
+
+    # 2. محاولة جلب روابط انستجرام عبر عدة بدائل قوية ومستقرة
     try:
-        current_ua = random.choice(USER_AGENTS)
-        headers = {'User-Agent': current_ua, 'Accept-Language': 'en-US,en;q=0.9'}
+        # البدء بمحاولة API بديل سريع ومجاني لانستجرام
+        ig_api = f"https://apis.davidcyriltech.my.id/instagram?url={url}"
+        resp = requests.get(ig_api, timeout=12).json()
+        if resp.get('status') == 200 and resp.get('success'):
+            result_data = resp.get('result', [])
+            if isinstance(result_data, list) and len(result_data) > 0:
+                first_item = result_data[0]
+                video_url = first_item.get('url') if isinstance(first_item, dict) else first_item
+                return {
+                    'author': '@instagram_user',
+                    'images': [],
+                    'play': video_url
+                }
+    except Exception as e:
+        print(f"IG API 1 error: {e}")
 
-        if "vm.tiktok.com" in url or "vt.tiktok.com" in url:
-            r = requests.get(url, allow_redirects=True, timeout=10, headers=headers)
-            url = r.url
-
-        # محاولة تيك توك
-        api_url = f"https://tikwm.com/api/?url={url}&music=1"
-        resp = requests.get(api_url, headers=headers, timeout=10).json()
-        
-        if resp.get('code') == 0:
-            data = resp.get('data', {})
-            author_info = data.get('author', {})
-            username = author_info.get('unique_id') or author_info.get('nickname') or 'tiktok_user'
-            return {
-                'platform': 'tiktok',
-                'author': f"@{username}",
-                'images': data.get('images', []),
-                'play': data.get('play', None)
-            }
-
-        # محاولة انستجرام وباقي المنصات عبر Cobalt API لاستخراج صاحب الحساب أو الرابط بشكل دقيق
+    # 3. محاولة احتياطية ثانية عبر Cobalt API
+    try:
         cobalt_api = "https://co.wuk.sh/api/json"
         payload = {"url": url, "vQuality": "max"}
         cobalt_headers = {"Accept": "application/json", "Content-Type": "application/json", "User-Agent": current_ua}
@@ -77,10 +95,6 @@ def fetch_media_data(url):
             media_url = cobalt_resp.get('url')
             picker_items = cobalt_resp.get('picker', [])
             
-            # محاولة التقاط اسم الحساب من الاستجابة إن وجد أو استخدام اليوزر الافتراضي
-            meta_author = cobalt_resp.get('author') or "instagram_user"
-            formatted_author = f"@{meta_author}" if not meta_author.startswith("@") else meta_author
-
             images_list = []
             video_url = media_url
             
@@ -92,16 +106,14 @@ def fetch_media_data(url):
                         video_url = item.get('url')
 
             return {
-                'platform': 'instagram',
-                'author': formatted_author,
+                'author': '@instagram_user',
                 'images': images_list,
                 'play': video_url if not images_list else None
             }
-
-        return None
     except Exception as e:
-        print(f"Error fetching media data: {e}")
-        return None
+        print(f"Cobalt API error: {e}")
+
+    return None
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -120,16 +132,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ أرسل رابط تيك توك أو انستجرام صحيحاً من فضلك.")
         return
 
-    processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم قياس حجم التحميل...")
+    processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم جلب الملف...")
 
     try:
         media_data = fetch_media_data(url)
         if media_data:
-            author = media_data['author']
-            images = media_data['images']
-            video_url = media_data['play']
-            
-            caption_text = author if author else "@G66Gbot"
+            author = media_data.get('author', '@instagram_user')
+            images = media_data.get('images', [])
+            video_url = media_data.get('play')
 
             if images:
                 await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
@@ -141,7 +151,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     for idx, img_url in enumerate(batch):
                         absolute_index = i + idx + 1
                         if absolute_index == total_images:
-                            media_group.append(InputMediaPhoto(media=img_url, caption=f"{caption_text} - {absolute_index}/{total_images}"))
+                            media_group.append(InputMediaPhoto(media=img_url, caption=f"{author} - {absolute_index}/{total_images}"))
                         else:
                             media_group.append(InputMediaPhoto(media=img_url))
 
@@ -153,26 +163,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             elif video_url:
                 await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VIDEO)
-                # إرسال الفيديو باليوزر الخاص بصاحب الحساب حصراً وبدون أي أزرار
-                await update.message.reply_video(video=video_url, caption=caption_text)
+                await update.message.reply_video(video=video_url, caption=author)
                 await processing_msg.delete()
                 return
 
-        error_custom_msg = (
-            "⚠️┇هذا الملف لا يمكنني تحميله،\n"
-            "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
-            "⚠️┇أعد المحاوله مع ملف اخر."
+        await processing_msg.edit_text(
+            "⚠️┇عذراً، تعذر جلب رابط الفيديو من انستجرام.\n"
+            "⚠️┇تأكد أن الحساب عام وليس خاصاً، أو أعد المحاولة."
         )
-        await processing_msg.edit_text(error_custom_msg)
 
     except Exception as e:
         print(f"Error in handle_message: {e}")
-        error_custom_msg = (
-            "⚠️┇هذا الملف لا يمكنني تحميله،\n"
-            "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
-            "⚠️┇أعد المحاوله مع ملف اخر."
+        await processing_msg.edit_text(
+            "⚠️┇حدث خطأ أثناء الاتصال بسيرفر التحميل.\n"
+            "⚠️┇أعد المحاولة لاحقاً."
         )
-        await processing_msg.edit_text(error_custom_msg)
 
 def main():
     if not TOKEN:
