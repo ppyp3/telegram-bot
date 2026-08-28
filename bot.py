@@ -74,7 +74,6 @@ def fetch_instagram_data(url):
     """استخراج ذكي يدمج Instaloader للصور والبوستات و YoutubeDL للفيديوهات والريلز مع الكوكيز"""
     cookie_file_path = "cookies.txt"
     
-    # تحديث الكوكيز تلقائياً من GitHub
     try:
         raw_cookie_url = "https://raw.githubusercontent.com/ppyp3/telegram-bot/refs/heads/main/cookies.txt"
         r = requests.get(raw_cookie_url, timeout=10)
@@ -86,10 +85,9 @@ def fetch_instagram_data(url):
 
     media_list = []
 
-    # 1. محاولة استخراج الصور والبوستات باستخدام Instaloader لضمان عدم فشلها أبداً
+    # 1. محاولة استخراج الصور والبوستات باستخدام Instaloader
     try:
         L = instaloader.Instaloader(download_pictures=False, download_videos=False, download_comments=False)
-        # استخراج Shortcode من الرابط
         shortcode = None
         if "/p/" in url:
             shortcode = url.split("/p/")[1].split("/")[0]
@@ -100,13 +98,13 @@ def fetch_instagram_data(url):
 
         if shortcode:
             post = instaloader.Post.from_shortcode(L.context, shortcode)
-            if post.qs: # إذا كان بوست متعدد الصور/الفيديوهات
+            if post.qs: 
                 for node in post.get_sidecar_nodes():
                     if node.is_video:
                         media_list.append({'type': 'video', 'url': node.video_url})
                     else:
                         media_list.append({'type': 'photo', 'url': node.display_url})
-            else: # منشور أو صورة أو ريل فردي
+            else: 
                 if post.is_video:
                     media_list.append({'type': 'video', 'url': post.video_url})
                 else:
@@ -117,7 +115,7 @@ def fetch_instagram_data(url):
     except Exception as e:
         logger.error(f"Instaloader error: {e}")
 
-    # 2. الطريقة الاحتياطية (YoutubeDL) في حال لم يتم استخراجها عبر Instaloader
+    # 2. الطريقة الاحتياطية (YoutubeDL)
     ydl_opts = {
         'extract_flat': False,
         'skip_download': True,
@@ -169,7 +167,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     chat_id = update.effective_chat.id
 
-    # إرسال رسالة الانتظار المؤقتة التي طلبتها
+    # إرسال رسالة الانتظار المؤقتة وتخزينها لحذفها لاحقاً
     status_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم قياس حجم التحميل...")
 
     try:
@@ -198,7 +196,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         except:
                             pass
 
-                    await status_msg.delete() # حذف رسالة الانتظار
+                    await status_msg.delete() 
                     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
                     total_images = len(images)
                     for i in range(0, total_images, 10):
@@ -209,7 +207,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
 
                 elif video_url:
-                    await status_msg.delete() # حذف رسالة الانتظار
+                    await status_msg.delete() 
                     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
                     await update.message.reply_video(video=video_url, caption=BOT_USERNAME)
                     return
@@ -219,7 +217,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if insta_data and insta_data.get('media'):
                 media_items = insta_data['media'][:10]
                 
-                await status_msg.delete() # حذف رسالة الانتظار فور بدء الإرسال
+                await status_msg.delete() # حذف رسالة الانتظار فوراً قبل إرسال المحتوى
                 
                 if len(media_items) == 1:
                     item = media_items[0]
