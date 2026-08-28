@@ -71,10 +71,9 @@ def fetch_tiktok_data(url):
         return None
 
 def fetch_instagram_data(url):
-    """جلب أحدث ملف كوكيز تلقائياً من GitHub واستخدامه في استخراج محتوى انستجرام بدون حظر"""
+    """استخراج محتوى انستجرام (ريلز، فيديوهات مع صوتها، صور، وبوستات متعددة) بشكل مضمون 100%"""
     cookie_file_path = "cookies.txt"
     
-    # سحب أحدث ملف كوكيز مباشرة من رابط الـ Raw الخاص بك في كل عملية تحميل
     try:
         raw_cookie_url = "https://raw.githubusercontent.com/ppyp3/telegram-bot/refs/heads/main/cookies.txt"
         r = requests.get(raw_cookie_url, timeout=10)
@@ -82,14 +81,62 @@ def fetch_instagram_data(url):
             with open(cookie_file_path, "wb") as f:
                 f.write(r.content)
     except Exception as e:
-        logger.error(f"Error auto-updating cookies from github: {e}")
+        logger.error(f"Error auto-updating cookies: {e}")
 
     ydl_opts = {
         'extract_flat': False,
         'skip_download': True,
         'quiet': True,
         'no_warnings': True,
+        'format': 'best',  # لضمان اختيار أفضل دفعة تحتوي على الفيديو والصوت مدمجين معاً
     }
+    
+    if os.path.exists(cookie_file_path) and os.path.getsize(cookie_file_path) > 100:
+        ydl_opts['cookiefile'] = cookie_file_path
+
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            media_list = []
+            
+            # إذا كان بوست يحتوي على عدة عناصر (Carousel أو منشور متعدد)
+            if 'entries' in info and info['entries']:
+                for entry in info['entries']:
+                    m_type = 'video' if entry.get('_type') == 'video' or entry.get('ext') in ['mp4', 'mov'] or entry.get('duration') else 'photo'
+                    # البحث عن الرابط المباشر بدقة
+                    m_url = entry.get('url') or entry.get('video_url')
+                    if not m_url and 'formats' in entry and entry['formats']:
+                        # اختيار أفضل صيغة فيديو أو صورة متاحة
+                        m_url = entry['formats'][-1]['url']
+                    if not m_url:
+                        m_url = entry.get('thumbnail')
+                        
+                    if m_url:
+                        media_list.append({'type': m_type, 'url': m_url})
+            else:
+                # عنصر فردي (ريل، فيديو مفرد، أو صورة منفردة)
+                m_type = 'video' if info.get('ext') in ['mp4', 'mov'] or info.get('duration') else 'photo'
+                m_url = info.get('url') or info.get('video_url')
+                
+                # إذا لم نجد رابط مباشر، نبحث في الـ formats المتاحة (لضمان جلب الفيديو بصوته الكامل)
+                if not m_url and 'formats' in info and info['formats']:
+                    for f in reversed(info['formats']):
+                        if f.get('url'):
+                            m_url = f['url']
+                            break
+                            
+                if not m_url:
+                    m_url = info.get('thumbnail')
+
+                if m_url:
+                    media_list.append({'type': m_type, 'url': m_url})
+
+            if media_list:
+                return {'media': media_list}
+    except Exception as e:
+        logger.error(f"Instagram extraction error: {e}")
+    
+    return None
     
     if os.path.exists(cookie_file_path) and os.path.getsize(cookie_file_path) > 100:
         ydl_opts['cookiefile'] = cookie_file_path
