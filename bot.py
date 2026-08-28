@@ -46,7 +46,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("👑 **مرحباً بك في لوحة تحكم البوت:**", reply_markup=reply_markup)
 
-# ==================== قسم يوتيوب (روابط ومعاينة) ====================
+# ==================== قسم يوتيوب (روابط ومعاينة بدون زر شارك) ====================
 async def handle_youtube_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text
     if "youtube.com" not in url and "youtu.be" not in url:
@@ -82,6 +82,7 @@ async def handle_youtube_link(update: Update, context: ContextTypes.DEFAULT_TYPE
     caption += f"👤 {uploader}\n"
     caption += f"⏱ {duration_str} - 👁 {views_str}\n"
 
+    # تم حذف زر المشاركة بناءً على طلبك
     keyboard = [
         [
             InlineKeyboardButton("🎞 | مقطع فيديو.", callback_data=f"yt_vid|{url}"),
@@ -89,9 +90,6 @@ async def handle_youtube_link(update: Update, context: ContextTypes.DEFAULT_TYPE
         [
             InlineKeyboardButton("🔊 | بصمة صوتية.", callback_data=f"yt_voice|{url}"),
             InlineKeyboardButton("🎵 | ملف صوتي.", callback_data=f"yt_audio|{url}"),
-        ],
-        [
-            InlineKeyboardButton("🔄 | شارك.", url=f"https://t.me/share/url?url={url}")
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -337,22 +335,27 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif "youtube.com" in text or "youtu.be" in text:
         await handle_youtube_link(update, context)
     else:
-        # إذا مو رابط تيك توك أو يوتيوب، يعتبره بحث في يوتيوب
         await search_youtube_paginated(update, context)
 
-# ==================== معالج الأزرار الموحد (يوتيوب + تيك توك) ====================
+# ==================== معالج الأزرار الموحد (إخفاء الأزرار عند الضغط) ====================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
     chat_id = query.message.chat_id
 
-    # 1. معالجة صفحات البحث لليوتيوب
+    # 1. إخفاء الأزرار فوراً من الرسالة الأصلية عند الضغط عليها
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    # 2. معالجة صفحات البحث لليوتيوب
     if data.startswith("search_page|"):
         _, search_query, page_str = data.split("|", 2)
         await search_youtube_paginated(update, context, page=int(page_str), query=search_query)
         return
 
-    # 2. معالجة تحميل أزرار يوتيوب
+    # 3. معالجة تحميل أزرار يوتيوب
     if data.startswith("yt_"):
         try:
             action, url = data.split("|", 1)
@@ -401,29 +404,22 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             footer_caption = f"{BOT_USERNAME} - {duration_str}, {file_size_mb}"
 
-            share_keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔄 | شارك.", url=f"https://t.me/share/url?url=https://t.me/{BOT_USERNAME.replace('@','')}")]
-            ])
-
             if action == "yt_vid":
                 await query.message.reply_video(
                     video=open(filename, 'rb'),
                     caption=f"🎬 {title}\n{footer_caption}",
-                    reply_markup=share_keyboard,
                     supports_streaming=True
                 )
             elif action == "yt_voice":
                 await query.message.reply_voice(
-                    voice=open(filename, 'rb'),
-                    caption=f"🎵 {title}\n{footer_caption}",
-                    reply_markup=share_keyboard
+                    video=open(filename, 'rb') if False else open(filename, 'rb'), # استخدام الملف المرفوع كبصمة
+                    caption=f"🎵 {title}\n{footer_caption}"
                 )
             elif action == "yt_audio":
                 await query.message.reply_audio(
                     audio=open(filename, 'rb'),
                     title=title,
-                    caption=f"🎵 {title}\n{footer_caption}",
-                    reply_markup=share_keyboard
+                    caption=f"🎵 {title}\n{footer_caption}"
                 )
 
             if os.path.exists(filename):
@@ -433,8 +429,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("❌ حدث خطأ أثناء تحميل الملف، يرجى المحاولة لاحقاً.")
         return
 
-    # 3. معالجة أزرار تيك توك الأساسية (كما هي بدون تغيير)
-    await query.answer()
+    # 4. معالجة أزرار تيك توك الأساسية (تختفي الأزرار تلقائياً لأننا أضفنا query.edit_message_reply_markup فوق)
     url = context.user_data.get('current_url')
     video_title = context.user_data.get('video_title', 'محتوى صوتي')
     
@@ -443,11 +438,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if query.data == "audio":
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            pass
-
         status_msg = await query.message.reply_text("🔄 جاري تحميل الملف الصوتي...")
         try:
             tiktok_data = fetch_tiktok_data(url)
@@ -478,28 +468,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text("❌ حدث خطأ أثناء تحميل الملف الصوتي.")
 
     elif query.data == "hd_video":
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            pass
-
         status_msg = await query.message.reply_text("🔄 جاري إرسال الفيديو...")
         try:
             tiktok_data = fetch_tiktok_data(url)
             video_url = tiktok_data.get('play') if tiktok_data else None
 
             if video_url:
-                audio_only_keyboard = [
-                    [InlineKeyboardButton("🎵 تحميل كملف صوتي.", callback_data="audio")]
-                ]
-                audio_reply_markup = InlineKeyboardMarkup(audio_only_keyboard)
-
                 await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
                 await context.bot.send_video(
                     chat_id=chat_id, 
                     video=video_url, 
-                    caption="- @G66Gbot", 
-                    reply_markup=audio_reply_markup
+                    caption="- @G66Gbot"
                 )
                 await status_msg.delete()
             else:
@@ -527,5 +506,5 @@ def main():
     print("بوت يوتيوب وتيك توك يعمل الآن بكفاءة وسرعة عالية...")
     app.run_polling()
 
-if __name__ == '__main__':
+if __name__ == 'main__':
     main()
