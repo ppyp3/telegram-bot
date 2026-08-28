@@ -2,31 +2,29 @@ import os
 import logging
 import random
 import requests
-from yt_dlp import YoutubeDL
-import instaloader
-from telegram import Update, InputMediaPhoto, InputMediaVideo, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.constants import ChatAction
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
 
-TOKEN = os.environ.get("TOKEN", "YOUR_BOT_TOKEN")
-ADMIN_IDS = [5782729939]
-BOT_USERNAME = "- @G66GBOT"
+TOKEN = os.environ.get("TOKEN")
+ADMIN_IDS = [5782729939] # ضع معرف الآدمن الخاص بك هنا
 
 USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Safari/605.1.15',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2.1 Safari/605.1.15',
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
+    'Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36',
 ]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
     welcome_msg = (
         f"✦ أهلاً بك ⦗ {user_name} ⦘ 🖤\n\n"
-        f"▫︎ بوت التحميل الخارق (تيك توك & انستجرام) 📥\n"
-        f"▫︎ يدعم الصور، البوستات، والريلز بدقة كاملة وبدون أخطاء!\n\n"
-        f"⚡ أرسل الرابط الآن 🔻"
+        f"▫︎ بوت تحميل التيك توك السريع 📥\n"
+        f"▫︎ فيديوهات بدون حقوق • صور • صوتيات\n\n"
+        f"⚡ أرسل الرابط الآن للبدء 🔻"
     )
     await update.message.reply_text(welcome_msg, parse_mode="Markdown")
 
@@ -59,220 +57,29 @@ def fetch_tiktok_data(url):
         
         if alt_resp.get('code') == 0:
             data = alt_resp.get('data', {})
-            return {
-                'title': data.get('title', 'محتوى تيك توك'),
-                'music': data.get('music', None),
+            music_url = data.get('music', None)
+            title = data.get('title', 'محتوى تيك توك')
+            
+            clean_title = "".join(c for c in title if c.isalnum() or c in (' ', '_', '-', '🔥')).strip()
+            if not clean_title:
+                clean_title = "tiktok_audio"
+
+            result = {
+                'title': title,
+                'author': data.get('author', {}).get('nickname', 'مستخدم تيك توك'),
+                'music': music_url,
+                'audio_title': f"{clean_title}.mp3",
                 'images': data.get('images', []),
                 'play': data.get('play', None)
             }
+            return result
         return None
     except Exception as e:
-        logger.error(f"TikTok error: {e}")
+        print(f"Error fetching tiktok data: {e}")
         return None
-
-def fetch_instagram_media(url):
-    """استخراج دقيق ومضمون للريلز (بالصوت الكامل) والبوستات عبر خدمة خارجية مدمجة"""
-    try:
-        current_ua = random.choice(USER_AGENTS)
-        headers = {'User-Agent': current_ua}
-        
-        # استخدام API خارجي مجاني ومستقر يسحب رابط الفيديو المدمج بالصوت مباشرة
-        api_url = f"https://apis.davidcyriltech.my.id/instagram?url={url}"
-        response = requests.get(api_url, headers=headers, timeout=15)
-        if response.status_code == 200:
-            res_json = response.json()
-            if res_json.get("success") or res_json.get("status") == 200 or "data" in res_json:
-                data = res_json.get("data", res_json.get("result", res_json))
-                
-                # إذا كان مقطع فيديو أو ريلز منفرد
-                if isinstance(data, dict):
-                    video_url = data.get('url') or data.get('download_url') or data.get('video_url')
-                    if video_url:
-                        return {'type': 'video_url', 'url': video_url}
-                    
-                    # لو بوست صور متعدد
-                    images = data.get('images') or data.get('carousel_media')
-                    if images:
-                        media_list = [{'type': 'photo', 'url': img.get('url', img)} for img in images]
-                        return {'type': 'media_group', 'media': media_list}
-                
-                # إذا كانت قائمة ميديا متعددة
-                elif isinstance(data, list) and len(data) > 0:
-                    media_list = []
-                    for item in data:
-                        m_url = item.get('url') or item.get('download_url')
-                        m_type = 'video' if ('mp4' in str(m_url) or item.get('type') == 'video') else 'photo'
-                        media_list.append({'type': m_type, 'url': m_url})
-                    return {'type': 'media_group', 'media': media_list}
-
-    except Exception as e:
-        logger.error(f"Instagram API error: {e}")
-
-    # خطة بديلة عبر Instaloader في حال الصيانة أو التوقف
-    media_list = []
-    try:
-        L = instaloader.Instaloader(download_pictures=False, download_videos=False, download_comments=False)
-        shortcode = None
-        clean_url = url.split("?")[0].rstrip("/")
-        parts = clean_url.split("/")
-        if "p" in parts:
-            shortcode = parts[parts.index("p") + 1]
-        elif "reel" in parts:
-            shortcode = parts[parts.index("reel") + 1]
-        elif "tv" in parts:
-            shortcode = parts[parts.index("tv") + 1]
-
-        if shortcode:
-            post = instaloader.Post.from_shortcode(L.context, shortcode)
-            if post.is_video:
-                return {'type': 'video_url', 'url': post.video_url}
-            
-            if post.mediacount > 1:
-                for node in post.get_sidecar_nodes():
-                    if node.is_video:
-                        media_list.append({'type': 'video', 'url': node.video_url})
-                    else:
-                        media_list.append({'type': 'photo', 'url': node.display_url})
-            else:
-                media_list.append({'type': 'photo', 'url': post.url})
-            
-            if media_list:
-                return {'type': 'media_group', 'media': media_list}
-    except Exception as e:
-        logger.error(f"Instaloader error: {e}")
-
-    return None
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text if update.message and update.message.text else ""
 
     if user_id in ADMIN_IDS:
-        if text == "🚪 إخفاء لوحة التحكم":
-            await update.message.reply_text("🚪 تم إخفاء لوحة التحكم.", reply_markup=ReplyKeyboardRemove())
-            return
-        elif text.startswith("📊") or text.startswith("📢") or text.startswith("🛑") or text.startswith("🗑️") or "-------------------------------------" in text:
-            await update.message.reply_text(f"⚙️ تم استقبال الأمر: {text}")
-            return
-
-    url = text
-    if not url or not ("tiktok.com" in url or "instagram.com" in url):
-        await update.message.reply_text("❌ أرسل رابط تيك توك أو انستجرام صحيح.")
-        return
-
-    chat_id = update.effective_chat.id
-    status_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم جلب الملف...")
-
-    try:
-        if "tiktok.com" in url:
-            tiktok_data = fetch_tiktok_data(url)
-            if tiktok_data:
-                title = tiktok_data['title']
-                images = tiktok_data['images']
-                video_url = tiktok_data['play']
-                audio_url = tiktok_data['music']
-                
-                if images:
-                    if audio_url:
-                        try:
-                            r = requests.get(audio_url, timeout=15)
-                            if r.status_code == 200:
-                                local_audio_path = f"audio_{random.randint(1000,9999)}.mp3"
-                                with open(local_audio_path, 'wb') as f:
-                                    f.write(r.content)
-                                
-                                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
-                                with open(local_audio_path, 'rb') as audio_file:
-                                    await update.message.reply_audio(audio=audio_file, title=title, performer=BOT_USERNAME, caption=BOT_USERNAME)
-                                if os.path.exists(local_audio_path):
-                                    os.remove(local_audio_path)
-                        except:
-                            pass
-
-                    await status_msg.delete() 
-                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
-                    total_images = len(images)
-                    for i in range(0, total_images, 10):
-                        batch = images[i:i+10]
-                        media_group = [InputMediaPhoto(media=img_url, caption=BOT_USERNAME if (i + idx + 1) == total_images else None) for idx, img_url in enumerate(batch)]
-                        if media_group:
-                            await update.message.reply_media_group(media=media_group)
-                    return
-
-                elif video_url:
-                    await status_msg.delete() 
-                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
-                    await update.message.reply_video(video=video_url, caption=BOT_USERNAME, supports_streaming=True)
-                    return
-
-        elif "instagram.com" in url:
-            result = fetch_instagram_media(url)
-            await status_msg.delete() 
-
-            if result:
-                if result['type'] == 'video_url':
-                    video_link = result['url']
-                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
-                    
-                    # تحميل الفيديو مؤقتماً لمنع أي مشكلة في تشغيل الصوت والصورة معاً
-                    video_res = requests.get(video_link, stream=True, timeout=25)
-                    if video_res.status_code == 200:
-                        local_video_path = f"insta_{random.randint(1000,9999)}.mp4"
-                        with open(local_video_path, 'wb') as vf:
-                            for chunk in video_res.iter_content(chunk_size=8192):
-                                vf.write(chunk)
-                        
-                        with open(local_video_path, 'rb') as vf_file:
-                            await update.message.reply_video(video=vf_file, caption=BOT_USERNAME, supports_streaming=True)
-                        
-                        if os.path.exists(local_video_path):
-                            os.remove(local_video_path)
-                    else:
-                        await update.message.reply_video(video=video_link, caption=BOT_USERNAME, supports_streaming=True)
-                    return
-
-                elif result['type'] == 'media_group':
-                    media_items = result['media'][:10]
-                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
-                    if len(media_items) == 1:
-                        if media_items[0]['type'] == 'video':
-                            await update.message.reply_video(video=media_items[0]['url'], caption=BOT_USERNAME, supports_streaming=True)
-                        else:
-                            await update.message.reply_photo(photo=media_items[0]['url'], caption=BOT_USERNAME)
-                    else:
-                        media_group = []
-                        for idx, item in enumerate(media_items):
-                            caption_text = BOT_USERNAME if idx == 0 else None
-                            if item['type'] == 'video':
-                                media_group.append(InputMediaVideo(media=item['url'], caption=caption_text, supports_streaming=True))
-                            else:
-                                media_group.append(InputMediaPhoto(media=item['url'], caption=caption_text))
-                        await update.message.reply_media_group(media=media_group)
-                    return
-
-        await status_msg.delete()
-        await update.message.reply_text("❌ عذراً، لم أتمكن من جلب المحتوى. تأكد أن الرابط صحيح والحساب عام.")
-
-    except Exception as e:
-        logger.error(f"Error: {e}")
-        try:
-            await status_msg.delete()
-        except:
-            pass
-        await update.message.reply_text("❌ حدث خطأ أثناء جلب الملف.")
-
-def main():
-    if TOKEN == "YOUR_BOT_TOKEN":
-        print("⚠️ ضع توكن البوت في المتغير TOKEN قبل التشغيل!")
-        return
-        
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("admin", admin_panel))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
-    
-    print("🚀 البوت يعمل الآن بكفاءة مطلقة...")
-    app.run_polling()
-
-if __name__ == '__main__':
-    main()
