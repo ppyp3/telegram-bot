@@ -2,7 +2,7 @@ import os
 import logging
 import random
 import requests
-from urllib.parse import urlparse, urlunparse
+from yt_dlp import YoutubeDL
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.constants import ChatAction
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
@@ -44,14 +44,6 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("👑 **مرحباً بك في لوحة تحكم البوت:**", reply_markup=reply_markup)
 
-def clean_instagram_url(url):
-    try:
-        parsed = urlparse(url)
-        clean_path = parsed._replace(query='')
-        return urlunparse(clean_path)
-    except:
-        return url
-
 def fetch_tiktok_data(url):
     try:
         current_ua = random.choice(USER_AGENTS)
@@ -77,53 +69,42 @@ def fetch_tiktok_data(url):
         print(f"Error fetching tiktok data: {e}")
         return None
 
-def fetch_instagram_data(original_url):
-    current_ua = random.choice(USER_AGENTS)
-    clean_url = clean_instagram_url(original_url)
+def fetch_instagram_data(url):
+    """استخدام yt-dlp لجلب الصور والفيديوهات من انستجرام بدقة عالية وبدون أخطاء"""
+    ydl_opts = {
+        'extract_flat': False,
+        'skip_download': True,
+        'quiet': True,
+        'no_warnings': True,
+    }
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            media_list = []
+            
+            # إذا كان المنشور يحتوي على عدة عناصر (Carousel)
+            if 'entries' in info:
+                for entry in info['entries']:
+                    m_type = 'video' if entry.get('_type') == 'video' or entry.get('ext') in ['mp4', 'mov'] else 'photo'
+                    m_url = entry.get('url') or entry.get('video_url') or entry.get('thumbnail')
+                    if not m_url and 'formats' in entry and entry['formats']:
+                        m_url = entry['formats'][-1]['url']
+                    if m_url:
+                        media_list.append({'type': m_type, 'url': m_url})
+            else:
+                # عنصر مفرد (صورة أو فيديو منفرد)
+                m_type = 'video' if info.get('ext') in ['mp4', 'mov'] or info.get('duration') else 'photo'
+                m_url = info.get('url') or info.get('video_url') or info.get('thumbnail')
+                if not m_url and 'formats' in info and info['formats']:
+                    m_url = info['formats'][-1]['url']
+                if m_url:
+                    media_list.append({'type': m_type, 'url': m_url})
+
+            if media_list:
+                return {'media': media_list}
+    except Exception as e:
+        print(f"Error with yt-dlp: {e}")
     
-    # بوابات قوية تدعم استخراج العناصر بأقصى عدد ممكن (حتى 100 عنصر)
-    endpoints = [
-        ("https://api.cobalt.tools/api/json", {"url": clean_url, "vQuality": "max"}),
-        ("https://co.wuk.sh/api/json", {"url": clean_url, "vQuality": "max"}),
-        ("https://ssinstagram.com/api/convert", {"url": clean_url})
-    ]
-
-    for api, payload in endpoints:
-        try:
-            headers = {
-                "Accept": "application/json", 
-                "Content-Type": "application/json", 
-                "User-Agent": current_ua,
-                "Origin": "https://cobalt.tools",
-                "Referer": "https://cobalt.tools/"
-            }
-            resp = requests.post(api, json=payload, headers=headers, timeout=10).json()
-            
-            status = resp.get('status')
-            if status in ['stream', 'redirect', 'picker']:
-                media_url = resp.get('url')
-                picker_items = resp.get('picker', [])
-                
-                media_list = []
-                
-                if picker_items:
-                    for item in picker_items[:100]: # أقصى حد عالمي (100 عنصر)
-                        item_url = item.get('url')
-                        item_type = item.get('type')
-                        if item_url:
-                            media_list.append({'type': item_type, 'url': item_url})
-                elif media_url:
-                    media_list.append({'type': 'video', 'url': media_url})
-
-                if media_list:
-                    return {'media': media_list}
-            
-            if 'url' in resp and resp['url']:
-                return {'media': [{'type': 'video', 'url': resp['url']}]}
-                
-        except Exception:
-            continue
-
     return None
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -205,7 +186,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif "instagram.com" in url:
             insta_data = fetch_instagram_data(url)
             if insta_data and insta_data.get('media'):
-                media_items = insta_data['media'][:100] # دعم أقصى حد عالمي (100 عنصر)
+                media_items = insta_data['media'][:100] # دعم حتى 100 عنصر
                 await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
                 
                 total_items = len(media_items)
