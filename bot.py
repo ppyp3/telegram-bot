@@ -82,16 +82,19 @@ def fetch_tiktok_data(url):
 def fetch_instagram_data(url):
     current_ua = random.choice(USER_AGENTS)
     
-    # قائمة السيرفرات المتعددة لتفادي الحظر تماماً مثل التيك توك
+    # قائمة السيرفرات المتعددة لتفادي الحظر تماماً
     instances = [
-        "https://co.wuk.sh/api/json",
         "https://api.cobalt.tools/api/json",
+        "https://co.wuk.sh/api/json",
         "https://cobalt.katsu.org.es/api/json"
     ]
 
     for api in instances:
         try:
-            payload = {"url": url, "vQuality": "max"}
+            payload = {
+                "url": url,
+                "vQuality": "max"
+            }
             headers = {
                 "Accept": "application/json", 
                 "Content-Type": "application/json", 
@@ -99,9 +102,10 @@ def fetch_instagram_data(url):
                 "Origin": "https://cobalt.tools",
                 "Referer": "https://cobalt.tools/"
             }
-            resp = requests.post(api, json=payload, headers=headers, timeout=7).json()
+            resp = requests.post(api, json=payload, headers=headers, timeout=8).json()
+            status = resp.get('status')
             
-            if resp.get('status') in ['stream', 'redirect', 'picker']:
+            if status in ['stream', 'redirect', 'picker']:
                 media_url = resp.get('url')
                 picker_items = resp.get('picker', [])
                 
@@ -110,10 +114,12 @@ def fetch_instagram_data(url):
                 
                 if picker_items:
                     for item in picker_items:
-                        if item.get('type') == 'photo':
-                            images_list.append(item.get('url'))
-                        elif item.get('type') == 'video' and not video_url:
-                            video_url = item.get('url')
+                        item_url = item.get('url')
+                        item_type = item.get('type')
+                        if item_type == 'photo':
+                            images_list.append(item_url)
+                        elif item_type == 'video' and not video_url:
+                            video_url = item_url
 
                 return {
                     'images': images_list,
