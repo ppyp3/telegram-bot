@@ -70,8 +70,11 @@ def fetch_tiktok_data(url):
         logger.error(f"TikTok error: {e}")
         return None
 
-def fetch_instagram_data(url):
+def fetch_instagram_media(url):
+    """دالة شاملة لاستخراج الصور عبر Instaloader والفيديوهات/الريلز عبر YoutubeDL مع ضمان الصوت"""
     media_list = []
+    
+    # 1. جلب الصور والبوستات عبر Instaloader
     try:
         L = instaloader.Instaloader(download_pictures=False, download_videos=False, download_comments=False)
         shortcode = None
@@ -79,58 +82,38 @@ def fetch_instagram_data(url):
         parts = clean_url.split("/")
         if "p" in parts:
             shortcode = parts[parts.index("p") + 1]
-        elif "reel" in parts:
-            shortcode = parts[parts.index("reel") + 1]
         elif "tv" in parts:
             shortcode = parts[parts.index("tv") + 1]
 
         if shortcode:
             post = instaloader.Post.from_shortcode(L.context, shortcode)
-            
-            if post.mediacount > 1:
-                for node in post.get_sidecar_nodes():
-                    if node.is_video:
-                        media_list.append({'type': 'video', 'url': node.video_url})
-                    else:
-                        media_list.append({'type': 'photo', 'url': node.display_url})
-            else:
-                if post.is_video:
-                    media_list.append({'type': 'video', 'url': post.video_url})
+            if not post.is_video:
+                if post.mediacount > 1:
+                    for node in post.get_sidecar_nodes():
+                        if not node.is_video:
+                            media_list.append({'type': 'photo', 'url': node.display_url})
                 else:
                     media_list.append({'type': 'photo', 'url': post.url})
-            
-            if media_list:
-                return {'media': media_list}
+                if media_list:
+                    return {'type': 'photos', 'media': media_list}
     except Exception as e:
-        logger.error(f"Instaloader error: {e}")
+        logger.error(f"Instaloader photo error: {e}")
 
+    # 2. جلب الريلز والفيديوهات مع الصوت عبر YoutubeDL وتنزيلها كملف مؤقت
     try:
+        output_template = f"temp_reel_{random.randint(1000, 9999)}.mp4"
         ydl_opts = {
-            'extract_flat': False,
-            'skip_download': True,
+            'format': 'best',
+            'outtmpl': output_template,
             'quiet': True,
             'no_warnings': True,
-            'format': 'best',
         }
         with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            
-            if 'entries' in info and info['entries']:
-                for entry in info['entries']:
-                    m_type = 'video' if entry.get('_type') == 'video' or entry.get('ext') in ['mp4', 'mov'] or entry.get('duration') else 'photo'
-                    m_url = entry.get('url') or entry.get('video_url') or entry.get('thumbnail')
-                    if m_url:
-                        media_list.append({'type': m_type, 'url': m_url})
-            else:
-                m_type = 'video' if info.get('ext') in ['mp4', 'mov'] or info.get('duration') or info.get('is_video') else 'photo'
-                m_url = info.get('url') or info.get('video_url') or info.get('display_url') or info.get('thumbnail')
-                if m_url:
-                    media_list.append({'type': m_type, 'url': m_url})
-
-            if media_list:
-                return {'media': media_list}
+            ydl.download([url])
+            if os.path.exists(output_template):
+                return {'type': 'video_file', 'path': output_template}
     except Exception as e:
-        logger.error(f"YoutubeDL fallback error: {e}")
+        logger.error(f"YoutubeDL download error: {e}")
 
     return None
 
@@ -197,48 +180,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
 
         elif "instagram.com" in url:
-            insta_data = fetch_instagram_data(url)
-            if insta_data and insta_data.get('media'):
-                media_items = insta_data['media'][:10]
-                
-                await status_msg.delete() 
-                
-                if len(media_items) == 1:
-                    item = media_items[0]
-                    if item['type'] == 'video':
-                        await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
-                        
-                        # تحميل الفيديو مؤقتماً لمنعه من الظهور كصورة متحركة GIF
-                        video_res = requests.get(item['url'], stream=True, timeout=20)
-                        if video_res.status_code == 200:
-                            local_video_path = f"video_{random.randint(1000,9999)}.mp4"
-                            with open(local_video_path, 'wb') as vf:
-                                for chunk in video_res.iter_content(chunk_size=8192):
-                                    vf.write(chunk)
-                            
-                            with open(local_video_path, 'rb') as vf_file:
-                                await update.message.reply_video(video=vf_file, caption=BOT_USERNAME, supports_streaming=True)
-                            
-                            if os.path.exists(local_video_path):
-                                os.remove(local_video_path)
-                        else:
-                            await update.message.reply_video(video=item['url'], caption=BOT_USERNAME, supports_streaming=True)
-                    else:
-                        await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
-                        await update.message.reply_photo(photo=item['url'], caption=BOT_USERNAME)
-                else:
+            result = fetch_instagram_media(url)
+            await status_msg.delete() 
+
+            if result:
+                if result['type'] == 'video_file':
+                    video_path = result['path']
+                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
+                    with open(video_path, 'rb') as vf:
+                        await update.message.reply_video(video=vf, caption=BOT_USERNAME, supports_streaming=True)
+                    if os.path.exists(video_path):
+                        os.remove(video_path)
+                    return
+
+                elif result['type'] == 'photos':
+                    media_items = result['media'][:10]
                     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
-                    media_group = []
-                    for idx, item in enumerate(media_items):
-                        caption_text = BOT_USERNAME if idx == 0 else None
-                        if item['type'] == 'video':
-                            media_group.append(InputMediaVideo(media=item['url'], caption=caption_text, supports_streaming=True))
-                        else:
-                            media_group.append(InputMediaPhoto(media=item['url'], caption=caption_text))
-                    
-                    if media_group:
+                    if len(media_items) == 1:
+                        await update.message.reply_photo(photo=media_items[0]['url'], caption=BOT_USERNAME)
+                    else:
+                        media_group = [InputMediaPhoto(media=item['url'], caption=BOT_USERNAME if idx == 0 else None) for idx, item in enumerate(media_items)]
                         await update.message.reply_media_group(media=media_group)
-                return
+                    return
 
         await status_msg.delete()
         await update.message.reply_text("❌ عذراً، لم أتمكن من جلب المحتوى. تأكد أن الرابط صحيح والحساب عام.")
