@@ -81,24 +81,25 @@ def fetch_tiktok_data(url):
 
 def fetch_instagram_data(url):
     current_ua = random.choice(USER_AGENTS)
-    cobalt_instances = [
+    
+    # قائمة السيرفرات المتعددة لتفادي الحظر تماماً مثل التيك توك
+    instances = [
         "https://co.wuk.sh/api/json",
-        "https://cobalt.katsu.org.es/api/json",
-        "https://api.cobalt.tools/api/json"
+        "https://api.cobalt.tools/api/json",
+        "https://cobalt.katsu.org.es/api/json"
     ]
 
-    for cobalt_api in cobalt_instances:
+    for api in instances:
         try:
             payload = {"url": url, "vQuality": "max"}
-            cobalt_headers = {
+            headers = {
                 "Accept": "application/json", 
                 "Content-Type": "application/json", 
                 "User-Agent": current_ua,
                 "Origin": "https://cobalt.tools",
                 "Referer": "https://cobalt.tools/"
             }
-            
-            resp = requests.post(cobalt_api, json=payload, headers=cobalt_headers, timeout=8).json()
+            resp = requests.post(api, json=payload, headers=headers, timeout=7).json()
             
             if resp.get('status') in ['stream', 'redirect', 'picker']:
                 media_url = resp.get('url')
@@ -118,8 +119,9 @@ def fetch_instagram_data(url):
                     'images': images_list,
                     'play': video_url if not images_list else None
                 }
-        except Exception as e:
+        except Exception:
             continue
+            
     return None
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -144,7 +146,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         context.user_data['current_url'] = url
 
-        # 1. معالجة روابط تيك توك بنفس الكود الأصلي تماماً
+        # 1. معالجة روابط تيك توك
         if "tiktok.com" in url:
             keyboard = [
                 [InlineKeyboardButton("🎵 تحميل كملف صوتي.", callback_data="audio")],
@@ -210,7 +212,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await processing_msg.delete()
                     return
 
-        # 2. معالجة روابط انستجرام (ريلز وبوستات وصور)
+        # 2. معالجة روابط انستجرام
         elif "instagram.com" in url:
             insta_data = fetch_instagram_data(url)
             if insta_data:
