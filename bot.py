@@ -2,6 +2,7 @@ import os
 import logging
 import random
 import requests
+from bs4 import BeautifulSoup
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.constants import ChatAction
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
@@ -82,19 +83,49 @@ def fetch_tiktok_data(url):
 def fetch_instagram_data(url):
     current_ua = random.choice(USER_AGENTS)
     
-    # قائمة السيرفرات المتعددة لتفادي الحظر تماماً
+    # 1. محاولة جلب الصور والفيديوهات عبر SaveIG API
+    try:
+        api_url = "https://saveig.app/api/ajaxSearch"
+        payload = {"q": url, "t": "media", "lang": "en"}
+        headers = {
+            "User-Agent": current_ua,
+            "X-Requested-With": "XMLHttpRequest",
+            "Origin": "https://saveig.app",
+            "Referer": "https://saveig.app/"
+        }
+        res = requests.post(api_url, data=payload, headers=headers, timeout=10).json()
+        if res.get('status') == "ok" and res.get('data'):
+            soup = BeautifulSoup(res.get('data'), 'html.parser')
+            images_list = []
+            video_url = None
+            
+            for a in soup.find_all('a', href=True):
+                link = a['href']
+                if "http" in link:
+                    if any(ext in link for ext in [".jpg", ".png", "cdninstagram.com/v/t51."]):
+                        if link not in images_list:
+                            images_list.append(link)
+                    elif any(ext in link for ext in [".mp4", "fbcdn.net", "cdninstagram.com/v/t50."]):
+                        if not video_url:
+                            video_url = link
+
+            if images_list or video_url:
+                return {
+                    'images': images_list,
+                    'play': video_url if not images_list else None
+                }
+    except Exception as e:
+        print(f"SaveIG error: {e}")
+
+    # 2. محاولة احتياطية عبر سيرفرات Cobalt المتعددة للصور والفيديوهات
     instances = [
         "https://api.cobalt.tools/api/json",
-        "https://co.wuk.sh/api/json",
-        "https://cobalt.katsu.org.es/api/json"
+        "https://co.wuk.sh/api/json"
     ]
 
     for api in instances:
         try:
-            payload = {
-                "url": url,
-                "vQuality": "max"
-            }
+            payload = {"url": url, "vQuality": "max"}
             headers = {
                 "Accept": "application/json", 
                 "Content-Type": "application/json", 
@@ -102,7 +133,7 @@ def fetch_instagram_data(url):
                 "Origin": "https://cobalt.tools",
                 "Referer": "https://cobalt.tools/"
             }
-            resp = requests.post(api, json=payload, headers=headers, timeout=8).json()
+            resp = requests.post(api, json=payload, headers=headers, timeout=7).json()
             status = resp.get('status')
             
             if status in ['stream', 'redirect', 'picker']:
@@ -218,7 +249,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await processing_msg.delete()
                     return
 
-        # 2. معالجة روابط انستجرام
+        # 2. معالجة روابط انستجرام (صور، بوستات متعددة، ريلز)
         elif "instagram.com" in url:
             insta_data = fetch_instagram_data(url)
             if insta_data:
