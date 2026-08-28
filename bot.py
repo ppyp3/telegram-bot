@@ -71,10 +71,10 @@ def fetch_tiktok_data(url):
         return None
 
 def fetch_instagram_data(url):
-    """استخراج متطور للصور والريلز والبوستات يدمج أحدث تقنيات الجلب"""
+    """استخراج دقيق للريلز والبوستات والمنشورات المتعددة مع ضمان إرجاعها كفيديو حقيقي أو صور صحيحة"""
     media_list = []
     
-    # 1. محاولة استخدام Instaloader للصور والبوستات المتعددة والريلز
+    # 1. محاولة استخدام Instaloader أولاً
     try:
         L = instaloader.Instaloader(download_pictures=False, download_videos=False, download_comments=False)
         shortcode = None
@@ -90,7 +90,6 @@ def fetch_instagram_data(url):
         if shortcode:
             post = instaloader.Post.from_shortcode(L.context, shortcode)
             
-            # إذا كان بوست يحتوي على أكثر من صورة/فيديو (Carousel)
             if post.mediacount > 1:
                 for node in post.get_sidecar_nodes():
                     if node.is_video:
@@ -98,7 +97,6 @@ def fetch_instagram_data(url):
                     else:
                         media_list.append({'type': 'photo', 'url': node.display_url})
             else:
-                # منشور فردي أو ريلز
                 if post.is_video:
                     media_list.append({'type': 'video', 'url': post.video_url})
                 else:
@@ -109,7 +107,7 @@ def fetch_instagram_data(url):
     except Exception as e:
         logger.error(f"Instaloader error: {e}")
 
-    # 2. الطريقة الاحتياطية القوية جداً (YoutubeDL) لضمان جلب الصور المفردة والريلز إذا تعثر الأول
+    # 2. الطريقة الاحتياطية (YoutubeDL) مع ضمان صيغة الفيديو
     try:
         ydl_opts = {
             'extract_flat': False,
@@ -121,7 +119,6 @@ def fetch_instagram_data(url):
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             
-            # معالجة الروابط التي تحتوي على عدة محتويات في YoutubeDL
             if 'entries' in info and info['entries']:
                 for entry in info['entries']:
                     m_type = 'video' if entry.get('_type') == 'video' or entry.get('ext') in ['mp4', 'mov'] or entry.get('duration') else 'photo'
@@ -129,9 +126,8 @@ def fetch_instagram_data(url):
                     if m_url:
                         media_list.append({'type': m_type, 'url': m_url})
             else:
-                m_type = 'video' if info.get('ext') in ['mp4', 'mov'] or info.get('duration') else 'photo'
-                # سحب الصورة بأعلى جودة متوفرة في حالة البوستات أو الصور الثابتة
-                m_url = info.get('url') or info.get('video_url') or info.get('thumbnail') or info.get('display_url')
+                m_type = 'video' if info.get('ext') in ['mp4', 'mov'] or info.get('duration') or info.get('is_video') else 'photo'
+                m_url = info.get('url') or info.get('video_url') or info.get('display_url') or info.get('thumbnail')
                 if m_url:
                     media_list.append({'type': m_type, 'url': m_url})
 
@@ -161,7 +157,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     chat_id = update.effective_chat.id
 
-    # إرسال رسالة الانتظار بالصيغة المطلوبة فوراً
     status_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم قياس حجم التحميل...")
 
     try:
@@ -211,13 +206,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if insta_data and insta_data.get('media'):
                 media_items = insta_data['media'][:10]
                 
-                await status_msg.delete() # حذف رسالة الانتظار فوراً قبل الإرسال
+                await status_msg.delete() 
                 
                 if len(media_items) == 1:
                     item = media_items[0]
                     if item['type'] == 'video':
                         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
-                        await update.message.reply_video(video=item['url'], caption=BOT_USERNAME)
+                        # إرسال الفيديو بفرض صيغة الفيديو حصراً لكي لا يظهر كصورة متحركة GIF
+                        await update.message.reply_video(video=item['url'], caption=BOT_USERNAME, supports_streaming=True)
                     else:
                         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
                         await update.message.reply_photo(photo=item['url'], caption=BOT_USERNAME)
@@ -227,7 +223,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     for idx, item in enumerate(media_items):
                         caption_text = BOT_USERNAME if idx == 0 else None
                         if item['type'] == 'video':
-                            media_group.append(InputMediaVideo(media=item['url'], caption=caption_text))
+                            media_group.append(InputMediaVideo(media=item['url'], caption=caption_text, supports_streaming=True))
                         else:
                             media_group.append(InputMediaPhoto(media=item['url'], caption=caption_text))
                     
