@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 import instaloader
 import requests
+import yt_dlp
 from telegram import InputMediaPhoto, InputMediaVideo, Update
 from telegram.constants import ChatAction
 from telegram.error import TelegramError
@@ -123,7 +124,7 @@ def get_mp4_dimensions(file_path):
 
 
 def normalize_video_for_telegram(source_path):
-    """Convert the video to Telegram-friendly H.264 video with AAC audio."""
+    """Keep the video stream intact and convert only audio to Telegram-friendly AAC."""
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     command = [
         "ffmpeg",
@@ -135,15 +136,11 @@ def normalize_video_for_telegram(source_path):
         "-map",
         "0:a?",
         "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "23",
+        "copy",
         "-c:a",
         "aac",
         "-b:a",
-        "128k",
+        "192k",
         "-movflags",
         "+faststart",
         "-shortest",
@@ -192,6 +189,42 @@ async def normalize_videos_for_telegram(media_files):
     return prepared_files
 
 
+def download_reel_with_audio(url, output_dir):
+    """Use Instagram's video and audio formats together when they are separate."""
+    options = {
+        "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
+        "format": "bv*+ba/b",
+        "merge_output_format": "mp4",
+        "max_filesize": MAX_MEDIA_SIZE,
+        "quiet": True,
+        "no_warnings": True,
+        "noprogress": True,
+        "writethumbnail": False,
+        "writesubtitles": False,
+        "writeautomaticsub": False,
+    }
+
+    with yt_dlp.YoutubeDL(options) as downloader:
+        downloader.extract_info(url, download=True)
+
+    media_files = sorted(
+        path
+        for path in output_dir.iterdir()
+        if path.is_file()
+        and not path.name.endswith((".part", ".ytdl"))
+        and path.suffix.lower() in {".mp4", ".mkv", ".webm"}
+    )
+
+    if not media_files:
+        raise InstagramDownloadError("No downloadable reel media was found")
+
+    for path in media_files:
+        if path.stat().st_size > MAX_MEDIA_SIZE:
+            raise InstagramMediaTooLarge
+
+    return media_files
+
+
 def download_instagram_media(url):
     shortcode = get_shortcode(url)
     if not shortcode:
@@ -209,6 +242,15 @@ def download_instagram_media(url):
             post_metadata_txt_pattern="",
         )
         post = instaloader.Post.from_shortcode(loader.context, shortcode)
+
+        # Reels often expose video and audio as separate streams. Let yt-dlp merge
+        # them through FFmpeg; for image posts or unsupported reels we use the
+        # direct Instaloader URLs below.
+        if post.is_video and post.typename != "GraphSidecar":
+            try:
+                return output_dir, download_reel_with_audio(url, output_dir)
+            except yt_dlp.utils.DownloadError:
+                logger.warning("Falling back to direct Instagram reel URL", exc_info=True)
 
         if post.typename == "GraphSidecar":
             media_items = [
@@ -351,6 +393,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
         InstagramDownloadError,
         instaloader.exceptions.InstaloaderException,
         requests.RequestException,
+        yt_dlp.utils.DownloadError,
         TelegramError,
     ):
         logger.exception("Instagram download failed")
