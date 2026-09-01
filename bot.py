@@ -27,7 +27,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-
+from instagram_public_downloader import INSTAGRAM_FILTER, handle_instagram_message
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
