@@ -541,6 +541,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             sessions.pop(session_key, None)
 
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("admin", admin_panel))
+
+app.add_handler(MessageHandler(INSTAGRAM_FILTER, handle_instagram_message))
+
+app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+app.add_handler(CallbackQueryHandler(button_callback))
 
 def main():
     if not TOKEN:
