@@ -2,6 +2,7 @@ import asyncio
 import logging
 import mimetypes
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
@@ -33,6 +34,10 @@ class InstagramDownloadError(Exception):
 
 
 class InstagramMediaTooLarge(InstagramDownloadError):
+    pass
+
+
+class VideoProcessingError(InstagramDownloadError):
     pass
 
 
@@ -83,6 +88,108 @@ def download_file(url, output_path):
     finally:
         if response is not None:
             response.close()
+
+
+def get_mp4_dimensions(file_path):
+    """Read the encoded MP4 dimensions without converting or re-encoding it."""
+    try:
+        data = file_path.read_bytes()
+        search_from = 0
+
+        while True:
+            atom_type_position = data.find(b"tkhd", search_from)
+            if atom_type_position == -1:
+                return None, None
+
+            payload_position = atom_type_position + 4
+            version = data[payload_position]
+            dimensions_position = payload_position + (76 if version == 0 else 88)
+
+            if dimensions_position + 8 <= len(data):
+                width = int.from_bytes(
+                    data[dimensions_position : dimensions_position + 4], "big"
+                ) >> 16
+                height = int.from_bytes(
+                    data[dimensions_position + 4 : dimensions_position + 8], "big"
+                ) >> 16
+
+                # Audio tracks have dimensions of 0; keep searching for the video track.
+                if width > 0 and height > 0:
+                    return width, height
+
+            search_from = atom_type_position + 4
+    except (IndexError, OSError):
+        return None, None
+
+
+def normalize_video_for_telegram(source_path):
+    """Convert the video to Telegram-friendly H.264 video with AAC audio."""
+    output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(source_path),
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "23",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-movflags",
+        "+faststart",
+        "-shortest",
+        str(output_path),
+    ]
+
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=False,
+        )
+    except FileNotFoundError as error:
+        raise VideoProcessingError("FFmpeg is not installed") from error
+    except subprocess.TimeoutExpired as error:
+        raise VideoProcessingError("Video conversion timed out") from error
+
+    if result.returncode != 0 or not output_path.is_file():
+        logger.error("FFmpeg failed: %s", result.stderr[-1500:])
+        output_path.unlink(missing_ok=True)
+        raise VideoProcessingError("Video conversion failed")
+
+    if output_path.stat().st_size > MAX_MEDIA_SIZE:
+        output_path.unlink(missing_ok=True)
+        raise InstagramMediaTooLarge
+
+    return output_path
+
+
+async def normalize_videos_for_telegram(media_files):
+    prepared_files = []
+
+    for file_path in media_files:
+        mime_type, _ = mimetypes.guess_type(file_path.name)
+        if mime_type and mime_type.startswith("video/"):
+            converted_path = await asyncio.to_thread(
+                normalize_video_for_telegram, file_path
+            )
+            file_path.unlink(missing_ok=True)
+            prepared_files.append(converted_path)
+        else:
+            prepared_files.append(file_path)
+
+    return prepared_files
 
 
 def download_instagram_media(url):
@@ -142,12 +249,18 @@ async def send_instagram_file(message, chat_id, context, file_path, index, total
             await message.reply_photo(photo=media_file, caption=caption)
     else:
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
+        width, height = get_mp4_dimensions(file_path)
+        video_arguments = {
+            "video": None,
+            "caption": caption,
+            "supports_streaming": True,
+        }
+        if width and height:
+            video_arguments.update({"width": width, "height": height})
+
         with file_path.open("rb") as media_file:
-            await message.reply_video(
-                video=media_file,
-                caption=caption,
-                supports_streaming=True,
-            )
+            video_arguments["video"] = media_file
+            await message.reply_video(**video_arguments)
 
 
 async def send_instagram_album(message, context, media_files):
@@ -186,11 +299,14 @@ async def send_instagram_album(message, context, media_files):
                 if mime_type and mime_type.startswith("image/"):
                     media_group.append(InputMediaPhoto(media=media_file, caption=caption))
                 else:
+                    width, height = get_mp4_dimensions(file_path)
                     media_group.append(
                         InputMediaVideo(
                             media=media_file,
                             caption=caption,
                             supports_streaming=True,
+                            width=width,
+                            height=height,
                         )
                     )
 
@@ -215,6 +331,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
     try:
         output_dir, media_files = await asyncio.to_thread(download_instagram_media, url)
+        media_files = await normalize_videos_for_telegram(media_files)
         await context.bot.send_chat_action(
             chat_id=update.effective_chat.id,
             action=ChatAction.UPLOAD_PHOTO,
@@ -228,6 +345,8 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
             "⚠️┇أعد المحاوله مع ملف اخر."
         )
+    except VideoProcessingError:
+        await status_message.edit_text("❌ تعذر تجهيز صوت الريلز. حاول مرة أخرى.")
     except (
         InstagramDownloadError,
         instaloader.exceptions.InstaloaderException,
@@ -236,7 +355,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
     ):
         logger.exception("Instagram download failed")
         await status_message.edit_text(
-            "❌ تعذر تحميل هذا الرابط. تأكد أن الحساب والمنشور عام ثم أعد المحاولة."
+            "❌ تعذر تحميل هذا الرابط. تأكد أن الحساب والمنشور عامان ثم أعد المحاولة."
         )
     except Exception:
         logger.exception("Unexpected Instagram handler error")
