@@ -1,3 +1,4 @@
-yt-dlp[default]python-telegram-bot
+yt-dlp[default]
+python-telegram-bot
 requests
 instaloader
