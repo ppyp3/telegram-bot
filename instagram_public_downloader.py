@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 import instaloader
 import requests
-from telegram import Update
+from telegram import InputMediaPhoto, InputMediaVideo, Update
 from telegram.constants import ChatAction
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes, filters
@@ -150,6 +150,56 @@ async def send_instagram_file(message, chat_id, context, file_path, index, total
             )
 
 
+async def send_instagram_album(message, context, media_files):
+    """Send a multi-item post as Telegram albums of up to ten items."""
+    total_files = len(media_files)
+
+    for start in range(0, total_files, 10):
+        batch = media_files[start : start + 10]
+
+        # Telegram albums must contain at least two items.
+        if len(batch) == 1:
+            await send_instagram_file(
+                message,
+                message.chat_id,
+                context,
+                batch[0],
+                start + 1,
+                total_files,
+            )
+            continue
+
+        open_files = []
+        media_group = []
+        try:
+            for offset, file_path in enumerate(batch, start=1):
+                media_file = file_path.open("rb")
+                open_files.append(media_file)
+                absolute_index = start + offset
+                caption = (
+                    f"- @G66Gbot - {absolute_index}/{total_files}"
+                    if absolute_index == total_files
+                    else None
+                )
+                mime_type, _ = mimetypes.guess_type(file_path.name)
+
+                if mime_type and mime_type.startswith("image/"):
+                    media_group.append(InputMediaPhoto(media=media_file, caption=caption))
+                else:
+                    media_group.append(
+                        InputMediaVideo(
+                            media=media_file,
+                            caption=caption,
+                            supports_streaming=True,
+                        )
+                    )
+
+            await message.reply_media_group(media=media_group)
+        finally:
+            for media_file in open_files:
+                media_file.close()
+
+
 async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.effective_chat:
         return
@@ -158,22 +208,18 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
     if not get_shortcode(url):
         return
 
-    status_message = await update.message.reply_text("⏳ جاري تحميل محتوى الإنستغرام...")
+    status_message = await update.message.reply_text(
+        "⏰┇يرجى الانتظار، يتم قياس حجم التحميل..."
+    )
     output_dir = None
 
     try:
         output_dir, media_files = await asyncio.to_thread(download_instagram_media, url)
-        total_files = len(media_files)
-
-        for index, file_path in enumerate(media_files, start=1):
-            await send_instagram_file(
-                update.message,
-                update.effective_chat.id,
-                context,
-                file_path,
-                index,
-                total_files,
-            )
+        await context.bot.send_chat_action(
+            chat_id=update.effective_chat.id,
+            action=ChatAction.UPLOAD_PHOTO,
+        )
+        await send_instagram_album(update.message, context, media_files)
 
         await status_message.delete()
     except InstagramMediaTooLarge:
