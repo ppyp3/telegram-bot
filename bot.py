@@ -550,7 +550,9 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_panel))
 
-    app.add_handler(MessageHandler(INSTAGRAM_FILTER, handle_instagram_message))
+    app.add_handler(
+        MessageHandler(INSTAGRAM_FILTER, handle_instagram_message)
+    )
 
     app.add_handler(
         MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
