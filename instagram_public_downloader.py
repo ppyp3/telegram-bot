@@ -124,7 +124,7 @@ def get_mp4_dimensions(file_path):
 
 
 def normalize_video_for_telegram(source_path):
-    """Keep the video stream intact and convert only audio to Telegram-friendly AAC."""
+    """Create an Android- and Telegram-compatible H.264/AAC MP4."""
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     command = [
         "ffmpeg",
@@ -136,7 +136,17 @@ def normalize_video_for_telegram(source_path):
         "-map",
         "0:a?",
         "-c:v",
-        "copy",
+        "libx264",
+        "-preset",
+        "medium",
+        "-crf",
+        "18",
+        "-profile:v",
+        "high",
+        "-level:v",
+        "4.1",
+        "-pix_fmt",
+        "yuv420p",
         "-c:a",
         "aac",
         "-b:a",
@@ -398,7 +408,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
     ):
         logger.exception("Instagram download failed")
         await status_message.edit_text(
-            "❌ تعذر تحميل هذا الرابط. تأكد أن الحساب والمنشور عامان ثم أعد المحاولة."
+            "❌ تعذر تحميل هذا الرابط. تأكد أن الحساب والمنشور عام ثم أعد المحاولة."
         )
     except Exception:
         logger.exception("Unexpected Instagram handler error")
