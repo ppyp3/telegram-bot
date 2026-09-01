@@ -203,7 +203,9 @@ def download_reel_with_audio(url, output_dir):
     """Use Instagram's video and audio formats together when they are separate."""
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "bv*+ba/b",
+        # Prefer a native Android/iPhone-compatible MP4 video and M4A audio.
+        # This keeps Instagram's original quality instead of re-encoding it.
+        "format": "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b",
         "merge_output_format": "mp4",
         "max_filesize": MAX_MEDIA_SIZE,
         "quiet": True,
@@ -383,7 +385,6 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
     try:
         output_dir, media_files = await asyncio.to_thread(download_instagram_media, url)
-        media_files = await normalize_videos_for_telegram(media_files)
         await context.bot.send_chat_action(
             chat_id=update.effective_chat.id,
             action=ChatAction.UPLOAD_PHOTO,
