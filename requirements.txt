@@ -1,4 +1,4 @@
-yt-dlp[default]
+instaloader>=4.14,<5
 python-telegram-bot
 requests
 instaloader
