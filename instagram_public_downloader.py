@@ -236,7 +236,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
     ):
         logger.exception("Instagram download failed")
         await status_message.edit_text(
-            "❌ تعذر تحميل هذا الرابط. تأكد أن الحساب والمنشور عامان ثم أعد المحاولة."
+            "❌ تعذر تحميل هذا الرابط. تأكد أن الحساب والمنشور عام ثم أعد المحاولة."
         )
     except Exception:
         logger.exception("Unexpected Instagram handler error")
