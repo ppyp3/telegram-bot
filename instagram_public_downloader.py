@@ -152,21 +152,21 @@ def run_ffmpeg(command, output_path, timeout=300):
         raise VideoProcessingError(f"Video processing failed (exit {result.returncode})")
 
 
-def build_ffmpeg_command(source_path, output_path, copy_video, copy_audio):
+def build_ffmpeg_command(source_path, output_path, copy_video, copy_audio, add_silence):
     # Limit threads: x264 defaults to one thread per CPU core, which can exhaust
     # a small container's memory and get the process killed.
-    command = [
-        "ffmpeg",
-        "-y",
-        "-threads",
-        "2",
-        "-i",
-        str(source_path),
-        "-map",
-        "0:v:0",
-        "-map",
-        "0:a?",
-    ]
+    command = ["ffmpeg", "-y", "-threads", "2", "-i", str(source_path)]
+
+    if add_silence:
+        command += [
+            "-f", "lavfi",
+            "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-shortest",
+        ]
+    else:
+        command += ["-map", "0:v:0", "-map", "0:a?"]
 
     if copy_video:
         command += ["-c:v", "copy"]
@@ -182,10 +182,10 @@ def build_ffmpeg_command(source_path, output_path, copy_video, copy_audio):
             "-x264-params", "threads=2:lookahead_threads=1:sliced-threads=0",
         ]
 
-    if copy_audio:
+    if copy_audio and not add_silence:
         command += ["-c:a", "copy"]
     else:
-        command += ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
+        command += ["-c:a", "aac", "-b:a", "128k", "-ac", "2"]
 
     return command + ["-movflags", "+faststart", str(output_path)]
 
@@ -195,24 +195,30 @@ def normalize_video_for_telegram(source_path):
 
     Instagram already serves H.264/AAC, so the streams are normally copied and
     only the container is rebuilt; re-encoding is the last resort because it is
-    the step heavy enough to be killed on a small container.
+    the step heavy enough to be killed on a small container. A silent audio
+    track is added when the source has none, because Telegram turns a soundless
+    MP4 into a GIF-like animation instead of a video.
     """
     video_codec, audio_codec, _, _, _ = probe_video(source_path)
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     copy_video = video_codec == "h264"
-    copy_audio = audio_codec in {None, "aac"}
+    copy_audio = audio_codec == "aac"
+    add_silence = audio_codec is None
 
     try:
         run_ffmpeg(
-            build_ffmpeg_command(source_path, output_path, copy_video, copy_audio),
+            build_ffmpeg_command(
+                source_path, output_path, copy_video, copy_audio, add_silence
+            ),
             output_path,
         )
     except VideoProcessingError:
-        if not copy_video and not copy_audio:
+        if not copy_video:
             raise
         logger.warning("Stream copy failed, re-encoding instead", exc_info=True)
         run_ffmpeg(
-            build_ffmpeg_command(source_path, output_path, False, False), output_path
+            build_ffmpeg_command(source_path, output_path, False, False, add_silence),
+            output_path,
         )
 
     if output_path.stat().st_size > MAX_MEDIA_SIZE:
@@ -307,19 +313,31 @@ def run_reel_download(url, output_dir, media_format):
 
 
 def download_reel_with_audio(url, output_dir):
-    """Download a reel, retrying with a pre-muxed stream when audio is missing."""
+    """Download a reel, falling back until one selector yields audio."""
     media_files = []
+    last_error = None
 
-    for media_format in (MERGED_FORMAT, PREMUXED_FORMAT):
+    for media_format in (PREMUXED_FORMAT, MERGED_FORMAT):
         for stale_file in output_dir.iterdir():
             if stale_file.is_file():
                 stale_file.unlink(missing_ok=True)
 
-        media_files = run_reel_download(url, output_dir, media_format)
+        try:
+            media_files = run_reel_download(url, output_dir, media_format)
+        except yt_dlp.utils.DownloadError as error:
+            # Some posts expose only a subset of formats; try the next selector.
+            logger.warning("Format %s unavailable: %s", media_format, error)
+            last_error = error
+            media_files = []
+            continue
+
         if media_files and all(probe_video(path)[1] for path in media_files):
             break
 
         logger.warning("Reel has no audio track, retrying with another format")
+
+    if not media_files and last_error is not None:
+        raise last_error
 
     if not media_files:
         raise InstagramDownloadError("No downloadable reel media was found")
@@ -524,3 +542,4 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
     finally:
         if output_dir:
             await asyncio.to_thread(shutil.rmtree, output_dir, True)
+ 
