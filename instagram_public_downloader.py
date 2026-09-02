@@ -19,6 +19,7 @@ from telegram.ext import ContextTypes, filters
 
 logger = logging.getLogger(__name__)
 MAX_MEDIA_SIZE = 49 * 1024 * 1024
+UNKNOWN_CODEC = "unknown"
 MEDIA_ID_CACHE: dict[str, list[tuple[str, str]]] = {}
 PROBE_VIDEO_CACHE = {}
 VIDEO_THUMBNAIL_CACHE = {}
@@ -175,8 +176,22 @@ def probe_video(file_path):
         )
         data = json.loads(result.stdout or "{}")
     except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
+        logger.error("FFprobe is unavailable; falling back to stream copy", exc_info=True)
         return store_in_cache(
-            PROBE_VIDEO_CACHE, cache_key, (None, None, None, None, None)
+            PROBE_VIDEO_CACHE,
+            cache_key,
+            (UNKNOWN_CODEC, UNKNOWN_CODEC, None, None, None),
+        )
+
+    if not data.get("streams"):
+        logger.error(
+            "FFprobe reported no streams for %s; falling back to stream copy",
+            file_path.name,
+        )
+        return store_in_cache(
+            PROBE_VIDEO_CACHE,
+            cache_key,
+            (UNKNOWN_CODEC, UNKNOWN_CODEC, None, None, None),
         )
 
     video_codec = audio_codec = width = height = None
@@ -284,9 +299,15 @@ def normalize_video_for_telegram(source_path):
         return source_path
 
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
-    copy_video = video_codec == "h264"
-    copy_audio = audio_codec == "aac"
-    add_silence = audio_codec is None
+    if video_codec == UNKNOWN_CODEC:
+        # Without ffprobe we cannot know the codecs, and re-encoding blindly is
+        # what gets killed on small containers, so only the container is rebuilt.
+        copy_video = copy_audio = True
+        add_silence = False
+    else:
+        copy_video = video_codec == "h264"
+        copy_audio = audio_codec == "aac"
+        add_silence = audio_codec is None
 
     try:
         run_ffmpeg(
@@ -928,3 +949,4 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
+ 
