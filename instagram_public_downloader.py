@@ -145,23 +145,15 @@ def run_ffmpeg(command, output_path, timeout=300):
         raise VideoProcessingError("Video processing failed")
 
 
-def normalize_video_for_telegram(source_path):
-    """Make the file an Android-friendly H.264/AAC MP4 with a moov atom up front.
-
-    Streams that are already H.264/AAC are only remuxed (no quality loss).
-    """
-    video_codec, audio_codec, _, _, _ = probe_video(source_path)
-    output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
-
-    can_copy = video_codec == "h264" and audio_codec in {None, "aac"}
+def build_ffmpeg_command(source_path, output_path, copy_streams):
     command = ["ffmpeg", "-y", "-i", str(source_path), "-map", "0:v:0", "-map", "0:a?"]
 
-    if can_copy:
+    if copy_streams:
         command += ["-c", "copy"]
     else:
         command += [
             "-c:v", "libx264",
-            "-preset", "medium",
+            "-preset", "veryfast",
             "-crf", "20",
             "-profile:v", "high",
             "-level:v", "4.1",
@@ -172,8 +164,26 @@ def normalize_video_for_telegram(source_path):
             "-ac", "2",
         ]
 
-    command += ["-movflags", "+faststart", str(output_path)]
-    run_ffmpeg(command, output_path)
+    return command + ["-movflags", "+faststart", str(output_path)]
+
+
+def normalize_video_for_telegram(source_path):
+    """Make the file an Android-friendly H.264/AAC MP4 with a moov atom up front.
+
+    Streams that are already H.264/AAC are only remuxed (no quality loss); a
+    failed remux falls back to a full re-encode.
+    """
+    video_codec, audio_codec, _, _, _ = probe_video(source_path)
+    output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
+    can_copy = video_codec == "h264" and audio_codec in {None, "aac"}
+
+    try:
+        run_ffmpeg(build_ffmpeg_command(source_path, output_path, can_copy), output_path)
+    except VideoProcessingError:
+        if not can_copy:
+            raise
+        logger.warning("Remux failed, re-encoding instead", exc_info=True)
+        run_ffmpeg(build_ffmpeg_command(source_path, output_path, False), output_path)
 
     if output_path.stat().st_size > MAX_MEDIA_SIZE:
         output_path.unlink(missing_ok=True)
@@ -217,7 +227,13 @@ def normalize_media_files(media_files):
 
     for file_path in media_files:
         if is_video_file(file_path):
-            converted_path = normalize_video_for_telegram(file_path)
+            try:
+                converted_path = normalize_video_for_telegram(file_path)
+            except VideoProcessingError:
+                # Better to send the original file than to fail the request.
+                logger.exception("Falling back to the unprocessed video")
+                prepared_files.append(file_path)
+                continue
             file_path.unlink(missing_ok=True)
             prepared_files.append(converted_path)
         else:
