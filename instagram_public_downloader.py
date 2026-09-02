@@ -370,7 +370,7 @@ def normalize_media_files(media_files):
 
 
 MERGED_FORMAT = (
-    "bv*[vcodec^=avc1][ext=mp4]+ba[acodec^=mp4a][ext=m4a]/bv*[ext=mp4]+ba/bv*+ba"
+    "bv*[vcodec^=avc1][height<=1080]+ba[acodec^=mp4a]/bv*[ext=mp4]+ba/bv*+ba"
 )
 # A single progressive file already carries its audio, so FFmpeg never has to
 # merge anything.
@@ -378,12 +378,13 @@ PREMUXED_FORMAT = "b[ext=mp4][acodec!=none]/b[acodec!=none]/b"
 AUDIO_FORMAT = "ba[ext=m4a]/ba/bestaudio*"
 
 
-def build_download_options(output_dir, name_template, media_format):
-    return {
+def build_download_options(
+    output_dir, name_template, media_format, max_filesize=MAX_MEDIA_SIZE
+):
+    options = {
         "outtmpl": str(output_dir / name_template),
         "format": media_format,
         "merge_output_format": "mp4",
-        "max_filesize": MAX_MEDIA_SIZE,
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
@@ -397,6 +398,9 @@ def build_download_options(output_dir, name_template, media_format):
         "socket_timeout": 15,
         "noplaylist": True,
     }
+    if max_filesize is not None:
+        options["max_filesize"] = max_filesize
+    return options
 
 
 def collect_downloaded(output_dir, prefix, suffixes):
@@ -410,18 +414,32 @@ def collect_downloaded(output_dir, prefix, suffixes):
     )
 
 
+def select_reel_media(candidates):
+    """Keep real video files and prefer the one that already has audio."""
+    videos = [path for path in candidates if probe_video(path)[0] is not None]
+    if not videos:
+        return []
+    with_audio = [path for path in videos if probe_video(path)[1]]
+    chosen = with_audio or videos
+    return [max(chosen, key=lambda path: path.stat().st_size)]
+
+
 def run_reel_download(url, output_dir, media_format):
     options = build_download_options(output_dir, "reel_%(id)s.%(ext)s", media_format)
 
     with yt_dlp.YoutubeDL(options) as downloader:
         downloader.extract_info(url, download=True)
 
-    return collect_downloaded(output_dir, "reel_", {".mp4", ".mkv", ".webm"})
+    return select_reel_media(
+        collect_downloaded(output_dir, "reel_", {".mp4", ".mkv", ".webm"})
+    )
 
 
 def download_reel_audio(url, output_dir):
     """Fetch the reel's own audio stream on its own, without any video."""
-    options = build_download_options(output_dir, "audio_%(id)s.%(ext)s", AUDIO_FORMAT)
+    options = build_download_options(
+        output_dir, "audio_%(id)s.%(ext)s", AUDIO_FORMAT, max_filesize=None
+    )
 
     with yt_dlp.YoutubeDL(options) as downloader:
         downloader.extract_info(url, download=True)
@@ -467,6 +485,7 @@ def attach_missing_audio(url, output_dir, media_files):
     if all(probe_video(path)[1] for path in media_files):
         return media_files
 
+    logger.info("Reel came without audio, fetching the audio stream separately")
     try:
         audio_path = download_reel_audio(url, output_dir)
     except (yt_dlp.utils.DownloadError, OSError):
@@ -488,6 +507,7 @@ def attach_missing_audio(url, output_dir, media_files):
             logger.warning("Muxing the original audio failed", exc_info=True)
             repaired_files.append(path)
             continue
+        logger.info("Original audio attached to %s", muxed_path.name)
         path.unlink(missing_ok=True)
         repaired_files.append(muxed_path)
 
@@ -833,3 +853,4 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
     finally:
         if output_dir:
             await asyncio.to_thread(shutil.rmtree, output_dir, True)
+ 
