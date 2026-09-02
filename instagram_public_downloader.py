@@ -245,7 +245,7 @@ def run_ffmpeg(command, output_path, timeout=300):
 def build_ffmpeg_command(source_path, output_path, copy_video, copy_audio, add_silence):
     # Limit threads: x264 defaults to one thread per CPU core, which can exhaust
     # a small container's memory and get the process killed.
-    command = ["ffmpeg", "-y", "-threads", "2", "-i", str(source_path)]
+    command = ["ffmpeg", "-y", "-threads", "1", "-i", str(source_path)]
 
     if add_silence:
         command += [
@@ -263,13 +263,13 @@ def build_ffmpeg_command(source_path, output_path, copy_video, copy_audio, add_s
     else:
         command += [
             "-c:v", "libx264",
-            "-preset", "veryfast",
-            "-crf", "20",
+            "-preset", "ultrafast",
+            "-crf", "23",
             "-profile:v", "high",
             "-level:v", "4.1",
             "-pix_fmt", "yuv420p",
-            "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-            "-x264-params", "threads=2:lookahead_threads=1:sliced-threads=0",
+            "-vf", "scale=trunc(min(iw\\,720)/2)*2:-2",
+            "-x264-params", "threads=1:lookahead_threads=1:sliced-threads=0:rc-lookahead=10",
         ]
 
     if copy_audio and not add_silence:
