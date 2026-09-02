@@ -376,6 +376,9 @@ MERGED_FORMAT = (
 # merge anything.
 PREMUXED_FORMAT = "b[ext=mp4][acodec!=none]/b[acodec!=none]/b"
 AUDIO_FORMAT = "ba[ext=m4a]/ba/bestaudio*"
+# Some reels are published without any audio stream at all, so the last
+# selector must accept a video-only format instead of failing.
+FALLBACK_FORMAT = "bv*+ba/b/bv*/best"
 
 
 def build_download_options(
@@ -520,7 +523,7 @@ def download_reel_with_audio(url, output_dir):
     media_files = []
     last_error = None
 
-    for media_format in (PREMUXED_FORMAT, MERGED_FORMAT):
+    for media_format in (PREMUXED_FORMAT, MERGED_FORMAT, FALLBACK_FORMAT):
         for stale_file in output_dir.iterdir():
             if stale_file.is_file():
                 stale_file.unlink(missing_ok=True)
@@ -533,6 +536,16 @@ def download_reel_with_audio(url, output_dir):
             last_error = error
             media_files = []
             continue
+
+        if media_files:
+            chosen_codecs = probe_video(media_files[0])[:2]
+            logger.info(
+                "Reel format %s produced %s (video=%s audio=%s)",
+                media_format,
+                media_files[0].name,
+                chosen_codecs[0],
+                chosen_codecs[1],
+            )
 
         if media_files and all(probe_video(path)[1] for path in media_files):
             break
@@ -620,16 +633,13 @@ def download_instagram_media(url):
         raise
 
 
-def media_caption(is_video, index, total):
-    """Videos are sent without any caption; photos keep the counter."""
-    if is_video:
-        return None
+def media_caption(index, total):
     return f"- @G66Gbot - {index}/{total}"
 
 
 async def send_instagram_file(message, chat_id, context, file_path, index, total):
     is_video = is_video_file(file_path)
-    caption = media_caption(is_video, index, total)
+    caption = media_caption(index, total)
 
     if not is_video:
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
@@ -690,8 +700,8 @@ async def send_instagram_album(message, context, media_files):
                 absolute_index = start + offset
                 is_video = is_video_file(file_path)
                 caption = (
-                    media_caption(False, absolute_index, total_files)
-                    if not is_video and absolute_index == total_files
+                    media_caption(absolute_index, total_files)
+                    if absolute_index == total_files
                     else None
                 )
 
@@ -764,7 +774,7 @@ async def send_cached_media(message, context, media_ids):
         batch = media_ids[start : start + 10]
         if len(batch) == 1:
             kind, file_id = batch[0]
-            caption = media_caption(kind != "photo", start + 1, total_files)
+            caption = media_caption(start + 1, total_files)
             if kind == "photo":
                 await message.reply_photo(photo=file_id, caption=caption)
             else:
@@ -779,8 +789,8 @@ async def send_cached_media(message, context, media_ids):
         for offset, (kind, file_id) in enumerate(batch, start=1):
             absolute_index = start + offset
             caption = (
-                media_caption(False, absolute_index, total_files)
-                if kind == "photo" and absolute_index == total_files
+                media_caption(absolute_index, total_files)
+                if absolute_index == total_files
                 else None
             )
             if kind == "photo":
