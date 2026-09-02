@@ -56,6 +56,28 @@ class VideoProcessingError(InstagramDownloadError):
     pass
 
 
+def log_media_tools_status():
+    """Log whether FFmpeg and FFprobe are usable so deploys are diagnosable."""
+    for tool in ("ffmpeg", "ffprobe"):
+        executable = shutil.which(tool)
+        if executable is None:
+            logger.error("%s is NOT installed; videos cannot be prepared", tool)
+            continue
+        try:
+            result = subprocess.run(
+                [executable, "-version"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            logger.error("%s is installed but failed to run", tool, exc_info=True)
+            continue
+        first_line = (result.stdout or result.stderr or "").splitlines()
+        logger.info("%s available: %s", tool, first_line[0] if first_line else "unknown")
+
+
 def _get_instagram_url_parts(url):
     parsed = urlparse(url.strip())
     hostname = (parsed.hostname or "").lower().rstrip(".")
@@ -190,6 +212,11 @@ def run_ffmpeg(command, output_path, timeout=300):
     if result.returncode != 0 or not output_path.is_file():
         # A negative return code means the process was killed, usually by the
         # container's out-of-memory killer.
+        if result.returncode < 0:
+            logger.error(
+                "FFmpeg was killed by signal %s — the container likely ran out of memory",
+                -result.returncode,
+            )
         logger.error(
             "FFmpeg failed (exit %s): %s ... %s",
             result.returncode,
@@ -898,4 +925,6 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
     finally:
         if output_dir:
             await asyncio.to_thread(shutil.rmtree, output_dir, True)
- 
+
+
+log_media_tools_status()
