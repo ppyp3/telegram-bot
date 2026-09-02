@@ -307,19 +307,31 @@ def run_reel_download(url, output_dir, media_format):
 
 
 def download_reel_with_audio(url, output_dir):
-    """Download a reel, retrying with a pre-muxed stream when audio is missing."""
+    """Download a reel, falling back until one selector yields audio."""
     media_files = []
+    last_error = None
 
-    for media_format in (MERGED_FORMAT, PREMUXED_FORMAT):
+    for media_format in (PREMUXED_FORMAT, MERGED_FORMAT):
         for stale_file in output_dir.iterdir():
             if stale_file.is_file():
                 stale_file.unlink(missing_ok=True)
 
-        media_files = run_reel_download(url, output_dir, media_format)
+        try:
+            media_files = run_reel_download(url, output_dir, media_format)
+        except yt_dlp.utils.DownloadError as error:
+            # Some posts expose only a subset of formats; try the next selector.
+            logger.warning("Format %s unavailable: %s", media_format, error)
+            last_error = error
+            media_files = []
+            continue
+
         if media_files and all(probe_video(path)[1] for path in media_files):
             break
 
         logger.warning("Reel has no audio track, retrying with another format")
+
+    if not media_files and last_error is not None:
+        raise last_error
 
     if not media_files:
         raise InstagramDownloadError("No downloadable reel media was found")
