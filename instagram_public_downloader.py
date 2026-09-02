@@ -1,4 +1,4 @@
-import asyncio
+ import asyncio
 import json
 import logging
 import mimetypes
@@ -375,11 +375,12 @@ MERGED_FORMAT = (
 # A single progressive file already carries its audio, so FFmpeg never has to
 # merge anything.
 PREMUXED_FORMAT = "b[ext=mp4][acodec!=none]/b[acodec!=none]/b"
+AUDIO_FORMAT = "ba[ext=m4a]/ba/bestaudio*"
 
 
-def run_reel_download(url, output_dir, media_format):
-    options = {
-        "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
+def build_download_options(output_dir, name_template, media_format):
+    return {
+        "outtmpl": str(output_dir / name_template),
         "format": media_format,
         "merge_output_format": "mp4",
         "max_filesize": MAX_MEDIA_SIZE,
@@ -397,16 +398,101 @@ def run_reel_download(url, output_dir, media_format):
         "noplaylist": True,
     }
 
-    with yt_dlp.YoutubeDL(options) as downloader:
-        downloader.extract_info(url, download=True)
 
+def collect_downloaded(output_dir, prefix, suffixes):
     return sorted(
         path
         for path in output_dir.iterdir()
         if path.is_file()
+        and path.name.startswith(prefix)
         and not path.name.endswith((".part", ".ytdl"))
-        and path.suffix.lower() in {".mp4", ".mkv", ".webm"}
+        and path.suffix.lower() in suffixes
     )
+
+
+def run_reel_download(url, output_dir, media_format):
+    options = build_download_options(output_dir, "reel_%(id)s.%(ext)s", media_format)
+
+    with yt_dlp.YoutubeDL(options) as downloader:
+        downloader.extract_info(url, download=True)
+
+    return collect_downloaded(output_dir, "reel_", {".mp4", ".mkv", ".webm"})
+
+
+def download_reel_audio(url, output_dir):
+    """Fetch the reel's own audio stream on its own, without any video."""
+    options = build_download_options(output_dir, "audio_%(id)s.%(ext)s", AUDIO_FORMAT)
+
+    with yt_dlp.YoutubeDL(options) as downloader:
+        downloader.extract_info(url, download=True)
+
+    audio_files = collect_downloaded(
+        output_dir, "audio_", {".m4a", ".mp4", ".aac", ".webm", ".opus", ".mp3"}
+    )
+    return audio_files[0] if audio_files else None
+
+
+def mux_audio_into_video(video_path, audio_path):
+    """Attach the original audio without touching the video stream."""
+    audio_codec = probe_video(audio_path)[1]
+    output_path = video_path.with_name(f"{video_path.stem}_sound.mp4")
+    command = [
+        "ffmpeg",
+        "-y",
+        "-threads",
+        "2",
+        "-i",
+        str(video_path),
+        "-i",
+        str(audio_path),
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-c:v",
+        "copy",
+    ]
+    if audio_codec == "aac":
+        command += ["-c:a", "copy"]
+    else:
+        command += ["-c:a", "aac", "-b:a", "128k", "-ac", "2"]
+    command += ["-shortest", "-movflags", "+faststart", str(output_path)]
+
+    run_ffmpeg(command, output_path)
+    return output_path
+
+
+def attach_missing_audio(url, output_dir, media_files):
+    """Add the reel's original audio to files that were downloaded video-only."""
+    if all(probe_video(path)[1] for path in media_files):
+        return media_files
+
+    try:
+        audio_path = download_reel_audio(url, output_dir)
+    except (yt_dlp.utils.DownloadError, OSError):
+        logger.warning("Could not download the reel audio stream", exc_info=True)
+        return media_files
+
+    if audio_path is None or not probe_video(audio_path)[1]:
+        logger.warning("The reel does not expose any audio stream")
+        return media_files
+
+    repaired_files = []
+    for path in media_files:
+        if probe_video(path)[1]:
+            repaired_files.append(path)
+            continue
+        try:
+            muxed_path = mux_audio_into_video(path, audio_path)
+        except VideoProcessingError:
+            logger.warning("Muxing the original audio failed", exc_info=True)
+            repaired_files.append(path)
+            continue
+        path.unlink(missing_ok=True)
+        repaired_files.append(muxed_path)
+
+    audio_path.unlink(missing_ok=True)
+    return repaired_files
 
 
 def download_reel_with_audio(url, output_dir):
@@ -438,6 +524,8 @@ def download_reel_with_audio(url, output_dir):
 
     if not media_files:
         raise InstagramDownloadError("No downloadable reel media was found")
+
+    media_files = attach_missing_audio(url, output_dir, media_files)
 
     for path in media_files:
         if path.stat().st_size > MAX_MEDIA_SIZE:
@@ -512,10 +600,18 @@ def download_instagram_media(url):
         raise
 
 
-async def send_instagram_file(message, chat_id, context, file_path, index, total):
-    caption = f"- @G66Gbot - {index}/{total}"
+def media_caption(is_video, index, total):
+    """Videos are sent without any caption; photos keep the counter."""
+    if is_video:
+        return None
+    return f"- @G66Gbot - {index}/{total}"
 
-    if not is_video_file(file_path):
+
+async def send_instagram_file(message, chat_id, context, file_path, index, total):
+    is_video = is_video_file(file_path)
+    caption = media_caption(is_video, index, total)
+
+    if not is_video:
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
         with file_path.open("rb") as media_file:
             sent_message = await message.reply_photo(photo=media_file, caption=caption)
@@ -572,13 +668,14 @@ async def send_instagram_album(message, context, media_files):
                 media_file = file_path.open("rb")
                 open_files.append(media_file)
                 absolute_index = start + offset
+                is_video = is_video_file(file_path)
                 caption = (
-                    f"- @G66Gbot - {absolute_index}/{total_files}"
-                    if absolute_index == total_files
+                    media_caption(False, absolute_index, total_files)
+                    if not is_video and absolute_index == total_files
                     else None
                 )
 
-                if not is_video_file(file_path):
+                if not is_video:
                     media_group.append(InputMediaPhoto(media=media_file, caption=caption))
                     continue
 
@@ -647,7 +744,7 @@ async def send_cached_media(message, context, media_ids):
         batch = media_ids[start : start + 10]
         if len(batch) == 1:
             kind, file_id = batch[0]
-            caption = f"- @G66Gbot - {start + 1}/{total_files}"
+            caption = media_caption(kind != "photo", start + 1, total_files)
             if kind == "photo":
                 await message.reply_photo(photo=file_id, caption=caption)
             else:
@@ -662,8 +759,8 @@ async def send_cached_media(message, context, media_ids):
         for offset, (kind, file_id) in enumerate(batch, start=1):
             absolute_index = start + offset
             caption = (
-                f"- @G66Gbot - {absolute_index}/{total_files}"
-                if absolute_index == total_files
+                media_caption(False, absolute_index, total_files)
+                if kind == "photo" and absolute_index == total_files
                 else None
             )
             if kind == "photo":
@@ -736,4 +833,3 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
     finally:
         if output_dir:
             await asyncio.to_thread(shutil.rmtree, output_dir, True)
- 
