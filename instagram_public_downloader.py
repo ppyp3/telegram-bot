@@ -19,6 +19,10 @@ from telegram.ext import ContextTypes, filters
 
 logger = logging.getLogger(__name__)
 MAX_MEDIA_SIZE = 49 * 1024 * 1024
+MEDIA_ID_CACHE: dict[str, list[tuple[str, str]]] = {}
+PROBE_VIDEO_CACHE = {}
+VIDEO_THUMBNAIL_CACHE = {}
+MAX_CACHE_ENTRIES = 500
 DOWNLOAD_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -28,6 +32,16 @@ DOWNLOAD_HEADERS = {
 INSTAGRAM_FILTER = filters.TEXT & filters.Regex(
     r"(?i)^https?://(?:www\.)?instagram\.com/(?:p|reel|reels)/"
 )
+
+
+def store_in_cache(cache, key, value):
+    if key is None:
+        return value
+
+    cache[key] = value
+    while len(cache) > MAX_CACHE_ENTRIES:
+        cache.pop(next(iter(cache)))
+    return value
 
 
 class InstagramDownloadError(Exception):
@@ -42,7 +56,7 @@ class VideoProcessingError(InstagramDownloadError):
     pass
 
 
-def get_shortcode(url):
+def _get_instagram_url_parts(url):
     parsed = urlparse(url.strip())
     hostname = (parsed.hostname or "").lower().rstrip(".")
     parts = [part for part in parsed.path.split("/") if part]
@@ -55,7 +69,25 @@ def get_shortcode(url):
     ):
         return None
 
+    return parsed, parts
+
+
+def get_shortcode(url):
+    parsed_parts = _get_instagram_url_parts(url)
+    if not parsed_parts:
+        return None
+
+    _, parts = parsed_parts
     return parts[1]
+
+
+def get_url_kind(url):
+    parsed_parts = _get_instagram_url_parts(url)
+    if not parsed_parts:
+        return None
+
+    _, parts = parsed_parts
+    return "reel" if parts[0] in {"reel", "reels"} else "post"
 
 
 def download_file(url, output_path):
@@ -93,6 +125,18 @@ def download_file(url, output_path):
 
 def probe_video(file_path):
     """Return (video_codec, audio_codec, width, height, duration) via ffprobe."""
+    try:
+        stat = file_path.stat()
+    except OSError:
+        stat = None
+    cache_key = (
+        (file_path, stat.st_mtime, stat.st_size)
+        if stat is not None
+        else None
+    )
+    if cache_key in PROBE_VIDEO_CACHE:
+        return PROBE_VIDEO_CACHE[cache_key]
+
     command = [
         "ffprobe",
         "-v",
@@ -109,7 +153,9 @@ def probe_video(file_path):
         )
         data = json.loads(result.stdout or "{}")
     except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
-        return None, None, None, None, None
+        return store_in_cache(
+            PROBE_VIDEO_CACHE, cache_key, (None, None, None, None, None)
+        )
 
     video_codec = audio_codec = width = height = None
     for stream in data.get("streams", []):
@@ -125,7 +171,9 @@ def probe_video(file_path):
     except (TypeError, ValueError):
         duration = None
 
-    return video_codec, audio_codec, width, height, duration
+    return store_in_cache(
+        PROBE_VIDEO_CACHE, cache_key, (video_codec, audio_codec, width, height, duration)
+    )
 
 
 def run_ffmpeg(command, output_path, timeout=300):
@@ -200,6 +248,13 @@ def normalize_video_for_telegram(source_path):
     MP4 into a GIF-like animation instead of a video.
     """
     video_codec, audio_codec, _, _, _ = probe_video(source_path)
+    if (
+        video_codec == "h264"
+        and audio_codec == "aac"
+        and is_faststart(source_path)
+    ):
+        return source_path
+
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     copy_video = video_codec == "h264"
     copy_audio = audio_codec == "aac"
@@ -228,8 +283,42 @@ def normalize_video_for_telegram(source_path):
     return output_path
 
 
+def is_faststart(file_path):
+    try:
+        file_size = file_path.stat().st_size
+        with file_path.open("rb") as media_file:
+            head = media_file.read(64 * 1024)
+            moov_position = head.find(b"moov")
+            mdat_position = head.find(b"mdat")
+            if moov_position >= 0 and mdat_position >= 0:
+                return moov_position < mdat_position
+
+            if moov_position < 0 and file_size <= 4 * 1024 * 1024:
+                media_file.seek(0)
+                contents = media_file.read()
+                return (
+                    0 <= contents.find(b"moov") < contents.find(b"mdat")
+                )
+    except OSError:
+        pass
+
+    return False
+
+
 def create_video_thumbnail(file_path):
     """Telegram shows a film icon when no thumbnail is attached; build one."""
+    try:
+        stat = file_path.stat()
+    except OSError:
+        stat = None
+    cache_key = (
+        (file_path, stat.st_mtime, stat.st_size)
+        if stat is not None
+        else None
+    )
+    if cache_key in VIDEO_THUMBNAIL_CACHE:
+        return VIDEO_THUMBNAIL_CACHE[cache_key]
+
     thumbnail_path = file_path.with_name(f"{file_path.stem}_thumb.jpg")
     command = [
         "ffmpeg",
@@ -249,8 +338,9 @@ def create_video_thumbnail(file_path):
     try:
         run_ffmpeg(command, thumbnail_path, timeout=60)
     except VideoProcessingError:
-        return None
-    return thumbnail_path
+        return store_in_cache(VIDEO_THUMBNAIL_CACHE, cache_key, None)
+
+    return store_in_cache(VIDEO_THUMBNAIL_CACHE, cache_key, thumbnail_path)
 
 
 def is_video_file(file_path):
@@ -270,7 +360,8 @@ def normalize_media_files(media_files):
                 logger.exception("Falling back to the unprocessed video")
                 prepared_files.append(file_path)
                 continue
-            file_path.unlink(missing_ok=True)
+            if converted_path != file_path:
+                file_path.unlink(missing_ok=True)
             prepared_files.append(converted_path)
         else:
             prepared_files.append(file_path)
@@ -298,6 +389,12 @@ def run_reel_download(url, output_dir, media_format):
         "writethumbnail": False,
         "writesubtitles": False,
         "writeautomaticsub": False,
+        "concurrent_fragment_downloads": 8,
+        "http_chunk_size": 10485760,
+        "retries": 3,
+        "fragment_retries": 3,
+        "socket_timeout": 15,
+        "noplaylist": True,
     }
 
     with yt_dlp.YoutubeDL(options) as downloader:
@@ -357,6 +454,14 @@ def download_instagram_media(url):
     output_dir = Path(tempfile.mkdtemp(prefix="instagram_media_"))
 
     try:
+        url_kind = get_url_kind(url)
+        if url_kind == "reel":
+            try:
+                reel_files = download_reel_with_audio(url, output_dir)
+                return output_dir, normalize_media_files(reel_files)
+            except yt_dlp.utils.DownloadError:
+                logger.warning("Falling back to direct Instagram reel URL", exc_info=True)
+
         loader = instaloader.Instaloader(
             download_pictures=False,
             download_videos=False,
@@ -367,7 +472,11 @@ def download_instagram_media(url):
         )
         post = instaloader.Post.from_shortcode(loader.context, shortcode)
 
-        if post.is_video and post.typename != "GraphSidecar":
+        if (
+            url_kind == "post"
+            and post.is_video
+            and post.typename != "GraphSidecar"
+        ):
             try:
                 reel_files = download_reel_with_audio(url, output_dir)
                 return output_dir, normalize_media_files(reel_files)
@@ -409,8 +518,8 @@ async def send_instagram_file(message, chat_id, context, file_path, index, total
     if not is_video_file(file_path):
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
         with file_path.open("rb") as media_file:
-            await message.reply_photo(photo=media_file, caption=caption)
-        return
+            sent_message = await message.reply_photo(photo=media_file, caption=caption)
+        return [sent_message]
 
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
     _, _, width, height, duration = await asyncio.to_thread(probe_video, file_path)
@@ -429,26 +538,30 @@ async def send_instagram_file(message, chat_id, context, file_path, index, total
         if thumbnail_file:
             video_arguments["thumbnail"] = thumbnail_file
         with file_path.open("rb") as media_file:
-            await message.reply_video(video=media_file, **video_arguments)
+            sent_message = await message.reply_video(video=media_file, **video_arguments)
     finally:
         if thumbnail_file:
             thumbnail_file.close()
+    return [sent_message]
 
 
 async def send_instagram_album(message, context, media_files):
     total_files = len(media_files)
+    sent_messages = []
 
     for start in range(0, total_files, 10):
         batch = media_files[start : start + 10]
 
         if len(batch) == 1:
-            await send_instagram_file(
-                message,
-                message.chat_id,
-                context,
-                batch[0],
-                start + 1,
-                total_files,
+            sent_messages.extend(
+                await send_instagram_file(
+                    message,
+                    message.chat_id,
+                    context,
+                    batch[0],
+                    start + 1,
+                    total_files,
+                )
             )
             continue
 
@@ -489,10 +602,81 @@ async def send_instagram_album(message, context, media_files):
                     )
                 )
 
-            await message.reply_media_group(media=media_group)
+            sent_messages.extend(await message.reply_media_group(media=media_group))
         finally:
             for media_file in open_files:
                 media_file.close()
+
+    return sent_messages
+
+
+def get_sent_media_id(message):
+    video = getattr(message, "video", None)
+    if video is not None and getattr(video, "file_id", None):
+        return "video", video.file_id
+
+    photos = getattr(message, "photo", None)
+    if photos:
+        file_id = getattr(photos[-1], "file_id", None)
+        if file_id:
+            return "photo", file_id
+
+    return None
+
+
+def cache_sent_media(shortcode, sent_messages):
+    media_ids = [
+        media_id
+        for sent_message in sent_messages
+        if (media_id := get_sent_media_id(sent_message)) is not None
+    ]
+    if len(media_ids) != len(sent_messages):
+        return
+
+    store_in_cache(MEDIA_ID_CACHE, shortcode, media_ids)
+
+
+async def send_cached_media(message, context, media_ids):
+    total_files = len(media_ids)
+    await context.bot.send_chat_action(
+        chat_id=message.chat_id,
+        action=ChatAction.UPLOAD_PHOTO,
+    )
+
+    for start in range(0, total_files, 10):
+        batch = media_ids[start : start + 10]
+        if len(batch) == 1:
+            kind, file_id = batch[0]
+            caption = f"- @G66Gbot - {start + 1}/{total_files}"
+            if kind == "photo":
+                await message.reply_photo(photo=file_id, caption=caption)
+            else:
+                await message.reply_video(
+                    video=file_id,
+                    caption=caption,
+                    supports_streaming=True,
+                )
+            continue
+
+        media_group = []
+        for offset, (kind, file_id) in enumerate(batch, start=1):
+            absolute_index = start + offset
+            caption = (
+                f"- @G66Gbot - {absolute_index}/{total_files}"
+                if absolute_index == total_files
+                else None
+            )
+            if kind == "photo":
+                media_group.append(InputMediaPhoto(media=file_id, caption=caption))
+            else:
+                media_group.append(
+                    InputMediaVideo(
+                        media=file_id,
+                        caption=caption,
+                        supports_streaming=True,
+                    )
+                )
+        await message.reply_media_group(media=media_group)
 
 
 async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -500,7 +684,8 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
         return
 
     url = (update.message.text or "").strip()
-    if not get_shortcode(url):
+    shortcode = get_shortcode(url)
+    if not shortcode:
         return
 
     status_message = await update.message.reply_text(
@@ -509,12 +694,21 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
     output_dir = None
 
     try:
+        cached_media = MEDIA_ID_CACHE.get(shortcode)
+        if cached_media is not None:
+            await send_cached_media(update.message, context, cached_media)
+            await status_message.delete()
+            return
+
         output_dir, media_files = await asyncio.to_thread(download_instagram_media, url)
         await context.bot.send_chat_action(
             chat_id=update.effective_chat.id,
             action=ChatAction.UPLOAD_PHOTO,
         )
-        await send_instagram_album(update.message, context, media_files)
+        sent_messages = await send_instagram_album(
+            update.message, context, media_files
+        )
+        cache_sent_media(shortcode, sent_messages)
 
         await status_message.delete()
     except InstagramMediaTooLarge:
