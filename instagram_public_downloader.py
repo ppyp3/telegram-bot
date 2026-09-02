@@ -140,16 +140,36 @@ def run_ffmpeg(command, output_path, timeout=300):
         raise VideoProcessingError("Video processing timed out") from error
 
     if result.returncode != 0 or not output_path.is_file():
-        logger.error("FFmpeg failed: %s", result.stderr[-1500:])
+        # A negative return code means the process was killed, usually by the
+        # container's out-of-memory killer.
+        logger.error(
+            "FFmpeg failed (exit %s): %s ... %s",
+            result.returncode,
+            result.stderr[:1500],
+            result.stderr[-1500:],
+        )
         output_path.unlink(missing_ok=True)
-        raise VideoProcessingError("Video processing failed")
+        raise VideoProcessingError(f"Video processing failed (exit {result.returncode})")
 
 
-def build_ffmpeg_command(source_path, output_path, copy_streams):
-    command = ["ffmpeg", "-y", "-i", str(source_path), "-map", "0:v:0", "-map", "0:a?"]
+def build_ffmpeg_command(source_path, output_path, copy_video, copy_audio):
+    # Limit threads: x264 defaults to one thread per CPU core, which can exhaust
+    # a small container's memory and get the process killed.
+    command = [
+        "ffmpeg",
+        "-y",
+        "-threads",
+        "2",
+        "-i",
+        str(source_path),
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+    ]
 
-    if copy_streams:
-        command += ["-c", "copy"]
+    if copy_video:
+        command += ["-c:v", "copy"]
     else:
         command += [
             "-c:v", "libx264",
@@ -159,10 +179,13 @@ def build_ffmpeg_command(source_path, output_path, copy_streams):
             "-level:v", "4.1",
             "-pix_fmt", "yuv420p",
             "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-            "-c:a", "aac",
-            "-b:a", "192k",
-            "-ac", "2",
+            "-x264-params", "threads=2:lookahead_threads=1:sliced-threads=0",
         ]
+
+    if copy_audio:
+        command += ["-c:a", "copy"]
+    else:
+        command += ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
 
     return command + ["-movflags", "+faststart", str(output_path)]
 
@@ -170,20 +193,27 @@ def build_ffmpeg_command(source_path, output_path, copy_streams):
 def normalize_video_for_telegram(source_path):
     """Make the file an Android-friendly H.264/AAC MP4 with a moov atom up front.
 
-    Streams that are already H.264/AAC are only remuxed (no quality loss); a
-    failed remux falls back to a full re-encode.
+    Instagram already serves H.264/AAC, so the streams are normally copied and
+    only the container is rebuilt; re-encoding is the last resort because it is
+    the step heavy enough to be killed on a small container.
     """
     video_codec, audio_codec, _, _, _ = probe_video(source_path)
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
-    can_copy = video_codec == "h264" and audio_codec in {None, "aac"}
+    copy_video = video_codec == "h264"
+    copy_audio = audio_codec in {None, "aac"}
 
     try:
-        run_ffmpeg(build_ffmpeg_command(source_path, output_path, can_copy), output_path)
+        run_ffmpeg(
+            build_ffmpeg_command(source_path, output_path, copy_video, copy_audio),
+            output_path,
+        )
     except VideoProcessingError:
-        if not can_copy:
+        if not copy_video and not copy_audio:
             raise
-        logger.warning("Remux failed, re-encoding instead", exc_info=True)
-        run_ffmpeg(build_ffmpeg_command(source_path, output_path, False), output_path)
+        logger.warning("Stream copy failed, re-encoding instead", exc_info=True)
+        run_ffmpeg(
+            build_ffmpeg_command(source_path, output_path, False, False), output_path
+        )
 
     if output_path.stat().st_size > MAX_MEDIA_SIZE:
         output_path.unlink(missing_ok=True)
@@ -242,14 +272,18 @@ def normalize_media_files(media_files):
     return prepared_files
 
 
-def download_reel_with_audio(url, output_dir):
+MERGED_FORMAT = (
+    "bv*[vcodec^=avc1][ext=mp4]+ba[acodec^=mp4a][ext=m4a]/bv*[ext=mp4]+ba/bv*+ba"
+)
+# A single progressive file already carries its audio, so FFmpeg never has to
+# merge anything.
+PREMUXED_FORMAT = "b[ext=mp4][acodec!=none]/b[acodec!=none]/b"
+
+
+def run_reel_download(url, output_dir, media_format):
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        # Prefer H.264/AAC in MP4 so no re-encode is needed downstream.
-        "format": (
-            "bv*[vcodec^=avc1][ext=mp4]+ba[acodec^=mp4a][ext=m4a]/"
-            "b[vcodec^=avc1][ext=mp4]/bv*[ext=mp4]+ba/b[ext=mp4]/bv*+ba/b"
-        ),
+        "format": media_format,
         "merge_output_format": "mp4",
         "max_filesize": MAX_MEDIA_SIZE,
         "quiet": True,
@@ -263,13 +297,29 @@ def download_reel_with_audio(url, output_dir):
     with yt_dlp.YoutubeDL(options) as downloader:
         downloader.extract_info(url, download=True)
 
-    media_files = sorted(
+    return sorted(
         path
         for path in output_dir.iterdir()
         if path.is_file()
         and not path.name.endswith((".part", ".ytdl"))
         and path.suffix.lower() in {".mp4", ".mkv", ".webm"}
     )
+
+
+def download_reel_with_audio(url, output_dir):
+    """Download a reel, retrying with a pre-muxed stream when audio is missing."""
+    media_files = []
+
+    for media_format in (MERGED_FORMAT, PREMUXED_FORMAT):
+        for stale_file in output_dir.iterdir():
+            if stale_file.is_file():
+                stale_file.unlink(missing_ok=True)
+
+        media_files = run_reel_download(url, output_dir, media_format)
+        if media_files and all(probe_video(path)[1] for path in media_files):
+            break
+
+        logger.warning("Reel has no audio track, retrying with another format")
 
     if not media_files:
         raise InstagramDownloadError("No downloadable reel media was found")
