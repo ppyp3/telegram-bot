@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import mimetypes
 import shutil
@@ -24,7 +25,6 @@ DOWNLOAD_HEADERS = {
     "Referer": "https://www.instagram.com/",
 }
 
-# الصور والبوستات والريلز العامة فقط. لا يدعم الستوري أو الحسابات الخاصة.
 INSTAGRAM_FILTER = filters.TEXT & filters.Regex(
     r"(?i)^https?://(?:www\.)?instagram\.com/(?:p|reel|reels)/"
 )
@@ -91,89 +91,89 @@ def download_file(url, output_path):
             response.close()
 
 
-def get_mp4_dimensions(file_path):
-    """Read the encoded MP4 dimensions without converting or re-encoding it."""
-    try:
-        data = file_path.read_bytes()
-        search_from = 0
-
-        while True:
-            atom_type_position = data.find(b"tkhd", search_from)
-            if atom_type_position == -1:
-                return None, None
-
-            payload_position = atom_type_position + 4
-            version = data[payload_position]
-            dimensions_position = payload_position + (76 if version == 0 else 88)
-
-            if dimensions_position + 8 <= len(data):
-                width = int.from_bytes(
-                    data[dimensions_position : dimensions_position + 4], "big"
-                ) >> 16
-                height = int.from_bytes(
-                    data[dimensions_position + 4 : dimensions_position + 8], "big"
-                ) >> 16
-
-                # Audio tracks have dimensions of 0; keep searching for the video track.
-                if width > 0 and height > 0:
-                    return width, height
-
-            search_from = atom_type_position + 4
-    except (IndexError, OSError):
-        return None, None
-
-
-def normalize_video_for_telegram(source_path):
-    """Create an Android- and Telegram-compatible H.264/AAC MP4."""
-    output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
+def probe_video(file_path):
+    """Return (video_codec, audio_codec, width, height, duration) via ffprobe."""
     command = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        str(source_path),
-        "-map",
-        "0:v:0",
-        "-map",
-        "0:a?",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "medium",
-        "-crf",
-        "18",
-        "-profile:v",
-        "high",
-        "-level:v",
-        "4.1",
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "192k",
-        "-movflags",
-        "+faststart",
-        "-shortest",
-        str(output_path),
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "stream=codec_type,codec_name,width,height:format=duration",
+        "-of",
+        "json",
+        str(file_path),
     ]
-
     try:
         result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=180,
-            check=False,
+            command, capture_output=True, text=True, timeout=60, check=False
+        )
+        data = json.loads(result.stdout or "{}")
+    except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
+        return None, None, None, None, None
+
+    video_codec = audio_codec = width = height = None
+    for stream in data.get("streams", []):
+        if stream.get("codec_type") == "video" and video_codec is None:
+            video_codec = stream.get("codec_name")
+            width = stream.get("width")
+            height = stream.get("height")
+        elif stream.get("codec_type") == "audio" and audio_codec is None:
+            audio_codec = stream.get("codec_name")
+
+    try:
+        duration = int(float(data.get("format", {}).get("duration", 0))) or None
+    except (TypeError, ValueError):
+        duration = None
+
+    return video_codec, audio_codec, width, height, duration
+
+
+def run_ffmpeg(command, output_path, timeout=300):
+    try:
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=timeout, check=False
         )
     except FileNotFoundError as error:
         raise VideoProcessingError("FFmpeg is not installed") from error
     except subprocess.TimeoutExpired as error:
-        raise VideoProcessingError("Video conversion timed out") from error
+        output_path.unlink(missing_ok=True)
+        raise VideoProcessingError("Video processing timed out") from error
 
     if result.returncode != 0 or not output_path.is_file():
         logger.error("FFmpeg failed: %s", result.stderr[-1500:])
         output_path.unlink(missing_ok=True)
-        raise VideoProcessingError("Video conversion failed")
+        raise VideoProcessingError("Video processing failed")
+
+
+def normalize_video_for_telegram(source_path):
+    """Make the file an Android-friendly H.264/AAC MP4 with a moov atom up front.
+
+    Streams that are already H.264/AAC are only remuxed (no quality loss).
+    """
+    video_codec, audio_codec, _, _, _ = probe_video(source_path)
+    output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
+
+    can_copy = video_codec == "h264" and audio_codec in {None, "aac"}
+    command = ["ffmpeg", "-y", "-i", str(source_path), "-map", "0:v:0", "-map", "0:a?"]
+
+    if can_copy:
+        command += ["-c", "copy"]
+    else:
+        command += [
+            "-c:v", "libx264",
+            "-preset", "medium",
+            "-crf", "20",
+            "-profile:v", "high",
+            "-level:v", "4.1",
+            "-pix_fmt", "yuv420p",
+            "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-ac", "2",
+        ]
+
+    command += ["-movflags", "+faststart", str(output_path)]
+    run_ffmpeg(command, output_path)
 
     if output_path.stat().st_size > MAX_MEDIA_SIZE:
         output_path.unlink(missing_ok=True)
@@ -182,15 +182,42 @@ def normalize_video_for_telegram(source_path):
     return output_path
 
 
-async def normalize_videos_for_telegram(media_files):
+def create_video_thumbnail(file_path):
+    """Telegram shows a film icon when no thumbnail is attached; build one."""
+    thumbnail_path = file_path.with_name(f"{file_path.stem}_thumb.jpg")
+    command = [
+        "ffmpeg",
+        "-y",
+        "-ss",
+        "0.5",
+        "-i",
+        str(file_path),
+        "-frames:v",
+        "1",
+        "-vf",
+        "scale=320:-2",
+        "-q:v",
+        "4",
+        str(thumbnail_path),
+    ]
+    try:
+        run_ffmpeg(command, thumbnail_path, timeout=60)
+    except VideoProcessingError:
+        return None
+    return thumbnail_path
+
+
+def is_video_file(file_path):
+    mime_type, _ = mimetypes.guess_type(file_path.name)
+    return bool(mime_type and mime_type.startswith("video/"))
+
+
+def normalize_media_files(media_files):
     prepared_files = []
 
     for file_path in media_files:
-        mime_type, _ = mimetypes.guess_type(file_path.name)
-        if mime_type and mime_type.startswith("video/"):
-            converted_path = await asyncio.to_thread(
-                normalize_video_for_telegram, file_path
-            )
+        if is_video_file(file_path):
+            converted_path = normalize_video_for_telegram(file_path)
             file_path.unlink(missing_ok=True)
             prepared_files.append(converted_path)
         else:
@@ -200,12 +227,13 @@ async def normalize_videos_for_telegram(media_files):
 
 
 def download_reel_with_audio(url, output_dir):
-    """Use Instagram's video and audio formats together when they are separate."""
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        # Prefer a native Android/iPhone-compatible MP4 video and M4A audio.
-        # This keeps Instagram's original quality instead of re-encoding it.
-        "format": "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b",
+        # Prefer H.264/AAC in MP4 so no re-encode is needed downstream.
+        "format": (
+            "bv*[vcodec^=avc1][ext=mp4]+ba[acodec^=mp4a][ext=m4a]/"
+            "b[vcodec^=avc1][ext=mp4]/bv*[ext=mp4]+ba/b[ext=mp4]/bv*+ba/b"
+        ),
         "merge_output_format": "mp4",
         "max_filesize": MAX_MEDIA_SIZE,
         "quiet": True,
@@ -255,12 +283,10 @@ def download_instagram_media(url):
         )
         post = instaloader.Post.from_shortcode(loader.context, shortcode)
 
-        # Reels often expose video and audio as separate streams. Let yt-dlp merge
-        # them through FFmpeg; for image posts or unsupported reels we use the
-        # direct Instaloader URLs below.
         if post.is_video and post.typename != "GraphSidecar":
             try:
-                return output_dir, download_reel_with_audio(url, output_dir)
+                reel_files = download_reel_with_audio(url, output_dir)
+                return output_dir, normalize_media_files(reel_files)
             except yt_dlp.utils.DownloadError:
                 logger.warning("Falling back to direct Instagram reel URL", exc_info=True)
 
@@ -286,7 +312,7 @@ def download_instagram_media(url):
         if not media_files:
             raise InstagramDownloadError("No downloadable Instagram media was found")
 
-        return output_dir, media_files
+        return output_dir, normalize_media_files(media_files)
 
     except Exception:
         shutil.rmtree(output_dir, ignore_errors=True)
@@ -294,37 +320,43 @@ def download_instagram_media(url):
 
 
 async def send_instagram_file(message, chat_id, context, file_path, index, total):
-    mime_type, _ = mimetypes.guess_type(file_path.name)
     caption = f"- @G66Gbot - {index}/{total}"
 
-    if mime_type and mime_type.startswith("image/"):
+    if not is_video_file(file_path):
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
         with file_path.open("rb") as media_file:
             await message.reply_photo(photo=media_file, caption=caption)
-    else:
-        await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
-        width, height = get_mp4_dimensions(file_path)
-        video_arguments = {
-            "video": None,
-            "caption": caption,
-            "supports_streaming": True,
-        }
-        if width and height:
-            video_arguments.update({"width": width, "height": height})
+        return
 
+    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
+    _, _, width, height, duration = await asyncio.to_thread(probe_video, file_path)
+    thumbnail_path = await asyncio.to_thread(create_video_thumbnail, file_path)
+
+    video_arguments = {
+        "caption": caption,
+        "supports_streaming": True,
+        "width": width,
+        "height": height,
+        "duration": duration,
+    }
+
+    thumbnail_file = thumbnail_path.open("rb") if thumbnail_path else None
+    try:
+        if thumbnail_file:
+            video_arguments["thumbnail"] = thumbnail_file
         with file_path.open("rb") as media_file:
-            video_arguments["video"] = media_file
-            await message.reply_video(**video_arguments)
+            await message.reply_video(video=media_file, **video_arguments)
+    finally:
+        if thumbnail_file:
+            thumbnail_file.close()
 
 
 async def send_instagram_album(message, context, media_files):
-    """Send a multi-item post as Telegram albums of up to ten items."""
     total_files = len(media_files)
 
     for start in range(0, total_files, 10):
         batch = media_files[start : start + 10]
 
-        # Telegram albums must contain at least two items.
         if len(batch) == 1:
             await send_instagram_file(
                 message,
@@ -348,21 +380,30 @@ async def send_instagram_album(message, context, media_files):
                     if absolute_index == total_files
                     else None
                 )
-                mime_type, _ = mimetypes.guess_type(file_path.name)
 
-                if mime_type and mime_type.startswith("image/"):
+                if not is_video_file(file_path):
                     media_group.append(InputMediaPhoto(media=media_file, caption=caption))
-                else:
-                    width, height = get_mp4_dimensions(file_path)
-                    media_group.append(
-                        InputMediaVideo(
-                            media=media_file,
-                            caption=caption,
-                            supports_streaming=True,
-                            width=width,
-                            height=height,
-                        )
+                    continue
+
+                _, _, width, height, duration = await asyncio.to_thread(
+                    probe_video, file_path
+                )
+                thumbnail_path = await asyncio.to_thread(create_video_thumbnail, file_path)
+                thumbnail_file = thumbnail_path.open("rb") if thumbnail_path else None
+                if thumbnail_file:
+                    open_files.append(thumbnail_file)
+
+                media_group.append(
+                    InputMediaVideo(
+                        media=media_file,
+                        caption=caption,
+                        supports_streaming=True,
+                        width=width,
+                        height=height,
+                        duration=duration,
+                        thumbnail=thumbnail_file,
                     )
+                )
 
             await message.reply_media_group(media=media_group)
         finally:
@@ -399,7 +440,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             "⚠️┇أعد المحاوله مع ملف اخر."
         )
     except VideoProcessingError:
-        await status_message.edit_text("❌ تعذر تجهيز صوت الريلز. حاول مرة أخرى.")
+        await status_message.edit_text("❌ تعذر تجهيز الفيديو. حاول مرة أخرى.")
     except (
         InstagramDownloadError,
         instaloader.exceptions.InstaloaderException,
@@ -417,3 +458,4 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
     finally:
         if output_dir:
             await asyncio.to_thread(shutil.rmtree, output_dir, True)
+ 
