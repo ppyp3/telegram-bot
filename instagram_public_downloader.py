@@ -252,6 +252,7 @@ def normalize_video_for_telegram(source_path):
         video_codec == "h264"
         and audio_codec == "aac"
         and is_faststart(source_path)
+        and not is_fragmented_mp4(source_path)
     ):
         return source_path
 
@@ -303,6 +304,40 @@ def is_faststart(file_path):
         pass
 
     return False
+
+
+def is_fragmented_mp4(file_path):
+    """Detect DASH-style fragmented MP4 files, which Android often rejects."""
+    try:
+        with file_path.open("rb") as media_file:
+            position = 0
+            while True:
+                media_file.seek(position)
+                header = media_file.read(8)
+                if len(header) < 8:
+                    return False
+
+                box_size = int.from_bytes(header[:4], "big")
+                box_type = header[4:8]
+
+                if box_type in {b"moof", b"styp", b"sidx"}:
+                    return True
+                if box_type == b"mdat":
+                    return False
+
+                if box_size == 1:
+                    extended = media_file.read(8)
+                    if len(extended) < 8:
+                        return False
+                    box_size = int.from_bytes(extended, "big")
+                elif box_size == 0:
+                    return False
+                if box_size < 8:
+                    return False
+
+                position += box_size
+    except OSError:
+        return False
 
 
 def create_video_thumbnail(file_path):
