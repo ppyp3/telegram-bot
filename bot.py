@@ -37,7 +37,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 TOKEN = os.environ.get("TOKEN")
-ADMIN_IDS = [5782729939]  # ضع معرف الآدمن الخاص بك هنا
+ADMIN_IDS = [5782729939]
 MAX_MEDIA_SIZE = 49 * 1024 * 1024
 SESSION_TTL_SECONDS = 20 * 60
 
@@ -48,10 +48,8 @@ USER_AGENTS = [
     "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36",
 ]
 
-
 class DownloadTooLarge(Exception):
     pass
-
 
 def is_valid_tiktok_url(url):
     parsed = urlparse(url.strip())
@@ -60,13 +58,11 @@ def is_valid_tiktok_url(url):
         hostname == "tiktok.com" or hostname.endswith(".tiktok.com")
     )
 
-
 def request_headers():
     return {
         "User-Agent": random.choice(USER_AGENTS),
         "Accept-Language": "en-US,en;q=0.9",
     }
-
 
 def fetch_tiktok_data(url):
     try:
@@ -130,7 +126,6 @@ def fetch_tiktok_data(url):
         logger.exception("Error fetching TikTok data")
         return None
 
-
 def download_media(url, suffix):
     temporary_path = None
 
@@ -172,7 +167,6 @@ def download_media(url, suffix):
             temporary_path.unlink(missing_ok=True)
         raise
 
-
 def remember_session(context, message, user_id, url, title):
     sessions = context.application.bot_data.setdefault("download_sessions", {})
     now = time.monotonic()
@@ -195,19 +189,17 @@ def remember_session(context, message, user_id, url, title):
         "created_at": now,
     }
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
 
     welcome_msg = (
         f"✦ أهلاً بك ⦗ {user_name} ⦘ 🖤\n\n"
-        f"▫︎ بوت تحميل التيك توك واليوتيوب والإنستغرام السريع 📥\n"
-        f"▫︎ فيديوهات بدون حقوق • صور • صوتيات\n\n"
+        f"▫︎ بوت التحميل السريع 📥\n"
+        f"▫︎ يوتيوب • تيك توك • إنستغرام\n\n"
         f"⚡ أرسل الرابط الآن للبدء 🔻"
     )
 
     await update.message.reply_text(welcome_msg)
-
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -229,7 +221,6 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👑 **مرحباً بك في لوحة تحكم البوت:**",
         reply_markup=reply_markup,
     )
-
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -390,7 +381,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await processing_msg.edit_text(error_custom_msg)
 
-
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
 
@@ -415,7 +405,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # معالجة أزرار التيك توك
     chat_id = query.message.chat_id
-
     sessions = context.application.bot_data.setdefault("download_sessions", {})
     session_key = (chat_id, query.message.message_id)
     session = sessions.get(session_key)
@@ -442,10 +431,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except TelegramError:
             logger.exception("Could not remove audio button")
 
-        status_msg = await query.message.reply_text(
-            "🔄 جاري تحميل الملف الصوتي..."
-        )
-
+        status_msg = await query.message.reply_text("🔄 جاري تحميل الملف الصوتي...")
         local_audio_path = None
 
         try:
@@ -456,14 +442,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 raise ValueError("Audio link is unavailable")
 
             local_audio_path = await asyncio.to_thread(
-                download_media,
-                audio_link,
-                ".mp3",
+                download_media, audio_link, ".mp3"
             )
 
             await context.bot.send_chat_action(
-                chat_id=chat_id,
-                action=ChatAction.UPLOAD_VOICE,
+                chat_id=chat_id, action=ChatAction.UPLOAD_VOICE
             )
 
             with local_audio_path.open("rb") as audio_file:
@@ -479,14 +462,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         except Exception:
             logger.exception("Audio callback error")
-            await status_msg.edit_text(
-                "❌ حدث خطأ أثناء تحميل الملف الصوتي."
-            )
+            await status_msg.edit_text("❌ حدث خطأ أثناء تحميل الملف الصوتي.")
 
         finally:
             if local_audio_path:
                 local_audio_path.unlink(missing_ok=True)
-
             sessions.pop(session_key, None)
 
     elif query.data == "hd_video":
@@ -512,14 +492,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             audio_reply_markup = InlineKeyboardMarkup(audio_only_keyboard)
 
             local_video_path = await asyncio.to_thread(
-                download_media,
-                video_url,
-                ".mp4",
+                download_media, video_url, ".mp4"
             )
 
             await context.bot.send_chat_action(
-                chat_id=chat_id,
-                action=ChatAction.UPLOAD_VIDEO,
+                chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO
             )
 
             with local_video_path.open("rb") as video_file:
@@ -542,19 +519,16 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         except Exception:
             logger.exception("HD video callback error")
-
             error_custom_msg = (
                 "⚠️┇هذا الملف لا يمكنني تحميله،\n"
                 "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
                 "⚠️┇أعد المحاوله مع ملف اخر."
             )
-
             await status_msg.edit_text(error_custom_msg)
 
         finally:
             if local_video_path:
                 local_video_path.unlink(missing_ok=True)
-
             sessions.pop(session_key, None)
 
 def main():
@@ -566,14 +540,8 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_panel))
 
-    app.add_handler(
-        MessageHandler(INSTAGRAM_FILTER, handle_instagram_message)
-    )
-
-    # إضافة معالج روابط اليوتيوب بطريقة مماثلة للإنستغرام
-    app.add_handler(
-        MessageHandler(YOUTUBE_FILTER, handle_youtube_message)
-    )
+    app.add_handler(MessageHandler(INSTAGRAM_FILTER, handle_instagram_message))
+    app.add_handler(MessageHandler(YOUTUBE_FILTER, handle_youtube_message))
 
     app.add_handler(
         MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
@@ -581,9 +549,8 @@ def main():
 
     app.add_handler(CallbackQueryHandler(button_callback))
 
-    print("بوت التحميل يعمل الآن بكفاءة وسرعة عالية...")
+    print("بوت التحميل يعمل الآن بكفاءة...")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
