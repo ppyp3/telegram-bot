@@ -1,26 +1,23 @@
-# استخدام صورة خادم تيليجرام الرسمي كقاعدة أساسية لتشغيل الـ Local API
 FROM aiogram/telegram-bot-api:latest
 
-# تثبيت بايثون وحزم النظام المطلوبة (مثل ffmpeg) داخل نفس الحاوية
-RUN apt-get update && apt-get install -y \
+# تثبيت بايثون و ffmpeg باستخدام مدير الحزم apk الخاص بنظام Alpine
+RUN apk update && apk add --no-cache \
     python3 \
-    python3-pip \
+    py3-pip \
     ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+    bash
 
-# تحديد مجلد العمل
 WORKDIR /app
 
 # نسخ وتثبيت متطلبات البايثون
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt || pip3 install --no-cache-dir -r requirements.txt
 
-# نسخ باقي ملفات المشروع
+# نسخ باقي الملفات
 COPY . .
 
-# نسخ وإعطاء صلاحية التنفيذ لملف التشغيل المساعد
+# إعداد ملف التشغيل
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# تشغيل خادم تيليجرام وبوت البايثون معاً
 CMD ["/entrypoint.sh"]
