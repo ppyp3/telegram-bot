@@ -62,6 +62,7 @@ def request_headers():
     return {
         "User-Agent": random.choice(USER_AGENTS),
         "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.tiktok.com/",
     }
 
 def fetch_tiktok_data(url):
@@ -71,7 +72,7 @@ def fetch_tiktok_data(url):
 
         if parsed_url.hostname in {"vm.tiktok.com", "vt.tiktok.com"}:
             with requests.get(
-                url, allow_redirects=True, timeout=(8, 20), headers=headers
+                url, allow_redirects=True, timeout=(5, 15), headers=headers
             ) as response:
                 response.raise_for_status()
                 url = response.url
@@ -83,7 +84,7 @@ def fetch_tiktok_data(url):
             "https://tikwm.com/api/",
             params={"url": url, "music": 1},
             headers=headers,
-            timeout=(8, 20),
+            timeout=(5, 15),
         ) as response:
             response.raise_for_status()
             alt_resp = response.json()
