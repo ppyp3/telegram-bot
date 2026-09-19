@@ -59,7 +59,6 @@ def is_valid_tiktok_url(url):
         hostname == "tiktok.com" or hostname.endswith(".tiktok.com")
     )
 
-# دالة فحص روابط بينترست الشاملة (تشمل جميع النطاقات والروابط المختصرة)
 def is_valid_pinterest_url(url):
     parsed = urlparse(url.strip())
     hostname = (parsed.hostname or "").lower().rstrip(".")
@@ -133,29 +132,37 @@ def fetch_tiktok_data(url):
         logger.exception("Error fetching TikTok data")
         return None
 
-# دالة جلب محتوى بينترست (فيديو أو صورة بجودتها الأصلية)
+# دالة بينترست المحسنة الجديدة
 def fetch_pinterest_data(url):
     try:
         headers = request_headers()
         if "pin.it" in url:
-            with requests.get(url, allow_redirects=True, timeout=(8, 20), headers=headers) as resp:
+            with requests.get(url, allow_redirects=True, timeout=(10, 25), headers=headers) as resp:
                 resp.raise_for_status()
                 url = resp.url
 
-        with requests.get(url, headers=headers, timeout=(8, 20)) as resp:
+        with requests.get(url, headers=headers, timeout=(10, 25)) as resp:
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, 'html.parser')
 
-        # البحث عن الفيديو
-        video_tag = soup.find("meta", property="og:video")
+        # البحث المتقدم عن الفيديو
+        video_tag = soup.find("meta", property="og:video") or soup.find("meta", attrs={"name": "og:video"})
         if video_tag and video_tag.get("content"):
             return {"type": "video", "url": video_tag["content"]}
 
-        # البحث عن الصورة بجودة أصلية
-        image_tag = soup.find("meta", property="og:image")
+        source_tag = soup.find("source", type="video/mp4")
+        if source_tag and source_tag.get("src"):
+            return {"type": "video", "url": source_tag["src"]}
+
+        # البحث المتقدم عن الصورة بجودتها الأصلية
+        image_tag = soup.find("meta", property="og:image") or soup.find("meta", attrs={"name": "og:image"})
         if image_tag and image_tag.get("content"):
             img_url = image_tag["content"]
-            img_url = img_url.replace("236x", "originals").replace("474x", "originals")
+            img_url = (
+                img_url.replace("236x", "originals")
+                .replace("474x", "originals")
+                .replace("736x", "originals")
+            )
             return {"type": "photo", "url": img_url}
 
     except Exception:
@@ -448,7 +455,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.answer()
 
-    # معالجة أزرار اليوتيوب
     if query.data in ["yt_video", "yt_audio", "yt_voice"]:
         chat_id = query.message.chat_id
         yt_sessions = context.application.bot_data.get("yt_sessions", {})
@@ -462,7 +468,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_youtube_callback(query, context, session, query.data)
         return
 
-    # معالجة أزرار التيك توك
     chat_id = query.message.chat_id
     sessions = context.application.bot_data.setdefault("download_sessions", {})
     session_key = (chat_id, query.message.message_id)
