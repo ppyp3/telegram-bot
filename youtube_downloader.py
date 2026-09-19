@@ -43,22 +43,22 @@ def format_views(views):
     return str(views)
 
 def get_youtube_options(download=False, outtmpl=None):
-    """إعدادات موثوقة لتجاوز حظر السيرفرات السحابية من يوتيوب"""
+    """إعدادات الموزع والمتصفح لتجاوز حظر طلبات السيرفر السحابي"""
     opts = {
         'quiet': True,
         'no_warnings': True,
         'skip_download': not download,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        # تجنب عميل الويب واستخدام عملاء الموبايل والتلفزيون لمنع حظر IP السيرفر
+        'format': 'best' if not download else None,
+        # استخدام عملاء متنوعين وموثوقين يدعمون العمل من السيرفرات
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'ios'],
-                'skip': ['hls', 'dash'] if not download else [],
+                'player_client': ['tvhtml5', 'mweb', 'android', 'ios'],
             }
         },
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
         }
     }
 
@@ -73,6 +73,8 @@ def get_youtube_options(download=False, outtmpl=None):
 
 def get_youtube_info(url: str):
     ydl_opts = get_youtube_options(download=False)
+    # إلغاء أي قيود على اختيار الصيغ لتجنب خطأ Format Not Available
+    ydl_opts.pop('format', None)
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
@@ -114,9 +116,9 @@ def download_youtube_media(url: str, mode: str = "video"):
             ],
         })
     else:
-        # تحديد مرن جداً للصيغ لضمان التحميل وعدم فشل العملية
+        # تحميل أفضل جودة فيديو متاحة بحجم أقل من 50 ميجابايت للتليجرام
         ydl_opts.update({
-            'format': 'bestvideo[filesize<=49M]+bestaudio/best[filesize<=49M]/best',
+            'format': 'best[filesize<=49M]/bestvideo[filesize<=40M]+bestaudio/best',
             'merge_output_format': 'mp4',
         })
 
