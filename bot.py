@@ -135,71 +135,44 @@ def fetch_tiktok_data(url):
         return None
 
 def download_pinterest_with_ytdlp(url):
-    """جلب جميع الصور والفيديوهات من منشورات بينترست الفردية أو اللوحات الكاملة (Boards)"""
-    temp_dir = tempfile.mkdtemp()
-    ydl_opts = {
-        'outtmpl': os.path.join(temp_dir, '%(id)s_%(autonumber)s.%(ext)s'),
-        'format': 'best',
-        'noplaylist': False,  # السماح بجلب كافة عناصر اللوحة (Board)
-        'extract_flat': False,
-        'max_downloads': 20,   # تحديد حد أقصى للتحميل لكي يتوافق مع حدود تليجرام والأداء
-    }
+    """استخراج الصور المباشر عبر الكشط (Scraping) لدعم اللوحات والمنشورات المتعددة من بينترست"""
     files = []
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = yt_dlp.YoutubeDL({'extract_flat': True, 'noplaylist': False}).extract_info(url, download=False)
-            
-            # إذا كان الرابط يحتوي على قائمة عناصر (لوحة أو عدة صور)
-            if info and 'entries' in info:
-                for entry in info['entries']:
-                    if entry:
-                        entry_url = entry.get('url') or f"https://www.pinterest.com/pin/{entry.get('id')}/"
-                        try:
-                            sub_info = ydl.extract_info(entry_url, download=True)
-                            filename = ydl.prepare_filename(sub_info)
-                            if os.path.exists(filename):
-                                ext = sub_info.get('ext', '')
-                                m_type = "video" if ext in ['mp4', 'mkv', 'webm', 'mov'] else "photo"
-                                files.append((Path(filename), m_type))
-                        except Exception:
-                            continue
-            else:
-                info_full = ydl.extract_info(url, download=True)
-                filename = ydl.prepare_filename(info_full)
-                if os.path.exists(filename):
-                    ext = info_full.get('ext', '')
-                    m_type = "video" if ext in ['mp4', 'mkv', 'webm', 'mov'] else "photo"
-                    files.append((Path(filename), m_type))
-    except Exception:
-        logger.exception("yt-dlp failed for Pinterest board/pin")
-
-    # نظام احتياطي عبر BeautifulSoup في حال تعذر yt-dlp لجلب روابط الصور المباشرة من الصفحة
-    if not files:
-        try:
-            headers = request_headers()
-            target_url = url
-            if "pin.it" in url:
-                with requests.get(url, allow_redirects=True, timeout=(10, 25), headers=headers) as resp:
-                    resp.raise_for_status()
-                    target_url = resp.url
-
-            with requests.get(target_url, headers=headers, timeout=(10, 25)) as resp:
+        headers = request_headers()
+        target_url = url
+        
+        if "pin.it" in url:
+            with requests.get(url, allow_redirects=True, timeout=(10, 25), headers=headers) as resp:
                 resp.raise_for_status()
-                soup = BeautifulSoup(resp.text, 'html.parser')
+                target_url = resp.url
 
-            image_urls = set()
-            for img in soup.find_all("img"):
-                src = img.get("src")
-                if src and "pinimg.com" in src and ("/originals/" in src or "/736x/" in src or "/236x/" in src):
-                    high_res_url = src.replace("/236x/", "/originals/").replace("/736x/", "/originals/")
-                    image_urls.add(high_res_url)
+        with requests.get(target_url, headers=headers, timeout=(10, 25)) as resp:
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, 'html.parser')
 
-            for img_url in list(image_urls)[:15]:
+        image_urls = set()
+        
+        for tag in soup.find_all("meta", property="og:image") + soup.find_all("meta", attrs={"name": "og:image"}):
+            img_url = tag.get("content")
+            if img_url and "pinimg.com" in img_url:
+                image_urls.add(img_url)
+
+        for img in soup.find_all("img"):
+            src = img.get("src")
+            if src and "pinimg.com" in src:
+                high_res_url = src.replace("/236x/", "/originals/").replace("/736x/", "/originals/").replace("/474x/", "/originals/")
+                image_urls.add(high_res_url)
+
+        for img_url in list(image_urls)[:15]:
+            try:
                 img_path = download_media(img_url, ".jpg")
                 if img_path:
                     files.append((img_path, "photo"))
-        except Exception:
-            logger.exception("Fallback board scraper failed")
+            except Exception:
+                continue
+
+    except Exception:
+        logger.exception("Direct scraping failed for Pinterest URL")
 
     return files
 
@@ -336,7 +309,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         url = text.strip()
 
     if is_valid_pinterest_url(url):
-        processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم تحميل محتويات اللوحة بالكامل من بينترست...")
+        processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم كشط وتحميل الصور من بينترست...")
         local_files = []
         try:
             local_files = await asyncio.to_thread(download_pinterest_with_ytdlp, url)
@@ -382,17 +355,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await processing_msg.delete()
             return
         except Exception as e:
-            logger.exception("Error handling Pinterest board message")
+            logger.exception("Error handling Pinterest scraping message")
             await processing_msg.edit_text(f"❌ حدث خطأ: {str(e)}")
             return
         finally:
             for path, _ in local_files:
                 if path and path.exists():
                     path.unlink(missing_ok=True)
-                    try:
-                        path.parent.rmdir()
-                    except Exception:
-                        pass
 
     if not is_valid_tiktok_url(url):
         await update.message.reply_text("❌ أرسل رابط تيك توك أو بينترست صحيحاً من فضلك.")
