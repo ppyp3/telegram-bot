@@ -42,7 +42,8 @@ def format_views(views):
     return str(views)
 
 def get_youtube_options(download=False, outtmpl=None):
-    """إعدادات yt-dlp المحدثة بالكوكيز المستخرجة لتجاوز الحظر وطلب PO Token"""
+    """إعدادات yt-dlp محصنة بكوكيز جلسة حسابك الكاملة لمنع الحظر"""
+    
     sid_token = "g.a000CwkTGceaTSWVp9g8NdyNQ4zB-EmTTTT6eMk6FBv87o4x_XY8X9LdSgADScZACiP-edliMAACgYKAWISARQSFQHGX2MiZeRCMtav2cTXd57u1ufqjBoVAUF8yKqdWN5dIBArMSHOSxno_Wr_0076"
     login_info = "AFmmF2swRQIhAKWSpYjDL8f7GV2yFbFgC98Rwx4GWGo0wU9RRj9G4hjiAiBfolPLJDk55blSolU0zmieXhVeSIJvFyfbzjDb3wwFpQ:QUQ3MjNmenZYY25TbzVMZ2E0OTJzbFZDeFZkZjRYa01WZHhLZ2NNMmVqR196cGhTQjU5UFJfQUtrbVFLVHgtNGpDMEpJSVR4aER0YUx0eWZDckJDWXFMbjJlYmFPaHlkSktrTUNuMjFEOWlyZXEtbjNHWWYxWmNOQ2d5QTdEa0YtZ0dPTkV1aTZZVHU4aFoxSldreDJtV05FRzNUWEF3bnRn"
     sidcc_yt = "AKEyXzU07ZQ0OaVa-UUD_H-z2P4CG3K32M4fcpnABVUdTOX3fsNQgUo7XyWITmmmRW_-R1vL-Q"
@@ -138,8 +139,9 @@ def download_youtube_media(url: str, mode: str = "video"):
             ],
         })
     else:
+        # استخدام صيغة مرنة لضمان تحميل الفيديو بدون خطأ عدم توفر الصيغة
         ydl_opts.update({
-            'format': 'bestvideo[max_filesize<=49M][ext=mp4]+bestaudio[ext=m4a]/best[max_filesize<=49M][ext=mp4]/best[max_filesize<=49M]/best',
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         })
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -155,6 +157,7 @@ def download_youtube_media(url: str, mode: str = "video"):
         thumb_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.jpg', '.jpeg', '.png']]
         thumb_path = thumb_files[0] if thumb_files else None
 
+        # الفحص المرن لحجم الملف المحمل قبل الإرسال
         if file_path.stat().st_size > MAX_MEDIA_SIZE:
             file_path.unlink(missing_ok=True)
             raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
@@ -231,7 +234,7 @@ async def handle_youtube_callback(query, context, session_data, mode):
     try:
         file_path, title, duration, thumb_path = await asyncio.to_thread(download_youtube_media, url, mode)
 
-        # زر شارك المشاركة المباشرة
+        # زر المشاركة المباشرة
         share_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔀 | شارك.", switch_inline_query=f"{title}")]
         ])
@@ -242,10 +245,7 @@ async def handle_youtube_callback(query, context, session_data, mode):
         time_str = f"{minutes:02d}:{seconds:02d}"
 
         if mode == "yt_voice":
-            # إظهار حالة "يسجل رسالة صوتية..." أعلى المحادثة
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.RECORD_VOICE)
-            
-            # كابشن البصمة الصوتية (يوزر البوت والوقت فقط بدون حجم)
             voice_caption = f"@G66Gbot - {time_str}"
             
             with open(file_path, 'rb') as voice_file:
@@ -258,9 +258,7 @@ async def handle_youtube_callback(query, context, session_data, mode):
                 )
 
         elif mode == "yt_audio":
-            # إظهار حالة "يرسل ملفاً صوتياً..."
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
-            
             audio_caption = f"@G66Gbot - {time_str}, {file_size_mb}"
             
             with open(file_path, 'rb') as audio_file:
@@ -282,7 +280,6 @@ async def handle_youtube_callback(query, context, session_data, mode):
 
         else:  # فيديو
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
-            
             video_caption = f"@G66Gbot - {time_str}, {file_size_mb}"
             
             with open(file_path, 'rb') as video_file:
