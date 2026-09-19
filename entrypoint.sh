@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# تشغيل خادم تيليجرام المحلي في الخلفية
+echo "Starting Telegram Bot API Server..."
 telegram-bot-api --api-id="$TELEGRAM_API_ID" --api-hash="$TELEGRAM_API_HASH" --local &
 
-# الانتظار قليلاً حتى يبدأ السيرفر المحلي ويستقر على المنفذ 8081
+echo "Waiting for server to be ready..."
 sleep 5
 
-# تشغيل بوت البايثون 
+echo "Starting Python Bot..."
 python3 bot.py
