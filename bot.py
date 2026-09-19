@@ -555,7 +555,9 @@ def main():
     app.add_handler(CallbackQueryHandler(button_callback))
 
     print("بوت التحميل يعمل بكفاءة عبر الخادم المحلي...")
-    app.run_polling()
+    
+    # بدء استقبال التحديثات مع تفريغ الرسائل القديمة العالقة لضمان الاستجابة الفورية
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
