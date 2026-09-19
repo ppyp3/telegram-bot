@@ -42,39 +42,22 @@ def format_views(views):
         return f"{int(views / 1_000)}K"
     return str(views)
 
-def get_youtube_options(download=False, outtmpl=None):
-    """إعدادات الموزع والمتصفح لتجاوز حظر طلبات السيرفر السحابي"""
-    opts = {
+def get_youtube_info(url: str):
+    """استخراج معلومات الفيديو بدون فرض أي صيغة محددة لتجنب Requested format is not available"""
+    ydl_opts = {
         'quiet': True,
         'no_warnings': True,
-        'skip_download': not download,
+        'skip_download': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        'format': 'best' if not download else None,
-        # استخدام عملاء متنوعين وموثوقين يدعمون العمل من السيرفرات
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['tvhtml5', 'mweb', 'android', 'ios'],
-            }
-        },
+        'extract_flat': False,
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
         }
     }
 
     if os.path.exists(COOKIES_FILE):
-        opts['cookiefile'] = COOKIES_FILE
-
-    if outtmpl:
-        opts['outtmpl'] = outtmpl
-        opts['writethumbnail'] = True
-
-    return opts
-
-def get_youtube_info(url: str):
-    ydl_opts = get_youtube_options(download=False)
-    # إلغاء أي قيود على اختيار الصيغ لتجنب خطأ Format Not Available
-    ydl_opts.pop('format', None)
+        ydl_opts['cookiefile'] = COOKIES_FILE
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
@@ -98,7 +81,20 @@ def download_youtube_media(url: str, mode: str = "video"):
     temp_dir = tempfile.mkdtemp()
     outtmpl = os.path.join(temp_dir, '%(title)s.%(ext)s')
 
-    ydl_opts = get_youtube_options(download=True, outtmpl=outtmpl)
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'nocheckcertificate': True,
+        'geo_bypass': True,
+        'outtmpl': outtmpl,
+        'writethumbnail': True,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+        }
+    }
+
+    if os.path.exists(COOKIES_FILE):
+        ydl_opts['cookiefile'] = COOKIES_FILE
 
     if mode in ["audio", "yt_audio", "yt_voice"]:
         ydl_opts.update({
@@ -116,9 +112,9 @@ def download_youtube_media(url: str, mode: str = "video"):
             ],
         })
     else:
-        # تحميل أفضل جودة فيديو متاحة بحجم أقل من 50 ميجابايت للتليجرام
+        # تحميل الصيغة المتاحة وتجنب فشل تحديد الجودة
         ydl_opts.update({
-            'format': 'best[filesize<=49M]/bestvideo[filesize<=40M]+bestaudio/best',
+            'format': 'bestvideo+bestaudio/best',
             'merge_output_format': 'mp4',
         })
 
