@@ -48,9 +48,6 @@ USER_AGENTS = [
     "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36",
 ]
 
-# جلسة عامة وثابتة لتسريع الطلبات المتكررة (Keep-Alive) ومنع التأخير
-session = requests.Session()
-
 class DownloadTooLarge(Exception):
     pass
 
@@ -65,7 +62,6 @@ def request_headers():
     return {
         "User-Agent": random.choice(USER_AGENTS),
         "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://www.tiktok.com/",
     }
 
 def fetch_tiktok_data(url):
@@ -74,8 +70,8 @@ def fetch_tiktok_data(url):
         parsed_url = urlparse(url)
 
         if parsed_url.hostname in {"vm.tiktok.com", "vt.tiktok.com"}:
-            with session.get(
-                url, allow_redirects=True, timeout=(3, 10), headers=headers
+            with requests.get(
+                url, allow_redirects=True, timeout=(8, 20), headers=headers
             ) as response:
                 response.raise_for_status()
                 url = response.url
@@ -83,11 +79,11 @@ def fetch_tiktok_data(url):
         if not is_valid_tiktok_url(url):
             return None
 
-        with session.get(
+        with requests.get(
             "https://tikwm.com/api/",
             params={"url": url, "music": 1},
             headers=headers,
-            timeout=(3, 10),
+            timeout=(8, 20),
         ) as response:
             response.raise_for_status()
             alt_resp = response.json()
