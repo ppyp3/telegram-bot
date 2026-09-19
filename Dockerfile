@@ -1,16 +1,20 @@
 FROM aiogram/telegram-bot-api
 
-# تثبيت بايثون ومدير الحزم وباصمات الأمان
-RUN apk update && apk add --no-cache python3 py3-pip bash curl
+# تثبيت بايثون وأدوات البيئة الافتراضية
+RUN apk update && apk add --no-cache python3 py3-pip py3-virtualenv bash curl
 
 WORKDIR /app
 
-# نسخ ملف المتطلبات أولاً (إن وجد) أو نسخ المشروع كاملاً
+# نسخ ملفات المشروع
 COPY . /app/
 
-# تثبيت جميع مكتبات بايثون المطلوبة
-RUN pip3 install --no-cache-dir --upgrade pip
-RUN pip3 install --no-cache-dir requests python-telegram-bot
+# إنشاء بيئة افتراضية لتثبيت المكتبات بحرية تامة
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# تحديث وتثبيت مكتبات بايثون المطلوبة داخل البيئة الافتراضية
+RUN pip install --no-cache-dir --upgrade pip
+RUN pip install --no-cache-dir requests python-telegram-bot
 
 # إعطاء صلاحية التشغيل لملف الإقلاع
 RUN chmod +x entrypoint.sh
