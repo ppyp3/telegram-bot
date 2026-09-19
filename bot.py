@@ -132,7 +132,6 @@ def fetch_tiktok_data(url):
         logger.exception("Error fetching TikTok data")
         return None
 
-# دالة بينترست المحسنة الجديدة
 def fetch_pinterest_data(url):
     try:
         headers = request_headers()
@@ -145,7 +144,6 @@ def fetch_pinterest_data(url):
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, 'html.parser')
 
-        # البحث المتقدم عن الفيديو
         video_tag = soup.find("meta", property="og:video") or soup.find("meta", attrs={"name": "og:video"})
         if video_tag and video_tag.get("content"):
             return {"type": "video", "url": video_tag["content"]}
@@ -154,7 +152,6 @@ def fetch_pinterest_data(url):
         if source_tag and source_tag.get("src"):
             return {"type": "video", "url": source_tag["src"]}
 
-        # البحث المتقدم عن الصورة بجودتها الأصلية
         image_tag = soup.find("meta", property="og:image") or soup.find("meta", attrs={"name": "og:image"})
         if image_tag and image_tag.get("content"):
             img_url = image_tag["content"]
@@ -288,13 +285,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     url = text.strip()
+    print(f"📥 Received text: {url}")
 
     # معالجة روابط بينترست
     if is_valid_pinterest_url(url):
+        print("📌 Matched Pinterest URL pattern.")
         processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم جلب المحتوى من بينترست...")
         try:
             pin_data = await asyncio.to_thread(fetch_pinterest_data, url)
             if not pin_data:
+                print("❌ Failed to extract Pinterest content.")
                 await processing_msg.edit_text("❌ عذراً، لم أتمكن من استخراج المحتوى من بينترست. تأكد من صحة الرابط.")
                 return
 
@@ -307,15 +307,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await processing_msg.delete()
             return
-        except Exception:
+        except Exception as e:
             logger.exception("Error handling Pinterest message")
-            await processing_msg.edit_text("❌ حدث خطأ أثناء تحميل محتوى بينترست.")
+            await processing_msg.edit_text(f"❌ حدث خطأ: {str(e)}")
             return
 
     if not is_valid_tiktok_url(url):
+        print(f"❌ Rejected URL: {url} (Not matching TikTok or Pinterest rules)")
         await update.message.reply_text("❌ أرسل رابط تيك توك أو بينترست صحيحاً من فضلك.")
         return
 
+    print("🎵 Matched TikTok URL pattern.")
     processing_msg = await update.message.reply_text(
         "⏰┇يرجى الانتظار، يتم قياس حجم التحميل..."
     )
