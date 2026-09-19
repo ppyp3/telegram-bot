@@ -42,24 +42,21 @@ def format_views(views):
     return str(views)
 
 def get_youtube_options(download=False, outtmpl=None):
-    """إعدادات لتجاوز حظر يوتيوب تماماً بدون الحاجة إلى كوكيز"""
+    """إعدادات موحدة لتجاوز حظر البوتات بدون كوكيز عبر مشغلات tv_embedded و mweb"""
     opts = {
         'quiet': True,
         'no_warnings': True,
         'skip_download': not download,
         'nocheckcertificate': True,
         'geo_bypass': True,
-
-        # إجبار الاستخراج عبر عملاء الموبايل الموثوقين لتجاوز حماية Bot Detection بدون كوكيز
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'ios'],
-                'player_skip': ['webpage', 'configs'],
+                'player_client': ['tv_embedded', 'mweb', 'android'],
+                'player_skip': ['configs'],
             }
         },
-        # رأس الطلب المخصص للتمويه
         'http_headers': {
-            'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11; G3112 Build/00.0.A.0.0) gzip',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
             'Accept-Language': 'ar,en-US;q=0.9,en;q=0.8',
         }
     }
@@ -212,6 +209,7 @@ async def handle_youtube_callback(query, context, session_data, mode):
         time_str = f"{minutes:02d}:{seconds:02d}"
 
         if mode == "yt_voice":
+            # حالة "يسجل رسالة صوتية..."
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.RECORD_VOICE)
             voice_caption = f"@G66Gbot - {time_str}"
             
@@ -225,6 +223,7 @@ async def handle_youtube_callback(query, context, session_data, mode):
                 )
 
         elif mode == "yt_audio":
+            # حالة "يرسل ملفاً صوتياً..."
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
             audio_caption = f"@G66Gbot - {time_str}, {file_size_mb}"
             
