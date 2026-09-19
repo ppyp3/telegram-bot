@@ -146,7 +146,7 @@ def fetch_pinterest_data(url):
 
         media_items = []
 
-        # استخراج جميع الفيديوهات المتاحة في المنشور
+        # 1. البحث أولاً عن روابط الفيديوهات المباشرة
         video_tags = soup.find_all("meta", property="og:video") + soup.find_all("meta", attrs={"name": "og:video"})
         for tag in video_tags:
             v_url = tag.get("content")
@@ -159,13 +159,14 @@ def fetch_pinterest_data(url):
             if v_url and v_url not in [m["url"] for m in media_items]:
                 media_items.append({"type": "video", "url": v_url})
 
-        # استخراج جميع الصور المتاحة في المنشور
-        image_tags = soup.find_all("meta", property="og:image") + soup.find_all("meta", attrs={"name": "og:image"})
-        for tag in image_tags:
-            img_url = tag.get("content")
-            if img_url and img_url not in [m["url"] for m in media_items]:
-                if "pinimg.com" in img_url:
-                    media_items.append({"type": "photo", "url": img_url})
+        # 2. إذا لم يكن هناك فيديو، ابحث عن الصور العادية
+        if not media_items:
+            image_tags = soup.find_all("meta", property="og:image") + soup.find_all("meta", attrs={"name": "og:image"})
+            for tag in image_tags:
+                img_url = tag.get("content")
+                if img_url and img_url not in [m["url"] for m in media_items]:
+                    if "pinimg.com" in img_url:
+                        media_items.append({"type": "photo", "url": img_url})
 
         if media_items:
             return media_items
@@ -308,7 +309,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     print(f"📥 Extracted URL: {url}")
 
-    # معالجة روابط بينترست لجميع العناصر (صور وفيديوهات متعددة)
     if is_valid_pinterest_url(url):
         print("📌 Matched Pinterest URL pattern.")
         processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم تحميل المحتوى من بينترست...")
