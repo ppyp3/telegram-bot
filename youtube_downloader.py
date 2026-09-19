@@ -27,11 +27,6 @@ class YoutubeFilter(filters.MessageFilter):
 
 YOUTUBE_FILTER = YoutubeFilter()
 
-def is_valid_youtube_url(url: str) -> bool:
-    if not url:
-        return False
-    return bool(YOUTUBE_REGEX.search(url.strip()))
-
 def format_views(views):
     if not views:
         return "0"
@@ -67,6 +62,7 @@ def get_youtube_info(url: str):
             return {
                 "title": info.get('title') or "فيديو يوتيوب",
                 "uploader": info.get('uploader') or info.get('channel') or "غير معروف",
+                "duration": duration,
                 "duration_string": f"{minutes:02d}:{seconds:02d}",
                 "view_count_formatted": format_views(info.get('view_count')),
                 "thumbnail": info.get('thumbnail'),
@@ -76,13 +72,14 @@ def get_youtube_info(url: str):
         return {
             "title": "فيديو يوتيوب",
             "uploader": "غير معروف",
+            "duration": 0,
             "duration_string": "00:00",
             "view_count_formatted": "0",
             "thumbnail": None,
             "url": url
         }
 
-def download_youtube_media(url: str, mode: str = "video"):
+def download_youtube_media(url: str, mode: str = "yt_video"):
     temp_dir = tempfile.mkdtemp()
     outtmpl = os.path.join(temp_dir, '%(title)s.%(ext)s')
 
@@ -102,7 +99,7 @@ def download_youtube_media(url: str, mode: str = "video"):
         },
     }
 
-    if mode in ["audio", "yt_audio"]:
+    if mode in ["yt_audio", "yt_voice"]:
         ydl_opts.update({
             'format': 'bestaudio/best',
             'postprocessors': [
@@ -125,6 +122,7 @@ def download_youtube_media(url: str, mode: str = "video"):
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         title = info.get('title', 'فيديو يوتيوب')
+        duration = info.get('duration', 0)
 
         media_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.mp3', '.mp4', '.m4a', '.webm', '.ogg']]
         if not media_files:
@@ -138,7 +136,7 @@ def download_youtube_media(url: str, mode: str = "video"):
             file_path.unlink(missing_ok=True)
             raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
 
-        return file_path, title, thumb_path
+        return file_path, title, duration, thumb_path
 
 async def handle_youtube_message(update, context):
     url = update.message.text.strip()
@@ -158,7 +156,6 @@ async def handle_youtube_message(update, context):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # رابط العنوان القابل للضغط بـ HTML
         caption = (
             f'🎬 <a href="{info["url"]}">{info["title"]}</a>\n'
             f'👤 {info["uploader"]}\n'
@@ -180,7 +177,6 @@ async def handle_youtube_message(update, context):
                 reply_markup=reply_markup
             )
 
-        # حفظ الجلسة للتفاعل مع الأزرار
         sessions = context.application.bot_data.setdefault("yt_sessions", {})
         key = (sent_msg.chat_id, sent_msg.message_id)
         sessions[key] = {
@@ -198,46 +194,64 @@ async def handle_youtube_message(update, context):
 async def handle_youtube_callback(query, context, session_data, mode):
     chat_id = query.message.chat_id
     url = session_data["url"]
-    
-    status_msg = await query.message.reply_text("🔄 جاري التحميل، يرجى الانتظار...")
+
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+
+    status_msg = await context.bot.send_message(chat_id=chat_id, text="🔄 جاري التحميل، يرجى الانتظار...")
     file_path = None
     thumb_path = None
 
     try:
-        file_path, title, thumb_path = await asyncio.to_thread(download_youtube_media, url, mode)
+        file_path, title, duration, thumb_path = await asyncio.to_thread(download_youtube_media, url, mode)
+
+        share_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔀 | شارك.", switch_inline_query=f"{title}")]
+        ])
 
         if mode in ["yt_audio", "yt_voice"]:
-            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
-            
-            with open(file_path, 'rb') as audio_file:
-                thumb_file = open(thumb_path, 'rb') if thumb_path and os.path.exists(thumb_path) else None
-                
-                if mode == "yt_voice":
+            if mode == "yt_voice":
+                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
+                with open(file_path, 'rb') as voice_file:
                     await context.bot.send_voice(
                         chat_id=chat_id,
-                        voice=audio_file,
-                        caption="- @G66Gbot"
+                        voice=voice_file,
+                        caption="- @G66Gbot",
+                        duration=int(duration),
+                        reply_markup=share_keyboard
                     )
-                else:
+            else:
+                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
+                with open(file_path, 'rb') as audio_file:
+                    thumb_file = open(thumb_path, 'rb') if thumb_path and os.path.exists(thumb_path) else None
+                    file_size_mb = f"{os.path.getsize(file_path) / (1024 * 1024):.1f}MB"
+                    minutes, seconds = divmod(int(duration), 60)
+                    time_str = f"{minutes:02d}:{seconds:02d}"
+
                     await context.bot.send_audio(
                         chat_id=chat_id,
                         audio=audio_file,
                         title=title,
                         performer="@G66Gbot",
-                        thumbnail=thumb_file,  # إرفاق الغلاف المصغر
-                        caption="- @G66Gbot"
+                        duration=int(duration),
+                        thumbnail=thumb_file,
+                        caption=f"@G66Gbot - {time_str}, {file_size_mb}",
+                        reply_markup=share_keyboard
                     )
-                
-                if thumb_file:
-                    thumb_file.close()
+                    if thumb_file:
+                        thumb_file.close()
 
-        else: # فيديو
+        else:
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
             with open(file_path, 'rb') as video_file:
                 await context.bot.send_video(
                     chat_id=chat_id,
                     video=video_file,
-                    caption="- @G66Gbot"
+                    caption="- @G66Gbot",
+                    duration=int(duration),
+                    reply_markup=share_keyboard
                 )
 
         await status_msg.delete()
