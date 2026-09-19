@@ -144,19 +144,31 @@ def fetch_pinterest_data(url):
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, 'html.parser')
 
-        video_tag = soup.find("meta", property="og:video") or soup.find("meta", attrs={"name": "og:video"})
-        if video_tag and video_tag.get("content"):
-            return {"type": "video", "url": video_tag["content"]}
+        media_items = []
 
-        source_tag = soup.find("source", type="video/mp4")
-        if source_tag and source_tag.get("src"):
-            return {"type": "video", "url": source_tag["src"]}
+        # استخراج جميع الفيديوهات المتاحة في المنشور
+        video_tags = soup.find_all("meta", property="og:video") + soup.find_all("meta", attrs={"name": "og:video"})
+        for tag in video_tags:
+            v_url = tag.get("content")
+            if v_url and v_url not in [m["url"] for m in media_items]:
+                media_items.append({"type": "video", "url": v_url})
 
-        image_tag = soup.find("meta", property="og:image") or soup.find("meta", attrs={"name": "og:image"})
-        if image_tag and image_tag.get("content"):
-            img_url = image_tag["content"]
-            # إرجاع الرابط كما هو لمنع خطأ 403 Forbidden
-            return {"type": "photo", "url": img_url}
+        source_tags = soup.find_all("source", type="video/mp4")
+        for tag in source_tags:
+            v_url = tag.get("src")
+            if v_url and v_url not in [m["url"] for m in media_items]:
+                media_items.append({"type": "video", "url": v_url})
+
+        # استخراج جميع الصور المتاحة في المنشور
+        image_tags = soup.find_all("meta", property="og:image") + soup.find_all("meta", attrs={"name": "og:image"})
+        for tag in image_tags:
+            img_url = tag.get("content")
+            if img_url and img_url not in [m["url"] for m in media_items]:
+                if "pinimg.com" in img_url:
+                    media_items.append({"type": "photo", "url": img_url})
+
+        if media_items:
+            return media_items
 
     except Exception:
         logger.exception("Error fetching Pinterest data")
@@ -166,7 +178,6 @@ def download_media(url, suffix):
     temporary_path = None
     headers = request_headers()
     
-    # إضافة ترويسة Referer لتجاوز حظر بينترست 403 Forbidden
     if "pinterest" in url or "pinimg" in url:
         headers["Referer"] = "https://www.pinterest.com/"
 
@@ -297,30 +308,40 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     print(f"📥 Extracted URL: {url}")
 
-    # معالجة روابط بينترست
+    # معالجة روابط بينترست لجميع العناصر (صور وفيديوهات متعددة)
     if is_valid_pinterest_url(url):
         print("📌 Matched Pinterest URL pattern.")
         processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم تحميل المحتوى من بينترست...")
-        local_media_path = None
+        local_files = []
         try:
-            pin_data = await asyncio.to_thread(fetch_pinterest_data, url)
-            if not pin_data:
+            pin_items = await asyncio.to_thread(fetch_pinterest_data, url)
+            if not pin_items:
                 await processing_msg.edit_text("❌ عذراً، لم أتمكن من استخراج المحتوى من بينترست. تأكد من صحة الرابط.")
                 return
 
-            media_url = pin_data["url"]
-            media_type = pin_data["type"]
+            if isinstance(pin_items, dict):
+                pin_items = [pin_items]
 
-            if media_type == "video":
-                local_media_path = await asyncio.to_thread(download_media, media_url, ".mp4")
-                await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VIDEO)
-                with local_media_path.open("rb") as f:
-                    await update.message.reply_video(video=f, caption="- @G66Gbot")
-            elif media_type == "photo":
-                local_media_path = await asyncio.to_thread(download_media, media_url, ".jpg")
-                await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
-                with local_media_path.open("rb") as f:
-                    await update.message.reply_photo(photo=f, caption="- @G66Gbot")
+            for item in pin_items:
+                m_url = item["url"]
+                m_type = item["type"]
+                
+                if m_type == "video":
+                    path = await asyncio.to_thread(download_media, m_url, ".mp4")
+                    local_files.append((path, "video"))
+                elif m_type == "photo":
+                    path = await asyncio.to_thread(download_media, m_url, ".jpg")
+                    local_files.append((path, "photo"))
+
+            for path, m_type in local_files:
+                if m_type == "video":
+                    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VIDEO)
+                    with path.open("rb") as f:
+                        await update.message.reply_video(video=f, caption="- @G66Gbot")
+                elif m_type == "photo":
+                    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
+                    with path.open("rb") as f:
+                        await update.message.reply_photo(photo=f, caption="- @G66Gbot")
 
             await processing_msg.delete()
             return
@@ -329,8 +350,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await processing_msg.edit_text(f"❌ حدث خطأ: {str(e)}")
             return
         finally:
-            if local_media_path:
-                local_media_path.unlink(missing_ok=True)
+            for path, _ in local_files:
+                if path and path.exists():
+                    path.unlink(missing_ok=True)
 
     if not is_valid_tiktok_url(url):
         print(f"❌ Rejected URL: {url}")
