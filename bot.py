@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
+import yt_dlp
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -132,48 +133,36 @@ def fetch_tiktok_data(url):
         logger.exception("Error fetching TikTok data")
         return None
 
-def fetch_pinterest_data(url):
+def download_pinterest_with_ytdlp(url):
+    """استخدام yt-dlp لجلب الفيديو أو محتوى بينترست بدقة بدون مشاكل الصور المصغرة"""
+    temp_dir = tempfile.mkdtemp()
+    ydl_opts = {
+        'outtmpl': os.path.join(temp_dir, '%(id)s.%(ext)s'),
+        'format': 'best',
+        'noplaylist': True,
+    }
     try:
-        headers = request_headers()
-        if "pin.it" in url:
-            with requests.get(url, allow_redirects=True, timeout=(10, 25), headers=headers) as resp:
-                resp.raise_for_status()
-                url = resp.url
-
-        with requests.get(url, headers=headers, timeout=(10, 25)) as resp:
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, 'html.parser')
-
-        media_items = []
-
-        # 1. البحث حصرياً عن الفيديوهات أولاً وإعطاؤها الأولوية المطلقة
-        video_tags = soup.find_all("meta", property="og:video") + soup.find_all("meta", attrs={"name": "og:video"})
-        for tag in video_tags:
-            v_url = tag.get("content")
-            if v_url and v_url not in [m["url"] for m in media_items]:
-                media_items.append({"type": "video", "url": v_url})
-
-        source_tags = soup.find_all("source", type="video/mp4")
-        for tag in source_tags:
-            v_url = tag.get("src")
-            if v_url and v_url not in [m["url"] for m in media_items]:
-                media_items.append({"type": "video", "url": v_url})
-
-        # 2. إذا لم يتم العثور على أي فيديو، يتم البحث عن الصور العادية
-        if not media_items:
-            image_tags = soup.find_all("meta", property="og:image") + soup.find_all("meta", attrs={"name": "og:image"})
-            for tag in image_tags:
-                img_url = tag.get("content")
-                if img_url and img_url not in [m["url"] for m in media_items]:
-                    if "pinimg.com" in img_url:
-                        media_items.append({"type": "photo", "url": img_url})
-
-        if media_items:
-            return media_items
-
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            if 'entries' in info:
+                # إذا كان قائمة
+                entries = info['entries']
+                files = []
+                for entry in entries:
+                    filename = ydl.prepare_filename(entry)
+                    if os.path.exists(filename):
+                        files.append((Path(filename), "video" if entry.get('ext') in ['mp4', 'mkv', 'webm'] else "photo"))
+                return files
+            else:
+                filename = ydl.prepare_filename(info)
+                if os.path.exists(filename):
+                    # التحقق مما إذا كان فيديو أو صورة بناء على الامتداد
+                    ext = info.get('ext', '')
+                    m_type = "video" if ext in ['mp4', 'mkv', 'webm', 'mov'] else "photo"
+                    return [(Path(filename), m_type)]
     except Exception:
-        logger.exception("Error fetching Pinterest data")
-    return None
+        logger.exception("Error downloading Pinterest with yt-dlp")
+    return []
 
 def download_media(url, suffix):
     temporary_path = None
@@ -310,28 +299,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"📥 Extracted URL: {url}")
 
     if is_valid_pinterest_url(url):
-        print("📌 Matched Pinterest URL pattern.")
+        print("📌 Matched Pinterest URL pattern using yt-dlp.")
         processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم تحميل المحتوى من بينترست...")
         local_files = []
         try:
-            pin_items = await asyncio.to_thread(fetch_pinterest_data, url)
-            if not pin_items:
-                await processing_msg.edit_text("❌ عذراً، لم أتمكن من استخراج المحتوى من بينترست. تأكد من صحة الرابط.")
+            local_files = await asyncio.to_thread(download_pinterest_with_ytdlp, url)
+            if not local_files:
+                await processing_msg.edit_text("❌ عذراً، لم أتمكن من تحميل المحتوى من بينترست. تأكد من صحة الرابط.")
                 return
-
-            if isinstance(pin_items, dict):
-                pin_items = [pin_items]
-
-            for item in pin_items:
-                m_url = item["url"]
-                m_type = item["type"]
-                
-                if m_type == "video":
-                    path = await asyncio.to_thread(download_media, m_url, ".mp4")
-                    local_files.append((path, "video"))
-                elif m_type == "photo":
-                    path = await asyncio.to_thread(download_media, m_url, ".jpg")
-                    local_files.append((path, "photo"))
 
             for path, m_type in local_files:
                 if m_type == "video":
@@ -353,6 +328,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for path, _ in local_files:
                 if path and path.exists():
                     path.unlink(missing_ok=True)
+                    # حذف المجلد المؤقت أيضاً إذا رغبت
+                    try:
+                        path.parent.rmdir()
+                    except Exception:
+                        pass
 
     if not is_valid_tiktok_url(url):
         print(f"❌ Rejected URL: {url}")
