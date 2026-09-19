@@ -245,11 +245,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"⚙️ تم استقبال الأمر: {text}")
             return
 
-    url = text.strip()
+   url = text.strip()
 
-    # توجيه روابط بينترست إلى الملف المنفصل بشكل مباشر
+    # التحقق مما إذا كان الرابط تابعاً لبينترست أو تيك توك
     if is_valid_pinterest_url(url):
         await handle_pinterest_message(update, context)
+        return
+
+    if not is_valid_tiktok_url(url):
+        await update.message.reply_text("❌ أرسل رابط تيك توك أو بينترست صحيحاً من فضلك.")
         return
 
     if not is_valid_tiktok_url(url):
