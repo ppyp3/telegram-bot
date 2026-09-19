@@ -42,7 +42,7 @@ ADMIN_IDS = [5782729939]
 MAX_MEDIA_SIZE = 49 * 1024 * 1024
 SESSION_TTL_SECONDS = 20 * 60
 
-# كوكيز تيك توك الجديدة والصحيحة
+# كوكيز تيك توك المحدثة
 TIKTOK_COOKIES = """
 # Netscape HTTP Cookie File
 # http://curl.haxx.se/rfc/cookie_spec.html
@@ -101,8 +101,9 @@ def is_valid_tiktok_url(url):
 def get_cookies_file():
     if not TIKTOK_COOKIES.strip() or "Netscape HTTP Cookie File" not in TIKTOK_COOKIES:
         return None
-    cookie_file = tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode="w", encoding="utf-8")
-    cookie_file.write(TIKTOK_COOKIES)
+    # تم التعديل هنا لاستخدام utf-8-sig لمنع أي خطأ في قراءة ملف الكوكيز
+    cookie_file = tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode="w", encoding="utf-8-sig")
+    cookie_file.write(TIKTOK_COOKIES.strip())
     cookie_file.close()
     return cookie_file.name
 
