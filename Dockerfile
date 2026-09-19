@@ -1,31 +1,21 @@
-FROM aiogram/telegram-bot-api:latest
+# استخدام صورة جاهزة تحتوي على سيرفر تيليجرام وبايثون
+FROM aiogram/telegram-bot-api
 
-# تثبيت الحزم الأساسية ونظام بايثون مباشرة من مستودعات Alpine الموثوقة
-RUN apk update && apk add --no-cache \
-    python3 \
-    py3-pip \
-    py3-requests \
-    py3-setuptools \
-    py3-wheel \
-    ffmpeg \
-    bash \
-    gcc \
-    musl-dev \
-    python3-dev
+# تثبيت بايثون والمكتبات إذا لم تكن موجودة
+RUN apt-get update && apt-get install -y python3 python3-pip
 
+# تحديد مجلد العمل داخل الحاوية
 WORKDIR /app
 
-# إنشاء البيئة الافتراضية
-RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+# نسخ ملفات المشروع إلى المجلد الحالي
+COPY . /app/
 
-# تحديث pip وتثبيت المكتبات الأساسية المطلوبة للبوت مباشرة لتجنب أخطاء التحميل
-RUN pip3 install --no-cache-dir --upgrade pip && \
-    pip3 install --no-cache-dir python-telegram-bot yt-dlp requests ffmpeg-python
+# تثبيت متطلبات بايثون إن وجدت
+RUN pip3 install --no-cache-dir requests pyrogram tgcrypto || true
+# أضف هنا أي مكتبات أخرى يحتاجها بوتك مثل python-telegram-bot
 
-# نسخ ملف الإقلاع وإعطاؤه صلاحية التشغيل
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# إعطاء صلاحية التشغيل لملف الإقلاع
+RUN chmod +x entrypoint.sh
 
-# تحديد نقطة الدخول لتشغيل السكريبت الخاص بنا
-ENTRYPOINT ["/entrypoint.sh"]
+# تشغيل السكريبت عند بدء الحاوية
+ENTRYPOINT ["./entrypoint.sh"]
