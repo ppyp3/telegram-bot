@@ -41,6 +41,14 @@ def is_valid_youtube_url(url: str) -> bool:
     return bool(YOUTUBE_REGEX.search(url.strip()))
 
 
+def extract_youtube_url(text: str) -> str:
+    """Return only the YouTube link when it is sent alongside other text."""
+    match = YOUTUBE_REGEX.search(text or "")
+    if not match:
+        raise ValueError("Invalid YouTube URL")
+    return match.group(0)
+
+
 def format_views(views):
     if not views:
         return "0"
@@ -159,7 +167,7 @@ def download_youtube_media(url: str, mode: str = "video"):
 
 async def handle_youtube_message(update, context):
     message = update.effective_message
-    url = (message.text or message.caption or "").strip()
+    url = extract_youtube_url(message.text or message.caption or "")
     user_id = update.effective_user.id
 
     processing_msg = await message.reply_text("⏰┇يرجى الانتظار، جاري معالجة رابط يوتيوب...")
@@ -174,17 +182,26 @@ async def handle_youtube_message(update, context):
             ],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
+        safe_url = html.escape(info["url"], quote=True)
+        safe_title = html.escape(info["title"])
+        safe_uploader = html.escape(info["uploader"])
         caption = (
-            f'🎬 <a href="{html.escape(info["url"], quote=True)}">'
-            f'{html.escape(info["title"])}</a>\n'
-            f'👤 {html.escape(info["uploader"])}\n'
+            f'🎬 <a href="{safe_url}">'
+            f"{safe_title}</a>\n"
+            f"👤 {safe_uploader}\n"
             f'⏱ {info["duration_string"]} - 👁 {info["view_count_formatted"]}'
         )
 
         if info["thumbnail"]:
-            sent_msg = await message.reply_photo(
-                photo=info["thumbnail"], caption=caption, parse_mode="HTML", reply_markup=reply_markup
-            )
+            try:
+                sent_msg = await message.reply_photo(
+                    photo=info["thumbnail"], caption=caption, parse_mode="HTML", reply_markup=reply_markup
+                )
+            except Exception:
+                logger.warning("Unable to send YouTube thumbnail; sending text card instead", exc_info=True)
+                sent_msg = await message.reply_text(
+                    text=caption, parse_mode="HTML", reply_markup=reply_markup
+                )
         else:
             sent_msg = await message.reply_text(
                 text=caption, parse_mode="HTML", reply_markup=reply_markup
