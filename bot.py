@@ -37,7 +37,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 TOKEN = os.environ.get("TOKEN")
-ADMIN_IDS = [5782729939]
+ADMIN_IDS = [5782729939]  # ضع معرف الآدمن الخاص بك هنا
 MAX_MEDIA_SIZE = 49 * 1024 * 1024
 SESSION_TTL_SECONDS = 20 * 60
 
@@ -201,8 +201,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     welcome_msg = (
         f"✦ أهلاً بك ⦗ {user_name} ⦘ 🖤\n\n"
-        f"▫︎ بوت التحميل السريع 📥\n"
-        f"▫︎ يوتيوب • تيك توك • إنستغرام\n\n"
+        f"▫︎ بوت تحميل التيك توك واليوتيوب والإنستغرام السريع 📥\n"
+        f"▫︎ فيديوهات بدون حقوق • صور • صوتيات\n\n"
         f"⚡ أرسل الرابط الآن للبدء 🔻"
     )
 
@@ -399,7 +399,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.answer()
 
-    # معالجة أزرار اليوتيوب أولاً
+    # معالجة أزرار اليوتيوب
     if query.data in ["yt_video", "yt_audio", "yt_voice"]:
         chat_id = query.message.chat_id
         yt_sessions = context.application.bot_data.get("yt_sessions", {})
@@ -557,7 +557,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             sessions.pop(session_key, None)
 
-
 def main():
     if not TOKEN:
         raise RuntimeError("TOKEN environment variable is not set.")
@@ -567,22 +566,22 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_panel))
 
-    # مكاتب التحميل الخارجية (إنستغرام، يوتيوب)
     app.add_handler(
         MessageHandler(INSTAGRAM_FILTER, handle_instagram_message)
     )
+
+    # إضافة معالج روابط اليوتيوب بطريقة مماثلة للإنستغرام
     app.add_handler(
         MessageHandler(YOUTUBE_FILTER, handle_youtube_message)
     )
 
-    # معالجة نصوص تيك توك والأوامر العامة
     app.add_handler(
         MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
     )
 
     app.add_handler(CallbackQueryHandler(button_callback))
 
-    print("بوت التحميل يعمل الآن بكفاءة...")
+    print("بوت التحميل يعمل الآن بكفاءة وسرعة عالية...")
     app.run_polling()
 
 
