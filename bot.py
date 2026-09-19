@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
+from bs4 import BeautifulSoup
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -57,6 +58,12 @@ def is_valid_tiktok_url(url):
     return parsed.scheme == "https" and (
         hostname == "tiktok.com" or hostname.endswith(".tiktok.com")
     )
+
+# فحص وروابط بينترست
+def is_valid_pinterest_url(url):
+    parsed = urlparse(url.strip())
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    return "pinterest.com" in hostname or hostname == "pin.it"
 
 def request_headers():
     return {
@@ -125,6 +132,35 @@ def fetch_tiktok_data(url):
     except (requests.RequestException, ValueError, TypeError):
         logger.exception("Error fetching TikTok data")
         return None
+
+# دالة جلب محتوى بينترست (فيديو أو صورة)
+def fetch_pinterest_data(url):
+    try:
+        headers = request_headers()
+        if "pin.it" in url:
+            with requests.get(url, allow_redirects=True, timeout=(8, 20), headers=headers) as resp:
+                resp.raise_for_status()
+                url = resp.url
+
+        with requests.get(url, headers=headers, timeout=(8, 20)) as resp:
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, 'html.parser')
+
+        # البحث عن الفيديو
+        video_tag = soup.find("meta", property="og:video")
+        if video_tag and video_tag.get("content"):
+            return {"type": "video", "url": video_tag["content"]}
+
+        # البحث عن الصورة بجودة أصلية
+        image_tag = soup.find("meta", property="og:image")
+        if image_tag and image_tag.get("content"):
+            img_url = image_tag["content"]
+            img_url = img_url.replace("236x", "originals").replace("474x", "originals")
+            return {"type": "photo", "url": img_url}
+
+    except Exception:
+        logger.exception("Error fetching Pinterest data")
+    return None
 
 def download_media(url, suffix):
     temporary_path = None
@@ -195,7 +231,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_msg = (
         f"✦ أهلاً بك ⦗ {user_name} ⦘ 🖤\n\n"
         f"▫︎ بوت التحميل السريع 📥\n"
-        f"▫︎ يوتيوب • تيك توك • إنستغرام\n\n"
+        f"▫︎ يوتيوب • تيك توك • إنستغرام • بينترست\n\n"
         f"⚡ أرسل الرابط الآن للبدء 🔻"
     )
 
@@ -246,8 +282,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     url = text.strip()
 
+    # معالجة روابط بينترست
+    if is_valid_pinterest_url(url):
+        processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم جلب المحتوى من بينترست...")
+        try:
+            pin_data = await asyncio.to_thread(fetch_pinterest_data, url)
+            if not pin_data:
+                await processing_msg.edit_text("❌ عذراً، لم أتمكن من استخراج المحتوى من بينترست. تأكد من صحة الرابط.")
+                return
+
+            if pin_data["type"] == "video":
+                await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VIDEO)
+                await update.message.reply_video(video=pin_data["url"], caption="- @G66Gbot")
+            elif pin_data["type"] == "photo":
+                await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
+                await update.message.reply_photo(photo=pin_data["url"], caption="- @G66Gbot")
+
+            await processing_msg.delete()
+            return
+        except Exception:
+            logger.exception("Error handling Pinterest message")
+            await processing_msg.edit_text("❌ حدث خطأ أثناء تحميل محتوى بينترست.")
+            return
+
     if not is_valid_tiktok_url(url):
-        await update.message.reply_text("❌ أرسل رابط تيك توك صحيحاً من فضلك.")
+        await update.message.reply_text("❌ أرسل رابط تيك توك أو بينترست صحيحاً من فضلك.")
         return
 
     processing_msg = await update.message.reply_text(
