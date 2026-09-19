@@ -59,11 +59,11 @@ def is_valid_tiktok_url(url):
         hostname == "tiktok.com" or hostname.endswith(".tiktok.com")
     )
 
-# فحص وروابط بينترست
+# دالة فحص روابط بينترست الشاملة (تشمل جميع النطاقات والروابط المختصرة)
 def is_valid_pinterest_url(url):
     parsed = urlparse(url.strip())
     hostname = (parsed.hostname or "").lower().rstrip(".")
-    return "pinterest.com" in hostname or hostname == "pin.it"
+    return "pinterest." in hostname or hostname == "pin.it"
 
 def request_headers():
     return {
@@ -133,7 +133,7 @@ def fetch_tiktok_data(url):
         logger.exception("Error fetching TikTok data")
         return None
 
-# دالة جلب محتوى بينترست (فيديو أو صورة)
+# دالة جلب محتوى بينترست (فيديو أو صورة بجودتها الأصلية)
 def fetch_pinterest_data(url):
     try:
         headers = request_headers()
