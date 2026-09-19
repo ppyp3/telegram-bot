@@ -41,46 +41,51 @@ def format_views(views):
         return f"{int(views / 1_000)}K"
     return str(views)
 
-def get_youtube_info(url: str):
-    ydl_opts = {
+def get_youtube_options(download=False, outtmpl=None):
+    """إعدادات لتجاوز حظر يوتيوب تماماً بدون الحاجة إلى كوكيز"""
+    opts = {
         'quiet': True,
         'no_warnings': True,
-        'skip_download': True,
+        'skip_download': not download,
         'nocheckcertificate': True,
         'geo_bypass': True,
+
+        # إجبار الاستخراج عبر عملاء الموبايل الموثوقين لتجاوز حماية Bot Detection بدون كوكيز
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'ios', 'mweb'],
-                'player_skip': ['configs'],
+                'player_client': ['android', 'ios'],
+                'player_skip': ['webpage', 'configs'],
             }
         },
+        # رأس الطلب المخصص للتمويه
+        'http_headers': {
+            'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11; G3112 Build/00.0.A.0.0) gzip',
+            'Accept-Language': 'ar,en-US;q=0.9,en;q=0.8',
+        }
     }
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            if not info:
-                raise ValueError("Could not extract info")
-                
-            duration = info.get('duration', 0) or 0
-            minutes, seconds = divmod(int(duration), 60)
+    if outtmpl:
+        opts['outtmpl'] = outtmpl
+        opts['writethumbnail'] = True
+    return opts
+
+def get_youtube_info(url: str):
+    ydl_opts = get_youtube_options(download=False)
+    
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        if not info:
+            raise ValueError("Could not extract info")
             
-            return {
-                "title": info.get('title') or "فيديو يوتيوب",
-                "uploader": info.get('uploader') or info.get('channel') or "غير معروف",
-                "duration": duration,
-                "duration_string": f"{minutes:02d}:{seconds:02d}",
-                "view_count_formatted": format_views(info.get('view_count')),
-                "thumbnail": info.get('thumbnail'),
-                "url": url
-            }
-    except Exception:
+        duration = info.get('duration', 0) or 0
+        minutes, seconds = divmod(int(duration), 60)
+        
         return {
-            "title": "فيديو يوتيوب",
-            "uploader": "غير معروف",
-            "duration": 0,
-            "duration_string": "00:00",
-            "view_count_formatted": "0",
-            "thumbnail": None,
+            "title": info.get('title') or "فيديو يوتيوب",
+            "uploader": info.get('uploader') or info.get('channel') or "غير معروف",
+            "duration": duration,
+            "duration_string": f"{minutes:02d}:{seconds:02d}",
+            "view_count_formatted": format_views(info.get('view_count')),
+            "thumbnail": info.get('thumbnail'),
             "url": url
         }
 
@@ -88,21 +93,7 @@ def download_youtube_media(url: str, mode: str = "video"):
     temp_dir = tempfile.mkdtemp()
     outtmpl = os.path.join(temp_dir, '%(title)s.%(ext)s')
 
-    ydl_opts = {
-        'outtmpl': outtmpl,
-        'quiet': True,
-        'no_warnings': True,
-        'ignoreerrors': False,
-        'nocheckcertificate': True,
-        'geo_bypass': True,
-        'writethumbnail': True,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'ios', 'mweb'],
-                'player_skip': ['configs'],
-            }
-        },
-    }
+    ydl_opts = get_youtube_options(download=True, outtmpl=outtmpl)
 
     if mode in ["audio", "yt_audio", "yt_voice"]:
         ydl_opts.update({
@@ -221,7 +212,6 @@ async def handle_youtube_callback(query, context, session_data, mode):
         time_str = f"{minutes:02d}:{seconds:02d}"
 
         if mode == "yt_voice":
-            # إظهار "يسجل رسالة صوتية..." أعلى الدردشة
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.RECORD_VOICE)
             voice_caption = f"@G66Gbot - {time_str}"
             
@@ -235,7 +225,6 @@ async def handle_youtube_callback(query, context, session_data, mode):
                 )
 
         elif mode == "yt_audio":
-            # إظهار "يرسل ملفاً صوتياً..." أعلى الدردشة
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
             audio_caption = f"@G66Gbot - {time_str}, {file_size_mb}"
             
