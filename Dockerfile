@@ -23,11 +23,9 @@ ENV PATH="/opt/venv/bin:$PATH"
 RUN pip3 install --no-cache-dir --upgrade pip && \
     pip3 install --no-cache-dir python-telegram-bot yt-dlp requests ffmpeg-python
 
-# نسخ باقي ملفات المشروع
-COPY . .
-
-# إعداد ملف التشغيل
+# نسخ ملف الإقلاع وإعطاؤه صلاحية التشغيل
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-CMD ["/entrypoint.sh"]
+# تحديد نقطة الدخول لتشغيل السكريبت الخاص بنا
+ENTRYPOINT ["/entrypoint.sh"]
