@@ -1,8 +1,15 @@
 import os
 import re
 import tempfile
+import asyncio
+import logging
 from pathlib import Path
 import yt_dlp
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.constants import ChatAction
+from telegram.ext import filters
+
+logger = logging.getLogger(__name__)
 
 MAX_MEDIA_SIZE = 49 * 1024 * 1024
 
@@ -10,10 +17,15 @@ YOUTUBE_REGEX = re.compile(
     r'(https?://)?(www\.)?(youtube\.com|youtu\.be)/(watch\?v=|shorts/|embed/)?([a-zA-Z0-9_-]+)'
 )
 
-YOUTUBE_FILTER = None
-
 class DownloadTooLarge(Exception):
     pass
+
+class YoutubeFilter(filters.MessageFilter):
+    def filter(self, message):
+        text = message.text or message.caption or ""
+        return bool(YOUTUBE_REGEX.search(text.strip()))
+
+YOUTUBE_FILTER = YoutubeFilter()
 
 def is_valid_youtube_url(url: str) -> bool:
     if not url:
@@ -38,7 +50,7 @@ def get_youtube_info(url: str):
         'geo_bypass': True,
         'extractor_args': {
             'youtube': {
-                'player_client': ['ios', 'android_creator', 'android'],
+                'player_client': ['ios', 'android'],
                 'player_skip': ['webpage', 'configs'],
             }
         },
@@ -58,18 +70,19 @@ def get_youtube_info(url: str):
                 "duration_string": f"{minutes:02d}:{seconds:02d}",
                 "view_count_formatted": format_views(info.get('view_count')),
                 "thumbnail": info.get('thumbnail'),
+                "url": url
             }
     except Exception:
-        # خيار احتياطي في حال تم حظر المعاينة لجلب عنوان افتراضي
         return {
             "title": "فيديو يوتيوب",
             "uploader": "غير معروف",
             "duration_string": "00:00",
             "view_count_formatted": "0",
             "thumbnail": None,
+            "url": url
         }
 
-def download_youtube(url: str, mode: str = "video"):
+def download_youtube_media(url: str, mode: str = "video"):
     temp_dir = tempfile.mkdtemp()
     outtmpl = os.path.join(temp_dir, '%(title)s.%(ext)s')
 
@@ -80,22 +93,29 @@ def download_youtube(url: str, mode: str = "video"):
         'ignoreerrors': False,
         'nocheckcertificate': True,
         'geo_bypass': True,
+        'writethumbnail': True,
         'extractor_args': {
             'youtube': {
-                'player_client': ['ios', 'android_creator', 'android'],
+                'player_client': ['ios', 'android'],
                 'player_skip': ['webpage', 'configs'],
             }
         },
     }
 
-    if mode in ["audio", "voice"]:
+    if mode in ["audio", "yt_audio"]:
         ydl_opts.update({
             'format': 'bestaudio/best',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
+            'postprocessors': [
+                {
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                },
+                {
+                    'key': 'FFmpegThumbnailsConvertor',
+                    'format': 'jpg',
+                }
+            ],
         })
     else:
         ydl_opts.update({
@@ -106,14 +126,129 @@ def download_youtube(url: str, mode: str = "video"):
         info = ydl.extract_info(url, download=True)
         title = info.get('title', 'فيديو يوتيوب')
 
-        downloaded_files = list(Path(temp_dir).glob('*'))
-        if not downloaded_files:
+        media_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.mp3', '.mp4', '.m4a', '.webm', '.ogg']]
+        if not media_files:
             raise FileNotFoundError("لم يتم العثور على الملف المحمل.")
 
-        file_path = downloaded_files[0]
+        file_path = media_files[0]
+        thumb_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.jpg', '.jpeg', '.png']]
+        thumb_path = thumb_files[0] if thumb_files else None
 
         if file_path.stat().st_size > MAX_MEDIA_SIZE:
             file_path.unlink(missing_ok=True)
             raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
 
-        return file_path, title
+        return file_path, title, thumb_path
+
+async def handle_youtube_message(update, context):
+    url = update.message.text.strip()
+    user_id = update.effective_user.id
+
+    processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، جاري معالجة رابط يوتيوب...")
+
+    try:
+        info = await asyncio.to_thread(get_youtube_info, url)
+
+        keyboard = [
+            [InlineKeyboardButton("🎬 فيديو", callback_data="yt_video")],
+            [
+                InlineKeyboardButton("🎧 ملف صوتي", callback_data="yt_audio"),
+                InlineKeyboardButton("🎙 بصمة صوتية", callback_data="yt_voice")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        # رابط العنوان القابل للضغط بـ HTML
+        caption = (
+            f'🎬 <a href="{info["url"]}">{info["title"]}</a>\n'
+            f'👤 {info["uploader"]}\n'
+            f'⏱ {info["duration_string"]} - 👁 {info["view_count_formatted"]}'
+        )
+
+        sent_msg = None
+        if info['thumbnail']:
+            sent_msg = await update.message.reply_photo(
+                photo=info['thumbnail'],
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=reply_markup
+            )
+        else:
+            sent_msg = await update.message.reply_text(
+                text=caption,
+                parse_mode="HTML",
+                reply_markup=reply_markup
+            )
+
+        # حفظ الجلسة للتفاعل مع الأزرار
+        sessions = context.application.bot_data.setdefault("yt_sessions", {})
+        key = (sent_msg.chat_id, sent_msg.message_id)
+        sessions[key] = {
+            "user_id": user_id,
+            "url": url,
+            "title": info["title"]
+        }
+
+        await processing_msg.delete()
+
+    except Exception:
+        logger.exception("Error handling YouTube message")
+        await processing_msg.edit_text("❌ حدث خطأ أثناء معالجة رابط يوتيوب.")
+
+async def handle_youtube_callback(query, context, session_data, mode):
+    chat_id = query.message.chat_id
+    url = session_data["url"]
+    
+    status_msg = await query.message.reply_text("🔄 جاري التحميل، يرجى الانتظار...")
+    file_path = None
+    thumb_path = None
+
+    try:
+        file_path, title, thumb_path = await asyncio.to_thread(download_youtube_media, url, mode)
+
+        if mode in ["yt_audio", "yt_voice"]:
+            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
+            
+            with open(file_path, 'rb') as audio_file:
+                thumb_file = open(thumb_path, 'rb') if thumb_path and os.path.exists(thumb_path) else None
+                
+                if mode == "yt_voice":
+                    await context.bot.send_voice(
+                        chat_id=chat_id,
+                        voice=audio_file,
+                        caption="- @G66Gbot"
+                    )
+                else:
+                    await context.bot.send_audio(
+                        chat_id=chat_id,
+                        audio=audio_file,
+                        title=title,
+                        performer="@G66Gbot",
+                        thumbnail=thumb_file,  # إرفاق الغلاف المصغر
+                        caption="- @G66Gbot"
+                    )
+                
+                if thumb_file:
+                    thumb_file.close()
+
+        else: # فيديو
+            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
+            with open(file_path, 'rb') as video_file:
+                await context.bot.send_video(
+                    chat_id=chat_id,
+                    video=video_file,
+                    caption="- @G66Gbot"
+                )
+
+        await status_msg.delete()
+
+    except DownloadTooLarge:
+        await status_msg.edit_text("⚠️┇هذا الملف لا يمكنني تحميله، لأن حجمه يتجاوز ( 50 MB ).")
+    except Exception:
+        logger.exception("Error in YouTube callback process")
+        await status_msg.edit_text("❌ حدث خطأ أثناء التحميل.")
+    finally:
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
+        if thumb_path and os.path.exists(thumb_path):
+            os.remove(thumb_path)
