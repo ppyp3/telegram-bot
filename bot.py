@@ -146,7 +146,7 @@ def fetch_pinterest_data(url):
 
         media_items = []
 
-        # 1. البحث أولاً عن روابط الفيديوهات المباشرة
+        # 1. البحث حصرياً عن الفيديوهات أولاً وإعطاؤها الأولوية المطلقة
         video_tags = soup.find_all("meta", property="og:video") + soup.find_all("meta", attrs={"name": "og:video"})
         for tag in video_tags:
             v_url = tag.get("content")
@@ -159,7 +159,7 @@ def fetch_pinterest_data(url):
             if v_url and v_url not in [m["url"] for m in media_items]:
                 media_items.append({"type": "video", "url": v_url})
 
-        # 2. إذا لم يكن هناك فيديو، ابحث عن الصور العادية
+        # 2. إذا لم يتم العثور على أي فيديو، يتم البحث عن الصور العادية
         if not media_items:
             image_tags = soup.find_all("meta", property="og:image") + soup.find_all("meta", attrs={"name": "og:image"})
             for tag in image_tags:
