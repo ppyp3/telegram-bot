@@ -1,8 +1,10 @@
 import os
 import re
+import sys
 import tempfile
 import asyncio
 import logging
+import subprocess
 from pathlib import Path
 import yt_dlp
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -10,6 +12,18 @@ from telegram.constants import ChatAction
 from telegram.ext import filters
 
 logger = logging.getLogger(__name__)
+
+# --- دالة التحديث التلقائي لمكتبة yt-dlp ---
+def auto_update_ytdlp():
+    try:
+        logger.info("🔄 جاري التحقق من تحديثات yt-dlp...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"])
+        logger.info("✅ تم تحديث yt-dlp بنجاح!")
+    except Exception as e:
+        logger.error(f"❌ فشل تحديث yt-dlp: {e}")
+
+# استدعاء دالة التحديث فوراً عند تحميل الملف
+auto_update_ytdlp()
 
 MAX_MEDIA_SIZE = 49 * 1024 * 1024
 
@@ -42,7 +56,7 @@ def format_views(views):
     return str(views)
 
 def create_cookies_file():
-    """إنشاء ملف كوكيز بنمط Netscape متوافق تماماً مع yt-dlp لمنع التحذيرات والحظر"""
+    """إنشاء ملف كوكيز بنمط Netscape متوافق تماماً مع yt-dlp"""
     cookies_content = """# Netscape HTTP Cookie File
 .youtube.com	TRUE	/	FALSE	0	SID	g.a000CwkTGceaTSWVp9g8NdyNQ4zB-EmTTTT6eMk6FBv87o4x_XY8X9LdSgADScZACiP-edliMAACgYKAWISARQSFQHGX2MiZeRCMtav2cTXd57u1ufqjBoVAUF8yKqdWN5dIBArMSHOSxno_Wr_0076
 .youtube.com	TRUE	/	FALSE	0	LOGIN_INFO	AFmmF2swRQIhAKWSpYjDL8f7GV2yFbFgC98Rwx4GWGo0wU9RRj9G4hjiAiBfolPLJDk55blSolU0zmieXhVeSIJvFyfbzjDb3wwFpQ:QUQ3MjNmenZYY25TbzVMZ2E0OTJzbFZDeFZkZjRYa01WZHhLZ2NNMmVqR196cGhTQjU5UFJfQUtrbVFLVHgtNGpDMEpJSVR4aER0YUx0eWZDckJDWXFMbjJlYmFPaHlkSktrTUNuMjFEOWlyZXEtbjNHWWYxWmNOQ2d5QTdEa0YtZ0dPTkV1aTZZVHU4aFoxSldreDJtV05FRzNUWEF3bnRn
@@ -138,7 +152,6 @@ def download_youtube_media(url: str, mode: str = "video"):
             ],
         })
     else:
-        # اختيار أقوى صيغة متاحة بدون أي شروط تعجيزية
         ydl_opts.update({
             'format': 'b/bestvideo+bestaudio/best',
         })
