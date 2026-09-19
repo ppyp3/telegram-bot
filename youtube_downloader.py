@@ -8,10 +8,12 @@ import yt_dlp
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
 from telegram.ext import filters
+from playwright.async_api import async_playwright
 
 logger = logging.getLogger(__name__)
 
 MAX_MEDIA_SIZE = 49 * 1024 * 1024
+COOKIES_FILE = os.path.join(os.path.dirname(__file__), 'cookies.txt')
 
 YOUTUBE_REGEX = re.compile(
     r'(https?://)?(www\.)?(youtube\.com|youtu\.be)/(watch\?v=|shorts/|embed/)?([a-zA-Z0-9_-]+)'
@@ -41,29 +43,69 @@ def format_views(views):
         return f"{int(views / 1_000)}K"
     return str(views)
 
+async def refresh_cookies_auto():
+    """توليد وتحديث ملف الكوكيز تلقائياً عبر متصفح خفي لمنع الحظر"""
+    try:
+        logger.info("جاري تحديث ملف الكوكيز تلقائياً...")
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            )
+            page = await context.new_page()
+            
+            # زيارة يوتيوب لتوليد كوكيز الجلسة
+            await page.goto("https://www.youtube.com", wait_until="networkidle")
+            await asyncio.sleep(3)
+            
+            cookies = await context.cookies()
+            await browser.close()
+
+            # حفظ الكوكيز بتنسيق Netscape المعتمد لدى yt-dlp
+            with open(COOKIES_FILE, "w", encoding="utf-8") as f:
+                f.write("# Netscape HTTP Cookie File\n")
+                for c in cookies:
+                    domain = c['domain']
+                    flag = "TRUE" if domain.startswith(".") else "FALSE"
+                    path = c['path']
+                    secure = "TRUE" if c.get('secure') else "FALSE"
+                    expires = int(c.get('expires', 0))
+                    name = c['name']
+                    value = c['value']
+                    f.write(f"{domain}\t{flag}\t{path}\t{secure}\t{expires}\t{name}\t{value}\n")
+                    
+        logger.info("تم تحديث الكوكيز بنجاح!")
+    except Exception as e:
+        logger.error(f"فشل تحديث الكوكيز تلقائياً: {e}")
+
 def get_youtube_options(download=False, outtmpl=None):
-    """إعدادات موحدة لتجاوز حظر البوتات بدون كوكيز عبر مشغلات tv_embedded و mweb"""
     opts = {
         'quiet': True,
         'no_warnings': True,
         'skip_download': not download,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['tv_embedded', 'mweb', 'android'],
-                'player_skip': ['configs'],
-            }
-        },
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Accept-Language': 'ar,en-US;q=0.9,en;q=0.8',
-        }
     }
+
+    if os.path.exists(COOKIES_FILE):
+        opts['cookiefile'] = COOKIES_FILE
+
     if outtmpl:
         opts['outtmpl'] = outtmpl
         opts['writethumbnail'] = True
+
     return opts
+
+async def get_youtube_info_with_retry(url: str):
+    """جلب معلومات الفيديو وإعادة تحديث الكوكيز تلقائياً في حال حدوث خطأ"""
+    try:
+        return await asyncio.to_thread(get_youtube_info, url)
+    except Exception as e:
+        if "not a bot" in str(e).lower() or not os.path.exists(COOKIES_FILE):
+            # توليد كوكيز جديدة وإعادة المحاولة
+            await refresh_cookies_auto()
+            return await asyncio.to_thread(get_youtube_info, url)
+        raise e
 
 def get_youtube_info(url: str):
     ydl_opts = get_youtube_options(download=False)
@@ -85,6 +127,15 @@ def get_youtube_info(url: str):
             "thumbnail": info.get('thumbnail'),
             "url": url
         }
+
+async def download_youtube_media_with_retry(url: str, mode: str = "video"):
+    try:
+        return await asyncio.to_thread(download_youtube_media, url, mode)
+    except Exception as e:
+        if "not a bot" in str(e).lower():
+            await refresh_cookies_auto()
+            return await asyncio.to_thread(download_youtube_media, url, mode)
+        raise e
 
 def download_youtube_media(url: str, mode: str = "video"):
     temp_dir = tempfile.mkdtemp()
@@ -138,7 +189,7 @@ async def handle_youtube_message(update, context):
     processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، جاري معالجة رابط يوتيوب...")
 
     try:
-        info = await asyncio.to_thread(get_youtube_info, url)
+        info = await get_youtube_info_with_retry(url)
 
         keyboard = [
             [InlineKeyboardButton("🎬 فيديو", callback_data="yt_video")],
@@ -198,7 +249,7 @@ async def handle_youtube_callback(query, context, session_data, mode):
     thumb_path = None
 
     try:
-        file_path, title, duration, thumb_path = await asyncio.to_thread(download_youtube_media, url, mode)
+        file_path, title, duration, thumb_path = await download_youtube_media_with_retry(url, mode)
 
         share_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔀 | شارك.", switch_inline_query=f"{title}")]
@@ -209,7 +260,6 @@ async def handle_youtube_callback(query, context, session_data, mode):
         time_str = f"{minutes:02d}:{seconds:02d}"
 
         if mode == "yt_voice":
-            # حالة "يسجل رسالة صوتية..."
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.RECORD_VOICE)
             voice_caption = f"@G66Gbot - {time_str}"
             
@@ -223,7 +273,6 @@ async def handle_youtube_callback(query, context, session_data, mode):
                 )
 
         elif mode == "yt_audio":
-            # حالة "يرسل ملفاً صوتياً..."
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
             audio_caption = f"@G66Gbot - {time_str}, {file_size_mb}"
             
