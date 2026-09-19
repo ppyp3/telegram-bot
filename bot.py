@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 TOKEN = os.environ.get("TOKEN")
 ADMIN_IDS = [5782729939]
-MAX_MEDIA_SIZE = 2000 * 1024 * 1024  # تم رفع الحد الأقصى ليتوافق مع الخادم المحلي
+MAX_MEDIA_SIZE = 49 * 1024 * 1024
 SESSION_TTL_SECONDS = 20 * 60
 
 USER_AGENTS = [
@@ -364,8 +364,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         error_custom_msg = (
             "⚠️┇هذا الملف لا يمكنني تحميله،\n"
-            "⚠️┇لأن حجمه يتجاوز الحد المسموح،\n"
-            "⚠️┇أعد المحاولة مع ملف آخر."
+            "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
+            "⚠️┇أعد المحاوله مع ملف اخر."
         )
 
         await processing_msg.edit_text(error_custom_msg)
@@ -374,8 +374,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.exception("Error in handle_message")
 
         error_custom_msg = (
-            "⚠️┇حدث خطأ أثناء المعالجة،\n"
-            "⚠️┇يرجى المحاولة لاحقاً."
+            "⚠️┇هذا الملف لا يمكنني تحميله،\n"
+            "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
+            "⚠️┇أعد المحاوله مع ملف اخر."
         )
 
         await processing_msg.edit_text(error_custom_msg)
@@ -519,7 +520,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             logger.exception("HD video callback error")
             error_custom_msg = (
-                "⚠️┇حدث خطأ أثناء إرسال الفيديو، يرجى المحاولة لاحقاً."
+                "⚠️┇هذا الملف لا يمكنني تحميله،\n"
+                "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
+                "⚠️┇أعد المحاوله مع ملف اخر."
             )
             await status_msg.edit_text(error_custom_msg)
 
@@ -532,15 +535,7 @@ def main():
     if not TOKEN:
         raise RuntimeError("TOKEN environment variable is not set.")
 
-    # ربط التطبيق بالخادم المحلي المدمج وتفعيل الـ local_mode للاتصال على المنفذ 8081
-    app = (
-        ApplicationBuilder()
-        .token(TOKEN)
-        .base_url("http://localhost:8081/bot")
-        .base_file_url("http://localhost:8081/file/bot")
-        .local_mode(True)
-        .build()
-    )
+    app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_panel))
@@ -554,10 +549,8 @@ def main():
 
     app.add_handler(CallbackQueryHandler(button_callback))
 
-    print("بوت التحميل يعمل بكفاءة عبر الخادم المحلي...")
-    
-    # بدء استقبال التحديثات مع تفريغ الرسائل القديمة العالقة لضمان الاستجابة الفورية
-    app.run_polling(drop_pending_updates=True)
+    print("بوت التحميل يعمل الآن بكفاءة...")
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
