@@ -300,19 +300,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # معالجة روابط بينترست
     if is_valid_pinterest_url(url):
         print("📌 Matched Pinterest URL pattern.")
-        processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم جلب المحتوى من بينترست...")
+        processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم تحميل المحتوى من بينترست...")
+        local_media_path = None
         try:
             pin_data = await asyncio.to_thread(fetch_pinterest_data, url)
             if not pin_data:
                 await processing_msg.edit_text("❌ عذراً، لم أتمكن من استخراج المحتوى من بينترست. تأكد من صحة الرابط.")
                 return
 
-            if pin_data["type"] == "video":
+            media_url = pin_data["url"]
+            media_type = pin_data["type"]
+
+            if media_type == "video":
+                local_media_path = await asyncio.to_thread(download_media, media_url, ".mp4")
                 await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VIDEO)
-                await update.message.reply_video(video=pin_data["url"], caption="- @G66Gbot")
-            elif pin_data["type"] == "photo":
+                with local_media_path.open("rb") as f:
+                    await update.message.reply_video(video=f, caption="- @G66Gbot")
+            elif media_type == "photo":
+                local_media_path = await asyncio.to_thread(download_media, media_url, ".jpg")
                 await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
-                await update.message.reply_photo(photo=pin_data["url"], caption="- @G66Gbot")
+                with local_media_path.open("rb") as f:
+                    await update.message.reply_photo(photo=f, caption="- @G66Gbot")
 
             await processing_msg.delete()
             return
@@ -320,6 +328,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.exception("Error handling Pinterest message")
             await processing_msg.edit_text(f"❌ حدث خطأ: {str(e)}")
             return
+        finally:
+            if local_media_path:
+                local_media_path.unlink(missing_ok=True)
 
     if not is_valid_tiktok_url(url):
         print(f"❌ Rejected URL: {url}")
