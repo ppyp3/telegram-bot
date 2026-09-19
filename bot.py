@@ -155,11 +155,7 @@ def fetch_pinterest_data(url):
         image_tag = soup.find("meta", property="og:image") or soup.find("meta", attrs={"name": "og:image"})
         if image_tag and image_tag.get("content"):
             img_url = image_tag["content"]
-            img_url = (
-                img_url.replace("236x", "originals")
-                .replace("474x", "originals")
-                .replace("736x", "originals")
-            )
+            # إرجاع الرابط كما هو لمنع خطأ 403 Forbidden
             return {"type": "photo", "url": img_url}
 
     except Exception:
@@ -168,10 +164,15 @@ def fetch_pinterest_data(url):
 
 def download_media(url, suffix):
     temporary_path = None
+    headers = request_headers()
+    
+    # إضافة ترويسة Referer لتجاوز حظر بينترست 403 Forbidden
+    if "pinterest" in url or "pinimg" in url:
+        headers["Referer"] = "https://www.pinterest.com/"
 
     try:
         with requests.get(
-            url, headers=request_headers(), timeout=(8, 30), stream=True
+            url, headers=headers, timeout=(8, 30), stream=True
         ) as response:
             response.raise_for_status()
 
@@ -284,7 +285,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"⚙️ تم استقبال الأمر: {text}")
             return
 
-    # استخراج الرابط تلقائياً من النص حتى لو كان مخالطاً بنصوص أو معاينة
     words = text.split()
     url = ""
     for word in words:
