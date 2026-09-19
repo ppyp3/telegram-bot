@@ -10,6 +10,9 @@ YOUTUBE_REGEX = re.compile(
     r'(https?://)?(www\.)?(youtube\.com|youtu\.be)/(watch\?v=|shorts/|embed/)?([a-zA-Z0-9_-]+)'
 )
 
+# تعريف الـ FILTER لتفادي خطأ ImportError في bot.py
+YOUTUBE_FILTER = None
+
 class DownloadTooLarge(Exception):
     pass
 
