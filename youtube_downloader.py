@@ -27,6 +27,11 @@ class YoutubeFilter(filters.MessageFilter):
 
 YOUTUBE_FILTER = YoutubeFilter()
 
+def is_valid_youtube_url(url: str) -> bool:
+    if not url:
+        return False
+    return bool(YOUTUBE_REGEX.search(url.strip()))
+
 def format_views(views):
     if not views:
         return "0"
@@ -79,7 +84,7 @@ def get_youtube_info(url: str):
             "url": url
         }
 
-def download_youtube_media(url: str, mode: str = "yt_video"):
+def download_youtube_media(url: str, mode: str = "video"):
     temp_dir = tempfile.mkdtemp()
     outtmpl = os.path.join(temp_dir, '%(title)s.%(ext)s')
 
@@ -99,7 +104,7 @@ def download_youtube_media(url: str, mode: str = "yt_video"):
         },
     }
 
-    if mode in ["yt_audio", "yt_voice"]:
+    if mode in ["audio", "yt_audio", "yt_voice"]:
         ydl_opts.update({
             'format': 'bestaudio/best',
             'postprocessors': [
@@ -194,7 +199,8 @@ async def handle_youtube_message(update, context):
 async def handle_youtube_callback(query, context, session_data, mode):
     chat_id = query.message.chat_id
     url = session_data["url"]
-
+    
+    # إخفاء رسالة المعاينة والبطاقة الأصلية بمجرد الضغط على الزر
     try:
         await query.message.delete()
     except Exception:
@@ -207,6 +213,7 @@ async def handle_youtube_callback(query, context, session_data, mode):
     try:
         file_path, title, duration, thumb_path = await asyncio.to_thread(download_youtube_media, url, mode)
 
+        # زر شارك المشاركة المباشرة (Switch Inline Query)
         share_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔀 | شارك.", switch_inline_query=f"{title}")]
         ])
@@ -226,6 +233,8 @@ async def handle_youtube_callback(query, context, session_data, mode):
                 await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
                 with open(file_path, 'rb') as audio_file:
                     thumb_file = open(thumb_path, 'rb') if thumb_path and os.path.exists(thumb_path) else None
+                    
+                    # استخراج حجم الملف بالـ MB للتوضيح بالكابشن مثل الصورة
                     file_size_mb = f"{os.path.getsize(file_path) / (1024 * 1024):.1f}MB"
                     minutes, seconds = divmod(int(duration), 60)
                     time_str = f"{minutes:02d}:{seconds:02d}"
@@ -240,10 +249,11 @@ async def handle_youtube_callback(query, context, session_data, mode):
                         caption=f"@G66Gbot - {time_str}, {file_size_mb}",
                         reply_markup=share_keyboard
                     )
+                    
                     if thumb_file:
                         thumb_file.close()
 
-        else:
+        else:  # فيديو
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
             with open(file_path, 'rb') as video_file:
                 await context.bot.send_video(
