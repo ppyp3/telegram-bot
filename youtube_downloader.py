@@ -41,43 +41,37 @@ def format_views(views):
         return f"{int(views / 1_000)}K"
     return str(views)
 
-def get_youtube_options(download=False, outtmpl=None):
-    """إعدادات yt-dlp محصنة بكوكيز جلسة حسابك الكاملة لمنع الحظر"""
-    
-    sid_token = "g.a000CwkTGceaTSWVp9g8NdyNQ4zB-EmTTTT6eMk6FBv87o4x_XY8X9LdSgADScZACiP-edliMAACgYKAWISARQSFQHGX2MiZeRCMtav2cTXd57u1ufqjBoVAUF8yKqdWN5dIBArMSHOSxno_Wr_0076"
-    login_info = "AFmmF2swRQIhAKWSpYjDL8f7GV2yFbFgC98Rwx4GWGo0wU9RRj9G4hjiAiBfolPLJDk55blSolU0zmieXhVeSIJvFyfbzjDb3wwFpQ:QUQ3MjNmenZYY25TbzVMZ2E0OTJzbFZDeFZkZjRYa01WZHhLZ2NNMmVqR196cGhTQjU5UFJfQUtrbVFLVHgtNGpDMEpJSVR4aER0YUx0eWZDckJDWXFMbjJlYmFPaHlkSktrTUNuMjFEOWlyZXEtbjNHWWYxWmNOQ2d5QTdEa0YtZ0dPTkV1aTZZVHU4aFoxSldreDJtV05FRzNUWEF3bnRn"
-    sidcc_yt = "AKEyXzU07ZQ0OaVa-UUD_H-z2P4CG3K32M4fcpnABVUdTOX3fsNQgUo7XyWITmmmRW_-R1vL-Q"
-    sidcc_google = "AKEyXzWtTFhPC-Lsx5RFCeUK1ZYjPiO38vT0Wo4yIBoMOAbNVVUZGSO6ccuRf8S0LYtA4PrJTw"
+def create_cookies_file():
+    """إنشاء ملف كوكيز بنمط Netscape متوافق تماماً مع yt-dlp لمنع التحذيرات والحظر"""
+    cookies_content = """# Netscape HTTP Cookie File
+.youtube.com	TRUE	/	FALSE	0	SID	g.a000CwkTGceaTSWVp9g8NdyNQ4zB-EmTTTT6eMk6FBv87o4x_XY8X9LdSgADScZACiP-edliMAACgYKAWISARQSFQHGX2MiZeRCMtav2cTXd57u1ufqjBoVAUF8yKqdWN5dIBArMSHOSxno_Wr_0076
+.youtube.com	TRUE	/	FALSE	0	LOGIN_INFO	AFmmF2swRQIhAKWSpYjDL8f7GV2yFbFgC98Rwx4GWGo0wU9RRj9G4hjiAiBfolPLJDk55blSolU0zmieXhVeSIJvFyfbzjDb3wwFpQ:QUQ3MjNmenZYY25TbzVMZ2E0OTJzbFZDeFZkZjRYa01WZHhLZ2NNMmVqR196cGhTQjU5UFJfQUtrbVFLVHgtNGpDMEpJSVR4aER0YUx0eWZDckJDWXFMbjJlYmFPaHlkSktrTUNuMjFEOWlyZXEtbjNHWWYxWmNOQ2d5QTdEa0YtZ0dPTkV1aTZZVHU4aFoxSldreDJtV05FRzNUWEF3bnRn
+.youtube.com	TRUE	/	FALSE	0	SIDCC	AKEyXzU07ZQ0OaVa-UUD_H-z2P4CG3K32M4fcpnABVUdTOX3fsNQgUo7XyWITmmmRW_-R1vL-Q
+.google.com	TRUE	/	FALSE	0	__Secure-1PSIDCC	AKEyXzWtTFhPC-Lsx5RFCeUK1ZYjPiO38vT0Wo4yIBoMOAbNVVUZGSO6ccuRf8S0LYtA4PrJTw
+.youtube.com	TRUE	/	FALSE	0	HSID	ANO9NnOmEem-ItYpf
+.youtube.com	TRUE	/	FALSE	0	PREF	tz=Asia.Baghdad&f4=4000000
+.youtube.com	TRUE	/	FALSE	0	SAPISID	KmIE_qoMNytclrs-/AiIPreKYYGcCQyb69
+.youtube.com	TRUE	/	FALSE	0	SSID	AD4UIb9hQQfd2Itq7
+.youtube.com	TRUE	/	FALSE	0	VISITOR_INFO1_LIVE	mNVd4wf1pR0
+.youtube.com	TRUE	/	FALSE	0	YSC	BF5b20fDJPo
+"""
+    tmp = tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.txt')
+    tmp.write(cookies_content)
+    tmp.close()
+    return tmp.name
 
-    cookies_str = (
-        f"SID={sid_token}; "
-        f"LOGIN_INFO={login_info}; "
-        f"SIDCC={sidcc_yt}; "
-        f"__Secure-1PSIDCC={sidcc_google}; "
-        "HSID=ANO9NnOmEem-ItYpf; "
-        "PREF=tz=Asia.Baghdad&f4=4000000; "
-        "SAPISID=KmIE_qoMNytclrs-/AiIPreKYYGcCQyb69; "
-        "SSID=AD4UIb9hQQfd2Itq7; "
-        "VISITOR_INFO1_LIVE=mNVd4wf1pR0; "
-        "YSC=BF5b20fDJPo;"
-    )
-
+def get_youtube_options(download=False, outtmpl=None, cookie_file=None):
     opts = {
         'quiet': True,
         'no_warnings': True,
         'skip_download': not download,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-            'Cookie': cookies_str,
-        },
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['web', 'tvhtml5', 'android'],
-            }
-        },
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
     }
+
+    if cookie_file and os.path.exists(cookie_file):
+        opts['cookiefile'] = cookie_file
 
     if outtmpl:
         opts['outtmpl'] = outtmpl
@@ -86,7 +80,8 @@ def get_youtube_options(download=False, outtmpl=None):
     return opts
 
 def get_youtube_info(url: str):
-    ydl_opts = get_youtube_options(download=False)
+    cookie_file = create_cookies_file()
+    ydl_opts = get_youtube_options(download=False, cookie_file=cookie_file)
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -115,12 +110,16 @@ def get_youtube_info(url: str):
             "thumbnail": None,
             "url": url
         }
+    finally:
+        if os.path.exists(cookie_file):
+            os.remove(cookie_file)
 
 def download_youtube_media(url: str, mode: str = "video"):
     temp_dir = tempfile.mkdtemp()
     outtmpl = os.path.join(temp_dir, '%(title)s.%(ext)s')
+    cookie_file = create_cookies_file()
 
-    ydl_opts = get_youtube_options(download=True, outtmpl=outtmpl)
+    ydl_opts = get_youtube_options(download=True, outtmpl=outtmpl, cookie_file=cookie_file)
     ydl_opts['ignoreerrors'] = False
 
     if mode in ["audio", "yt_audio", "yt_voice"]:
@@ -139,30 +138,33 @@ def download_youtube_media(url: str, mode: str = "video"):
             ],
         })
     else:
-        # استخدام صيغة مرنة لضمان تحميل الفيديو بدون خطأ عدم توفر الصيغة
+        # اختيار أقوى صيغة متاحة بدون أي شروط تعجيزية
         ydl_opts.update({
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            'format': 'b/bestvideo+bestaudio/best',
         })
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        title = info.get('title', 'فيديو يوتيوب')
-        duration = info.get('duration', 0)
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            title = info.get('title', 'فيديو يوتيوب')
+            duration = info.get('duration', 0)
 
-        media_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.mp3', '.mp4', '.m4a', '.webm', '.ogg']]
-        if not media_files:
-            raise FileNotFoundError("لم يتم العثور على الملف المحمل.")
+            media_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.mp3', '.mp4', '.m4a', '.webm', '.ogg']]
+            if not media_files:
+                raise FileNotFoundError("لم يتم العثور على الملف المحمل.")
 
-        file_path = media_files[0]
-        thumb_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.jpg', '.jpeg', '.png']]
-        thumb_path = thumb_files[0] if thumb_files else None
+            file_path = media_files[0]
+            thumb_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.jpg', '.jpeg', '.png']]
+            thumb_path = thumb_files[0] if thumb_files else None
 
-        # الفحص المرن لحجم الملف المحمل قبل الإرسال
-        if file_path.stat().st_size > MAX_MEDIA_SIZE:
-            file_path.unlink(missing_ok=True)
-            raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
+            if file_path.stat().st_size > MAX_MEDIA_SIZE:
+                file_path.unlink(missing_ok=True)
+                raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
 
-        return file_path, title, duration, thumb_path
+            return file_path, title, duration, thumb_path
+    finally:
+        if os.path.exists(cookie_file):
+            os.remove(cookie_file)
 
 async def handle_youtube_message(update, context):
     url = update.message.text.strip()
@@ -221,7 +223,6 @@ async def handle_youtube_callback(query, context, session_data, mode):
     chat_id = query.message.chat_id
     url = session_data["url"]
     
-    # إخفاء رسالة المعاينة والبطاقة الأصلية بمجرد الضغط على الزر
     try:
         await query.message.delete()
     except Exception:
@@ -234,12 +235,10 @@ async def handle_youtube_callback(query, context, session_data, mode):
     try:
         file_path, title, duration, thumb_path = await asyncio.to_thread(download_youtube_media, url, mode)
 
-        # زر المشاركة المباشرة
         share_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔀 | شارك.", switch_inline_query=f"{title}")]
         ])
 
-        # حساب صيغة الوقت والحجم
         file_size_mb = f"{os.path.getsize(file_path) / (1024 * 1024):.1f}MB"
         minutes, seconds = divmod(int(duration), 60)
         time_str = f"{minutes:02d}:{seconds:02d}"
