@@ -28,6 +28,7 @@ from telegram.ext import (
     filters,
 )
 from instagram_public_downloader import INSTAGRAM_FILTER, handle_instagram_message
+from youtube_downloader import YOUTUBE_FILTER, download_youtube, is_valid_youtube_url, DownloadTooLarge
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -172,7 +173,7 @@ def download_media(url, suffix):
         raise
 
 
-def remember_session(context, message, user_id, url, title):
+def remember_session(context, message, user_id, url, title, platform="tiktok"):
     sessions = context.application.bot_data.setdefault("download_sessions", {})
     now = time.monotonic()
 
@@ -191,6 +192,7 @@ def remember_session(context, message, user_id, url, title):
         "user_id": user_id,
         "url": url,
         "title": title,
+        "platform": platform,
         "created_at": now,
     }
 
@@ -200,7 +202,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     welcome_msg = (
         f"✦ أهلاً بك ⦗ {user_name} ⦘ 🖤\n\n"
-        f"▫︎ بوت تحميل التيك توك السريع 📥\n"
+        f"▫︎ بوت تحميل التيك توك ويوتيوب السريع 📥\n"
         f"▫︎ فيديوهات بدون حقوق • صور • صوتيات\n\n"
         f"⚡ أرسل الرابط الآن للبدء 🔻"
     )
@@ -254,8 +256,58 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     url = text.strip()
 
+    # معالجة روابط يوتيوب
+    if is_valid_youtube_url(url):
+        processing_msg = await update.message.reply_text(
+            "⏰┇جاري معالجة رابط يوتيوب والتحميل..."
+        )
+        try:
+            keyboard = [
+                [InlineKeyboardButton("🎵 تحميل كملف صوتي.", callback_data="audio")],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            video_path, title = await asyncio.to_thread(download_youtube, url, "video")
+
+            await context.bot.send_chat_action(
+                chat_id=update.effective_chat.id,
+                action=ChatAction.UPLOAD_VIDEO,
+            )
+
+            with video_path.open("rb") as video_file:
+                sent_video = await update.message.reply_video(
+                    video=video_file,
+                    caption=f"- @G66Gbot",
+                    reply_markup=reply_markup,
+                )
+
+            remember_session(
+                context, sent_video, user_id, url, title, platform="youtube"
+            )
+            video_path.unlink(missing_ok=True)
+            await processing_msg.delete()
+            return
+
+        except DownloadTooLarge:
+            error_custom_msg = (
+                "⚠️┇هذا الملف لا يمكنني تحميله،\n"
+                "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
+                "⚠️┇أعد المحاوله مع ملف اخر."
+            )
+            await processing_msg.edit_text(error_custom_msg)
+            return
+        except Exception:
+            logger.exception("YouTube processing error")
+            error_custom_msg = (
+                "⚠️┇هذا الملف لا يمكنني تحميله،\n"
+                "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
+                "⚠️┇أعد المحاوله مع ملف اخر."
+            )
+            await processing_msg.edit_text(error_custom_msg)
+            return
+
     if not is_valid_tiktok_url(url):
-        await update.message.reply_text("❌ أرسل رابط تيك توك صحيحاً من فضلك.")
+        await update.message.reply_text("❌ أرسل رابط تيك توك أو يوتيوب صحيحاً من فضلك.")
         return
 
     processing_msg = await update.message.reply_text(
@@ -362,6 +414,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         user_id,
                         url,
                         title,
+                        platform="tiktok",
                     )
 
                 finally:
@@ -419,6 +472,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     url = session["url"]
     video_title = session["title"]
+    platform = session.get("platform", "tiktok")
 
     if query.data == "audio":
         try:
@@ -433,17 +487,22 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         local_audio_path = None
 
         try:
-            tiktok_data = await asyncio.to_thread(fetch_tiktok_data, url)
-            audio_link = tiktok_data.get("music") if tiktok_data else None
+            if platform == "youtube":
+                local_audio_path, _ = await asyncio.to_thread(
+                    download_youtube, url, "audio"
+                )
+            else:
+                tiktok_data = await asyncio.to_thread(fetch_tiktok_data, url)
+                audio_link = tiktok_data.get("music") if tiktok_data else None
 
-            if not audio_link:
-                raise ValueError("Audio link is unavailable")
+                if not audio_link:
+                    raise ValueError("Audio link is unavailable")
 
-            local_audio_path = await asyncio.to_thread(
-                download_media,
-                audio_link,
-                ".mp3",
-            )
+                local_audio_path = await asyncio.to_thread(
+                    download_media,
+                    audio_link,
+                    ".mp3",
+                )
 
             await context.bot.send_chat_action(
                 chat_id=chat_id,
@@ -520,6 +579,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 query.from_user.id,
                 url,
                 video_title,
+                platform="tiktok",
             )
 
             await status_msg.delete()
@@ -560,7 +620,7 @@ def main():
 
     app.add_handler(CallbackQueryHandler(button_callback))
 
-    print("بوت تيك توك يعمل الآن بكفاءة وسرعة عالية...")
+    print("بوت تيك توك ويوتيوب يعمل الآن بكفاءة وسرعة عالية...")
     app.run_polling()
 
 
