@@ -218,27 +218,33 @@ async def handle_youtube_callback(query, context, session_data, mode):
             [InlineKeyboardButton("🔀 | شارك.", switch_inline_query=f"{title}")]
         ])
 
-        # حساب حجم الملف بالـ MB وتنسيق الوقت
+        # حساب صيغة الوقت والحجم
         file_size_mb = f"{os.path.getsize(file_path) / (1024 * 1024):.1f}MB"
         minutes, seconds = divmod(int(duration), 60)
         time_str = f"{minutes:02d}:{seconds:02d}"
-        
-        # التنسيق الموحد للكابشن مثل الصورة بالضبط
-        formatted_caption = f"@G66Gbot - {time_str}, {file_size_mb}"
 
         if mode == "yt_voice":
-            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
+            # إظهار حالة "يسجل رسالة صوتية..." أعلى المحادثة
+            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.RECORD_VOICE)
+            
+            # كابشن البصمة الصوتية (يوزر البوت والوقت فقط بدون حجم)
+            voice_caption = f"@G66Gbot - {time_str}"
+            
             with open(file_path, 'rb') as voice_file:
                 await context.bot.send_voice(
                     chat_id=chat_id,
                     voice=voice_file,
-                    caption=formatted_caption,
+                    caption=voice_caption,
                     duration=int(duration),
                     reply_markup=share_keyboard
                 )
 
         elif mode == "yt_audio":
+            # إظهار حالة "يرسل ملفاً صوتياً..."
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
+            
+            audio_caption = f"@G66Gbot - {time_str}, {file_size_mb}"
+            
             with open(file_path, 'rb') as audio_file:
                 thumb_file = open(thumb_path, 'rb') if thumb_path and os.path.exists(thumb_path) else None
 
@@ -249,7 +255,7 @@ async def handle_youtube_callback(query, context, session_data, mode):
                     performer="@G66Gbot",
                     duration=int(duration),
                     thumbnail=thumb_file,
-                    caption=formatted_caption,
+                    caption=audio_caption,
                     reply_markup=share_keyboard
                 )
                 
@@ -258,11 +264,14 @@ async def handle_youtube_callback(query, context, session_data, mode):
 
         else:  # فيديو
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
+            
+            video_caption = f"@G66Gbot - {time_str}, {file_size_mb}"
+            
             with open(file_path, 'rb') as video_file:
                 await context.bot.send_video(
                     chat_id=chat_id,
                     video=video_file,
-                    caption=formatted_caption,
+                    caption=video_caption,
                     duration=int(duration),
                     reply_markup=share_keyboard
                 )
