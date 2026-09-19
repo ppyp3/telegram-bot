@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 TOKEN = os.environ.get("TOKEN")
 ADMIN_IDS = [5782729939]
-MAX_MEDIA_SIZE = 2000 * 1024 * 1024  # تم رفع الحد الأقصى إلى 2GB ليتوافق مع الخادم المحلي
+MAX_MEDIA_SIZE = 2000 * 1024 * 1024  # تم رفع الحد الأقصى ليتوافق مع الخادم المحلي
 SESSION_TTL_SECONDS = 20 * 60
 
 USER_AGENTS = [
@@ -363,8 +363,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
         error_custom_msg = (
-            "⚠️┇حدث خطأ أثناء المعالجة،\n"
-            "⚠️┇يرجى التأكد من الرابط وإعادة المحاولة."
+            "⚠️┇هذا الملف لا يمكنني تحميله،\n"
+            "⚠️┇لأن حجمه يتجاوز الحد المسموح،\n"
+            "⚠️┇أعد المحاولة مع ملف آخر."
         )
 
         await processing_msg.edit_text(error_custom_msg)
@@ -373,8 +374,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.exception("Error in handle_message")
 
         error_custom_msg = (
-            "⚠️┇حدث خطأ أثناء تحميل الملف،\n"
-            "⚠️┇أعد المحاولة مع رابط آخر."
+            "⚠️┇حدث خطأ أثناء المعالجة،\n"
+            "⚠️┇يرجى المحاولة لاحقاً."
         )
 
         await processing_msg.edit_text(error_custom_msg)
@@ -531,7 +532,7 @@ def main():
     if not TOKEN:
         raise RuntimeError("TOKEN environment variable is not set.")
 
-    # ربط التطبيق بالخادم المحلي المدمج داخل الحاوية على المنفذ 8081 وتفعيل الوضع المحلي
+    # ربط التطبيق بالخادم المحلي المدمج وتفعيل الـ local_mode للاتصال على المنفذ 8081
     app = (
         ApplicationBuilder()
         .token(TOKEN)
