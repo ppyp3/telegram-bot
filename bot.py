@@ -134,35 +134,60 @@ def fetch_tiktok_data(url):
         return None
 
 def download_pinterest_with_ytdlp(url):
-    """استخدام yt-dlp لجلب الفيديو أو محتوى بينترست بدقة بدون مشاكل الصور المصغرة"""
+    """استخدام yt-dlp أولاً للفيديوهات، مع نظام احتياطي للصور والمنشورات العادية"""
     temp_dir = tempfile.mkdtemp()
     ydl_opts = {
         'outtmpl': os.path.join(temp_dir, '%(id)s.%(ext)s'),
         'format': 'best',
         'noplaylist': True,
+        'extract_flat': False,
     }
+    files = []
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             if 'entries' in info:
-                # إذا كان قائمة
-                entries = info['entries']
-                files = []
-                for entry in entries:
+                for entry in info['entries']:
                     filename = ydl.prepare_filename(entry)
                     if os.path.exists(filename):
-                        files.append((Path(filename), "video" if entry.get('ext') in ['mp4', 'mkv', 'webm'] else "photo"))
-                return files
+                        ext = entry.get('ext', '')
+                        m_type = "video" if ext in ['mp4', 'mkv', 'webm', 'mov'] else "photo"
+                        files.append((Path(filename), m_type))
             else:
                 filename = ydl.prepare_filename(info)
                 if os.path.exists(filename):
-                    # التحقق مما إذا كان فيديو أو صورة بناء على الامتداد
                     ext = info.get('ext', '')
                     m_type = "video" if ext in ['mp4', 'mkv', 'webm', 'mov'] else "photo"
-                    return [(Path(filename), m_type)]
+                    files.append((Path(filename), m_type))
     except Exception:
-        logger.exception("Error downloading Pinterest with yt-dlp")
-    return []
+        logger.exception("yt-dlp failed for Pinterest, falling back to scraper")
+
+    # نظام بديل (Fallback) لتحميل الصور في حال لم يتم جلب فيديو عبر yt-dlp
+    if not files:
+        try:
+            headers = request_headers()
+            target_url = url
+            if "pin.it" in url:
+                with requests.get(url, allow_redirects=True, timeout=(10, 25), headers=headers) as resp:
+                    resp.raise_for_status()
+                    target_url = resp.url
+
+            with requests.get(target_url, headers=headers, timeout=(10, 25)) as resp:
+                resp.raise_for_status()
+                soup = BeautifulSoup(resp.text, 'html.parser')
+
+            image_tags = soup.find_all("meta", property="og:image") + soup.find_all("meta", attrs={"name": "og:image"})
+            for tag in image_tags:
+                img_url = tag.get("content")
+                if img_url and "pinimg.com" in img_url:
+                    img_path = download_media(img_url, ".jpg")
+                    if img_path:
+                        files.append((img_path, "photo"))
+                        break
+        except Exception:
+            logger.exception("Fallback scraper also failed")
+
+    return files
 
 def download_media(url, suffix):
     temporary_path = None
@@ -299,7 +324,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"📥 Extracted URL: {url}")
 
     if is_valid_pinterest_url(url):
-        print("📌 Matched Pinterest URL pattern using yt-dlp.")
+        print("📌 Matched Pinterest URL pattern.")
         processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم تحميل المحتوى من بينترست...")
         local_files = []
         try:
@@ -328,7 +353,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for path, _ in local_files:
                 if path and path.exists():
                     path.unlink(missing_ok=True)
-                    # حذف المجلد المؤقت أيضاً إذا رغبت
                     try:
                         path.parent.rmdir()
                     except Exception:
