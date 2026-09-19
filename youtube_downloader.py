@@ -20,11 +20,44 @@ def is_valid_youtube_url(url: str) -> bool:
         return False
     return bool(YOUTUBE_REGEX.search(url.strip()))
 
+def format_views(views):
+    if not views:
+        return "0"
+    if views >= 1_000_000:
+        return f"{views / 1_000_000:.1f}M"
+    elif views >= 1_000:
+        return f"{int(views / 1_000)}K"
+    return str(views)
+
+def get_youtube_info(url: str):
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True,
+        'nocheckcertificate': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'ios', 'web'],
+            }
+        },
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        duration = info.get('duration', 0)
+        minutes, seconds = divmod(duration, 60)
+        
+        return {
+            "title": info.get('title', 'فيديو يوتيوب'),
+            "uploader": info.get('uploader', 'غير معروف'),
+            "duration_string": f"{minutes:02d}:{seconds:02d}",
+            "view_count_formatted": format_views(info.get('view_count')),
+            "thumbnail": info.get('thumbnail'),
+        }
+
 def download_youtube(url: str, mode: str = "video"):
     temp_dir = tempfile.mkdtemp()
     outtmpl = os.path.join(temp_dir, '%(title)s.%(ext)s')
 
-    # إعدادات متكاملة تشمل كل تطبيقات ومشغلات المنصات لتجاوز حظر السيرفرات (Render/Heroku)
     ydl_opts = {
         'outtmpl': outtmpl,
         'quiet': True,
@@ -37,14 +70,11 @@ def download_youtube(url: str, mode: str = "video"):
             'youtube': {
                 'player_client': ['android', 'ios', 'web', 'mweb', 'tv'],
                 'player_skip': ['webpage', 'configs'],
-            },
-            'tiktok': {
-                'app_version': 'latest',
             }
         },
     }
 
-    if mode == "audio":
+    if mode in ["audio", "voice"]:
         ydl_opts.update({
             'format': 'bestaudio/best',
             'postprocessors': [{
