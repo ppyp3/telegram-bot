@@ -14,6 +14,7 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     InputMediaPhoto,
+    InputMediaVideo,
     KeyboardButton,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
@@ -134,13 +135,12 @@ def fetch_tiktok_data(url):
         return None
 
 def download_pinterest_with_ytdlp(url):
-    """استخدام yt-dlp أولاً للفيديوهات، مع نظام احتياطي للصور والمنشورات العادية"""
+    """استخدام yt-dlp لجلب كافة الفيديوهات والصور المتعددة من بينترست"""
     temp_dir = tempfile.mkdtemp()
     ydl_opts = {
-        'outtmpl': os.path.join(temp_dir, '%(id)s.%(ext)s'),
+        'outtmpl': os.path.join(temp_dir, '%(id)s_%(autonumber)s.%(ext)s'),
         'format': 'best',
-        'noplaylist': True,
-        'extract_flat': False,
+        'noplaylist': False,  # السماح بجلب القوائم أو العناصر المتعددة إن وجدت
     }
     files = []
     try:
@@ -148,11 +148,12 @@ def download_pinterest_with_ytdlp(url):
             info = ydl.extract_info(url, download=True)
             if 'entries' in info:
                 for entry in info['entries']:
-                    filename = ydl.prepare_filename(entry)
-                    if os.path.exists(filename):
-                        ext = entry.get('ext', '')
-                        m_type = "video" if ext in ['mp4', 'mkv', 'webm', 'mov'] else "photo"
-                        files.append((Path(filename), m_type))
+                    if entry:
+                        filename = ydl.prepare_filename(entry)
+                        if os.path.exists(filename):
+                            ext = entry.get('ext', '')
+                            m_type = "video" if ext in ['mp4', 'mkv', 'webm', 'mov'] else "photo"
+                            files.append((Path(filename), m_type))
             else:
                 filename = ydl.prepare_filename(info)
                 if os.path.exists(filename):
@@ -160,9 +161,9 @@ def download_pinterest_with_ytdlp(url):
                     m_type = "video" if ext in ['mp4', 'mkv', 'webm', 'mov'] else "photo"
                     files.append((Path(filename), m_type))
     except Exception:
-        logger.exception("yt-dlp failed for Pinterest, falling back to scraper")
+        logger.exception("yt-dlp failed for Pinterest, falling back to multi-scraper")
 
-    # نظام بديل (Fallback) لتحميل الصور في حال لم يتم جلب فيديو عبر yt-dlp
+    # نظام بديل لجلب عدة صور في حال كان المنشور يضم أكثر من صورة عبر BeautifulSoup
     if not files:
         try:
             headers = request_headers()
@@ -176,16 +177,26 @@ def download_pinterest_with_ytdlp(url):
                 resp.raise_for_status()
                 soup = BeautifulSoup(resp.text, 'html.parser')
 
-            image_tags = soup.find_all("meta", property="og:image") + soup.find_all("meta", attrs={"name": "og:image"})
-            for tag in image_tags:
+            # جمع كافة روابط الصور المرتبطة بـ pinimg
+            image_urls = set()
+            for tag in soup.find_all("meta", property="og:image") + soup.find_all("meta", attrs={"name": "og:image"}):
                 img_url = tag.get("content")
                 if img_url and "pinimg.com" in img_url:
-                    img_path = download_media(img_url, ".jpg")
-                    if img_path:
-                        files.append((img_path, "photo"))
-                        break
+                    image_urls.add(img_url)
+
+            # البحث عن صور إضافية داخل الصفحة إن وجدت
+            for img in soup.find_all("img"):
+                src = img.get("src")
+                if src and "pinimg.com" in src and ("/originals/" in src or "/736x/" in src):
+                    image_urls.add(src)
+
+            for img_url in list(image_urls)[:10]:  # حد أقصى 10 صور للحزمة الواحدة
+                img_path = download_media(img_url, ".jpg")
+                if img_path:
+                    files.append((img_path, "photo"))
+
         except Exception:
-            logger.exception("Fallback scraper also failed")
+            logger.exception("Fallback multi-scraper also failed")
 
     return files
 
@@ -325,7 +336,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if is_valid_pinterest_url(url):
         print("📌 Matched Pinterest URL pattern.")
-        processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم تحميل المحتوى من بينترست...")
+        processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم تحميل المحتوى المتعدد من بينترست...")
         local_files = []
         try:
             local_files = await asyncio.to_thread(download_pinterest_with_ytdlp, url)
@@ -333,20 +344,60 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await processing_msg.edit_text("❌ عذراً، لم أتمكن من تحميل المحتوى من بينترست. تأكد من صحة الرابط.")
                 return
 
+            # تقسيم الملفات إلى مجموعات (Media Group) للصور إذا كانت متعددة، أو إرسالها بشكل فردي منظم
+            photos_media = []
             for path, m_type in local_files:
                 if m_type == "video":
+                    # إذا وُجد فيديو، يتم إرساله مباشرة مع الإجراء المناسب
                     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VIDEO)
                     with path.open("rb") as f:
                         await update.message.reply_video(video=f, caption="- @G66Gbot")
                 elif m_type == "photo":
-                    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
-                    with path.open("rb") as f:
-                        await update.message.reply_photo(photo=f, caption="- @G66Gbot")
+                    photos_media.append(path)
+
+            if photos_media:
+                await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
+                total_photos = len(photos_media)
+                
+                # إرسال الصور دفعة واحدة على شكل مجموعات ميديا (Media Group) إذا كانت أكثر من صورة
+                for i in range(0, total_photos, 10):
+                    batch = photos_media[i:i + 10]
+                    media_group = []
+                    
+                    for idx, path_p in enumerate(batch):
+                        abs_index = i + idx + 1
+                        with path_p.open("rb") as f_img:
+                            # حفظ البيانات مؤقتاً أو استخدام الروابط / الملفات المفتوحة
+                            pass
+                    
+                    # طريقة إرسال الألبوم البرمجي الصحيحة لملفات محلية
+                    media_group = []
+                    file_objects = []
+                    try:
+                        for idx, path_p in enumerate(batch):
+                            abs_index = i + idx + 1
+                            f_img = path_p.open("rb")
+                            file_objects.append(f_img)
+                            
+                            caption_str = f"- @G66Gbot - {abs_index}/{total_photos}" if abs_index == total_photos and i + len(batch) == total_photos else None
+                            if abs_index == 1 and total_photos > 1:
+                                caption_str = "- @G66Gbot"
+
+                            media_group.append(InputMediaPhoto(media=f_img, caption=caption_str))
+
+                        if media_group:
+                            await update.message.reply_media_group(media=media_group)
+                    finally:
+                        for f_obj in file_objects:
+                            try:
+                                f_obj.close()
+                            except Exception:
+                                pass
 
             await processing_msg.delete()
             return
         except Exception as e:
-            logger.exception("Error handling Pinterest message")
+            logger.exception("Error handling Pinterest multi-message")
             await processing_msg.edit_text(f"❌ حدث خطأ: {str(e)}")
             return
         finally:
@@ -641,7 +692,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         finally:
             if local_video_path:
                 local_video_path.unlink(missing_ok=True)
-            sessions.pop(session_key, None)
+            sessions.pop(session_key, )
 
 def main():
     if not TOKEN:
