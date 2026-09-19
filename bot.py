@@ -284,8 +284,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"⚙️ تم استقبال الأمر: {text}")
             return
 
-    url = text.strip()
-    print(f"📥 Received text: {url}")
+    # استخراج الرابط تلقائياً من النص حتى لو كان مخالطاً بنصوص أو معاينة
+    words = text.split()
+    url = ""
+    for word in words:
+        if word.startswith("http://") or word.startswith("https://"):
+            url = word.strip()
+            break
+    
+    if not url:
+        url = text.strip()
+
+    print(f"📥 Extracted URL: {url}")
 
     # معالجة روابط بينترست
     if is_valid_pinterest_url(url):
@@ -294,7 +304,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             pin_data = await asyncio.to_thread(fetch_pinterest_data, url)
             if not pin_data:
-                print("❌ Failed to extract Pinterest content.")
                 await processing_msg.edit_text("❌ عذراً، لم أتمكن من استخراج المحتوى من بينترست. تأكد من صحة الرابط.")
                 return
 
@@ -313,7 +322,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     if not is_valid_tiktok_url(url):
-        print(f"❌ Rejected URL: {url} (Not matching TikTok or Pinterest rules)")
+        print(f"❌ Rejected URL: {url}")
         await update.message.reply_text("❌ أرسل رابط تيك توك أو بينترست صحيحاً من فضلك.")
         return
 
