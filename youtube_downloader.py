@@ -1,66 +1,75 @@
 import os
+import re
 import tempfile
 from pathlib import Path
-from urllib.parse import urlparse
 import yt_dlp
-from telegram.ext import filters
 
 MAX_MEDIA_SIZE = 49 * 1024 * 1024
+
+YOUTUBE_REGEX = re.compile(
+    r'(https?://)?(www\.)?(youtube\.com|youtu\.be)/(watch\?v=|shorts/|embed/)?([a-zA-Z0-9_-]+)'
+)
+
+YOUTUBE_FILTER = None
 
 class DownloadTooLarge(Exception):
     pass
 
-# فليتر للتعرف على روابط يوتيوب تلقائياً
-YOUTUBE_FILTER = filters.Regex(r'https?://(www\.)?(youtube\.com|youtu\.be)/.+')
+def is_valid_youtube_url(url: str) -> bool:
+    if not url:
+        return False
+    return bool(YOUTUBE_REGEX.search(url.strip()))
 
-def is_valid_youtube_url(url):
-    parsed = urlparse(url.strip())
-    hostname = (parsed.hostname or "").lower().rstrip(".")
-    return parsed.scheme in ("http", "https") and (
-        hostname in ("youtube.com", "youtu.be") or hostname.endswith(".youtube.com")
-    )
-
-def download_youtube(url, download_type="video"):
-    """دالة تحميل مقاطع وصوتيات يوتيوب باستخدام yt-dlp"""
+def download_youtube(url: str, mode: str = "video"):
     temp_dir = tempfile.mkdtemp()
-    out_tmpl = os.path.join(temp_dir, "%(id)s.%(ext)s")
+    outtmpl = os.path.join(temp_dir, '%(title)s.%(ext)s')
 
-    if download_type == "audio":
-        ydl_opts = {
-            "format": "bestaudio/best",
-            "outtmpl": out_tmpl,
-            "quiet": True,
-            "no_warnings": True,
-            "max_filesize": MAX_MEDIA_SIZE,
-            "postprocessors": [
-                {
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }
-            ],
-        }
+    # إعدادات متكاملة تشمل كل تطبيقات ومشغلات المنصات لتجاوز حظر السيرفرات (Render/Heroku)
+    ydl_opts = {
+        'outtmpl': outtmpl,
+        'quiet': True,
+        'no_warnings': True,
+        'ignoreerrors': False,
+        'nocheckcertificate': True,
+        'geo_bypass': True,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'ios', 'web', 'mweb', 'tv'],
+                'player_skip': ['webpage', 'configs'],
+            },
+            'tiktok': {
+                'app_version': 'latest',
+            }
+        },
+    }
+
+    if mode == "audio":
+        ydl_opts.update({
+            'format': 'bestaudio/best',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+        })
     else:
-        ydl_opts = {
-            "format": "best[filesize<=49M]/bestvideo[filesize<=30M]+bestaudio/best",
-            "outtmpl": out_tmpl,
-            "quiet": True,
-            "no_warnings": True,
-            "max_filesize": MAX_MEDIA_SIZE,
-            "merge_output_format": "mp4",
-        }
+        ydl_opts.update({
+            'format': 'bestvideo[max_filesize<=49M][ext=mp4]+bestaudio[ext=m4a]/best[max_filesize<=49M][ext=mp4]/best[max_filesize<=49M]/best',
+        })
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
-        title = info.get("title", "فيديو يوتيوب")
-        
-        downloaded_files = list(Path(temp_dir).glob("*"))
+        title = info.get('title', 'فيديو يوتيوب')
+
+        downloaded_files = list(Path(temp_dir).glob('*'))
         if not downloaded_files:
-            raise FileNotFoundError("لم يتم العثور على الملف المحمل")
+            raise FileNotFoundError("لم يتم العثور على الملف المحمل.")
 
-        filepath = downloaded_files[0]
-        if filepath.stat().st_size > MAX_MEDIA_SIZE:
-            filepath.unlink(missing_ok=True)
-            raise DownloadTooLarge
+        file_path = downloaded_files[0]
 
-        return filepath, title
+        if file_path.stat().st_size > MAX_MEDIA_SIZE:
+            file_path.unlink(missing_ok=True)
+            raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
+
+        return file_path, title
