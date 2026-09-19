@@ -22,7 +22,6 @@ def auto_update_ytdlp():
     except Exception as e:
         logger.error(f"❌ فشل تحديث yt-dlp: {e}")
 
-# استدعاء دالة التحديث فوراً عند تحميل الملف
 auto_update_ytdlp()
 
 MAX_MEDIA_SIZE = 49 * 1024 * 1024
@@ -56,7 +55,6 @@ def format_views(views):
     return str(views)
 
 def create_cookies_file():
-    """إنشاء ملف كوكيز بنمط Netscape متوافق تماماً مع yt-dlp"""
     cookies_content = """# Netscape HTTP Cookie File
 .youtube.com	TRUE	/	FALSE	0	SID	g.a000CwkTGceaTSWVp9g8NdyNQ4zB-EmTTTT6eMk6FBv87o4x_XY8X9LdSgADScZACiP-edliMAACgYKAWISARQSFQHGX2MiZeRCMtav2cTXd57u1ufqjBoVAUF8yKqdWN5dIBArMSHOSxno_Wr_0076
 .youtube.com	TRUE	/	FALSE	0	LOGIN_INFO	AFmmF2swRQIhAKWSpYjDL8f7GV2yFbFgC98Rwx4GWGo0wU9RRj9G4hjiAiBfolPLJDk55blSolU0zmieXhVeSIJvFyfbzjDb3wwFpQ:QUQ3MjNmenZYY25TbzVMZ2E0OTJzbFZDeFZkZjRYa01WZHhLZ2NNMmVqR196cGhTQjU5UFJfQUtrbVFLVHgtNGpDMEpJSVR4aER0YUx0eWZDckJDWXFMbjJlYmFPaHlkSktrTUNuMjFEOWlyZXEtbjNHWWYxWmNOQ2d5QTdEa0YtZ0dPTkV1aTZZVHU4aFoxSldreDJtV05FRzNUWEF3bnRn
@@ -152,8 +150,10 @@ def download_youtube_media(url: str, mode: str = "video"):
             ],
         })
     else:
+        # إجبار التحميل بصيغة mp4 حتى يظهر كفيديو مشغّل في تيليجرام
         ydl_opts.update({
-            'format': 'b/bestvideo+bestaudio/best',
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            'merge_output_format': 'mp4',
         })
 
     try:
@@ -295,13 +295,20 @@ async def handle_youtube_callback(query, context, session_data, mode):
             video_caption = f"@G66Gbot - {time_str}, {file_size_mb}"
             
             with open(file_path, 'rb') as video_file:
+                thumb_file = open(thumb_path, 'rb') if thumb_path and os.path.exists(thumb_path) else None
+
                 await context.bot.send_video(
                     chat_id=chat_id,
                     video=video_file,
                     caption=video_caption,
                     duration=int(duration),
+                    thumbnail=thumb_file,
+                    supports_streaming=True, # يضمن تشغيل الفيديو أثناء التحميل داخل تيليجرام
                     reply_markup=share_keyboard
                 )
+
+                if thumb_file:
+                    thumb_file.close()
 
         await status_msg.delete()
 
