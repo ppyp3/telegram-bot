@@ -1,132 +1,136 @@
-import asyncio
 import logging
-from pathlib import Path
 from urllib.parse import urlparse
-
 import requests
-from bs4 import BeautifulSoup
+from telegram import Update, InputMediaPhoto
 from telegram.constants import ChatAction
-from telegram import InputMediaPhoto
-
-from media_helper import download_media, request_headers  # أو يمكنك وضع الدوال المشتركة هنا
+from media_helper import download_media, request_headers
 
 logger = logging.getLogger(__name__)
 
 def is_valid_pinterest_url(url):
-    """التحقق مما إذا كان الرابط يتبع لموقع بينترست"""
-    parsed = urlparse(url.strip())
-    hostname = (parsed.hostname or "").lower().rstrip(".")
-    return "pinterest." in hostname or hostname == "pin.it"
+    try:
+        parsed = urlparse(url.strip())
+        hostname = (parsed.hostname or "").lower().rstrip(".")
+        return "pinterest" in hostname or "pin.it" in hostname
+    except Exception:
+        return False
 
-def download_pinterest_with_ytdlp(url):
-    """استخراج الصور المباشر عبر الكشط (Scraping) لدعم اللوحات والمنشورات المتعددة من بينترست"""
-    files = []
+def fetch_pinterest_data(url):
     try:
         headers = request_headers()
-        target_url = url
-        
-        # تتبع الروابط المختصرة pin.it
+        headers["Accept"] = "application/json, text/javascript, */*; q=0.01"
+        headers["X-Requested-With"] = "XMLHttpRequest"
+
+        # إذا كان الرابط المختصر pin.it، نقوم بفك الروابط القصيرة أولاً للحصول على الرابط الأصلي
         if "pin.it" in url:
-            with requests.get(url, allow_redirects=True, timeout=(10, 25), headers=headers) as resp:
-                resp.raise_for_status()
-                target_url = resp.url
+            with requests.get(url, headers=headers, allow_redirects=True, timeout=(5, 15)) as resp:
+                url = resp.url
 
-        with requests.get(target_url, headers=headers, timeout=(10, 25)) as resp:
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, 'html.parser')
-
-        image_urls = set()
+        # استخدام API عام مجاني ومستقر لجلب تفاصيل بينترست (فيديو أو صور)
+        api_url = f"https://www.pinterest._/resource/PinResource/get/?source_url={url}&data={%7B%22id%22:%22%22,%22field_set_key%22:%22detailed%22%7D"
+        # بديل api موثوق للعموم أو استخراج مباشر باستخدام الـ scraper البسيط
         
-        # البحث في وسوم og:image
-        for tag in soup.find_all("meta", property="og:image") + soup.find_all("meta", attrs={"name": "og:image"}):
-            img_url = tag.get("content")
-            if img_url and "pinimg.com" in img_url:
-                image_urls.add(img_url)
+        # سنستخدم طريقة دقيقة وموثوقة عبر الـ scraping السريع لصفحة بينترست لاستخراج روابط الصور أو الفيديو
+        with requests.get(url, headers=headers, timeout=(8, 20)) as response:
+            response.raise_for_status()
+            html_content = response.text
 
-        # البحث في جميع صور الصفحة وتحويلها للنسخة الأصلية عالية الجودة
-        for img in soup.find_all("img"):
-            src = img.get("src")
-            if src and "pinimg.com" in src:
-                high_res_url = src.replace("/236x/", "/originals/").replace("/736x/", "/originals/").replace("/474x/", "/originals/")
-                image_urls.add(high_res_url)
+        import re
+        
+        # البحث عن روابط الفيديو (mp4)
+        video_match = re.search(r'"contentUrl"\s*:\s*"([^"]+\.mp4[^"]*)"', html_content)
+        if not video_match:
+            video_match = re.search(r'https?://[^"\s]+\.mp4[^"\s]*', html_content)
 
-        # تحميل الصور المستخرجة (بحد أقصى 15 صورة لضمان السرعة والتوافق مع التليجرام)
-        for img_url in list(image_urls)[:15]:
-            try:
-                img_path = download_media(img_url, ".jpg")
-                if img_path:
-                    files.append((img_path, "photo"))
-            except Exception:
-                continue
+        if video_match:
+            video_url = video_match.group(1) if '"contentUrl"' in video_match.string else video_match.group(0)
+            video_url = video_url.replace(r'\u0026', '&')
+            return {"type": "video", "url": video_url}
+
+        # البحث عن الصور (عالية الدقة)
+        images = []
+        # البحث عن صور الـ originals أو العادية
+        img_matches = re.findall(r'https?://i\.pinimg\.com/originals/[^"\'\s]+', html_content)
+        if not img_matches:
+            img_matches = re.findall(r'https?://i\.pinimg\.com/736x/[^"\'\s]+', html_content)
+
+        # إزالة التكرار مع الحفاظ على الترتيب
+        seen = set()
+        unique_images = [img for img in img_matches if not (img in seen or seen.add(img))]
+
+        if unique_images:
+            # إذا وجدت صور متعددة أو صورة واحدة
+            return {"type": "images", "urls": unique_images[:10]} # حد أقصى 10 صور كألبوم
+
+        return None
 
     except Exception:
-        logger.exception("Direct scraping failed for Pinterest URL")
+        logger.exception("Error fetching Pinterest data")
+        return None
 
-    return files
+async def handle_pinterest_message(update: Update, context):
+    message = update.message
+    if not message or not message.text:
+        return
 
-async def handle_pinterest_message(update, context):
-    """معالجة وإرسال وسائط بينترست (صور أو ألبومات)"""
-    text = update.message.text if update.message and update.message.text else ""
-    words = text.split()
-    url = ""
-    for word in words:
-        if word.startswith("http://") or word.startswith("https://"):
-            url = word.strip()
-            break
-    if not url:
-        url = text.strip()
+    url = message.text.strip()
+    if not is_valid_pinterest_url(url):
+        return
 
-    processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم كشط وتحميل الصور من بينترست...")
-    local_files = []
+    processing_msg = await message.reply_text("⏰┇جاري جلب المحتوى من بينترست...")
+
     try:
-        local_files = await asyncio.to_thread(download_pinterest_with_ytdlp, url)
-        if not local_files:
-            await processing_msg.edit_text("❌ عذراً، لم أتمكن من تحميل المحتوى من بينترست. تأكد من صحة الرابط.")
+        data = fetch_pinterest_data(url)
+
+        if not data:
+            await processing_msg.edit_text("❌ لم يتم العثور على محتوى قابل للتحميل في هذا الرابط.")
             return
 
-        photos_media = []
-        for path, m_type in local_files:
-            if m_type == "video":
-                await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VIDEO)
-                with path.open("rb") as f:
-                    await update.message.reply_video(video=f, caption="- @G66Gbot")
-            elif m_type == "photo":
-                photos_media.append(path)
+        media_type = data.get("type")
 
-        if photos_media:
-            await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
-            total_photos = len(photos_media)
+        if media_type == "video":
+            video_url = data.get("url")
+            local_path = download_media(video_url, ".mp4")
+
+            try:
+                await context.bot.send_chat_action(chat_id=message.chat_id, action=ChatAction.UPLOAD_VIDEO)
+                with open(local_path, "rb") as vid_file:
+                    await message.reply_video(video=vid_file, caption="- @G66Gbot")
+                await processing_msg.delete()
+            finally:
+                if local_path:
+                    local_path.unlink(missing_ok=True)
+
+        elif media_type == "images":
+            image_urls = data.get("urls", [])
             
-            # إرسال الصور على دفعات (كل 10 صور كحد أقصى في الألبوم الواحد حسب سياسة تيليجرام)
-            for i in range(0, total_photos, 10):
-                batch = photos_media[i:i + 10]
-                media_group = []
-                file_objects = []
+            if len(image_urls) == 1:
+                # صورة واحدة فقط
+                img_url = image_urls[0]
+                local_path = download_media(img_url, ".jpg")
                 try:
-                    for idx, path_p in enumerate(batch):
-                        abs_index = i + idx + 1
-                        f_img = path_p.open("rb")
-                        file_objects.append(f_img)
-                        
-                        caption_str = "- @G66Gbot" if (abs_index == 1 and total_photos > 1) else None
-                        media_group.append(InputMediaPhoto(media=f_img, caption=caption_str))
-
-                    if media_group:
-                        await update.message.reply_media_group(media=media_group)
+                    await context.bot.send_chat_action(chat_id=message.chat_id, action=ChatAction.UPLOAD_PHOTO)
+                    with open(local_path, "rb") as img_file:
+                        await message.reply_photo(photo=img_file, caption="- @G66Gbot")
+                    await processing_msg.delete()
                 finally:
-                    for f_obj in file_objects:
-                        try:
-                            f_obj.close()
-                        except Exception:
-                            pass
+                    if local_path:
+                        local_path.unlink(missing_ok=True)
+            else:
+                # عدة صور (ألبوم ميديا جروب)
+                await context.bot.send_chat_action(chat_id=message.chat_id, action=ChatAction.UPLOAD_PHOTO)
+                media_group = []
+                for idx, img_url in enumerate(image_urls):
+                    if idx == len(image_urls) - 1:
+                        media_group.append(InputMediaPhoto(media=img_url, caption="- @G66Gbot"))
+                    else:
+                        media_group.append(InputMediaPhoto(media=img_url))
 
-        await processing_msg.delete()
-        return
-    except Exception as e:
-        logger.exception("Error handling Pinterest scraping message")
-        await processing_msg.edit_text(f"❌ حدث خطأ: {str(e)}")
-        return
-    finally:
-        for path, _ in local_files:
-            if path and path.exists():
-                path.unlink(missing_ok=True)
+                await message.reply_media_group(media=media_group)
+                await processing_msg.delete()
+        else:
+            await processing_msg.edit_text("❌ عذراً، لم نتمكن من معالجة هذا النوع من روابط بينترست.")
+
+    except Exception:
+        logger.exception("Error in handle_pinterest_message")
+        await processing_msg.edit_text("⚠️ حدث خطأ أثناء تحميل الملف، يجدر المحاولة مع رابط آخر.")
