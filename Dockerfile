@@ -1,19 +1,12 @@
-FROM aiogram/telegram-bot-api
+FROM python:3.10-slim
 
-RUN apk update && apk add --no-cache python3 py3-pip py3-virtualenv bash curl
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY . /app/
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+COPY . .
 
-RUN pip install --no-cache-dir --upgrade pip
-
-# تثبيت كافة المكتبات المطلوبة للبوت هنا
-RUN pip install --no-cache-dir requests python-telegram-bot instaloader
-
-RUN chmod +x entrypoint.sh
-
-ENTRYPOINT ["./entrypoint.sh"]
+CMD ["python", "bot.py"]
