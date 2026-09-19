@@ -10,7 +10,6 @@ YOUTUBE_REGEX = re.compile(
     r'(https?://)?(www\.)?(youtube\.com|youtu\.be)/(watch\?v=|shorts/|embed/)?([a-zA-Z0-9_-]+)'
 )
 
-# تعريف الـ FILTER لتفادي خطأ ImportError في bot.py
 YOUTUBE_FILTER = None
 
 class DownloadTooLarge(Exception):
@@ -37,28 +36,37 @@ def get_youtube_info(url: str):
         'skip_download': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'ios', 'web'],
-                'player_skip': ['configs', 'webpage'],
+                'player_client': ['ios', 'android_creator', 'android'],
+                'player_skip': ['webpage', 'configs'],
             }
         },
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-        if not info:
-            raise ValueError("Could not extract info")
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if not info:
+                raise ValueError("Could not extract info")
+                
+            duration = info.get('duration', 0) or 0
+            minutes, seconds = divmod(int(duration), 60)
             
-        duration = info.get('duration', 0) or 0
-        minutes, seconds = divmod(int(duration), 60)
-        
+            return {
+                "title": info.get('title') or "فيديو يوتيوب",
+                "uploader": info.get('uploader') or info.get('channel') or "غير معروف",
+                "duration_string": f"{minutes:02d}:{seconds:02d}",
+                "view_count_formatted": format_views(info.get('view_count')),
+                "thumbnail": info.get('thumbnail'),
+            }
+    except Exception:
+        # خيار احتياطي في حال تم حظر المعاينة لجلب عنوان افتراضي
         return {
-            "title": info.get('title') or "فيديو يوتيوب",
-            "uploader": info.get('uploader') or info.get('channel') or "غير معروف",
-            "duration_string": f"{minutes:02d}:{seconds:02d}",
-            "view_count_formatted": format_views(info.get('view_count')),
-            "thumbnail": info.get('thumbnail'),
+            "title": "فيديو يوتيوب",
+            "uploader": "غير معروف",
+            "duration_string": "00:00",
+            "view_count_formatted": "0",
+            "thumbnail": None,
         }
 
 def download_youtube(url: str, mode: str = "video"):
@@ -72,10 +80,9 @@ def download_youtube(url: str, mode: str = "video"):
         'ignoreerrors': False,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'ios', 'web', 'mweb', 'tv'],
+                'player_client': ['ios', 'android_creator', 'android'],
                 'player_skip': ['webpage', 'configs'],
             }
         },
