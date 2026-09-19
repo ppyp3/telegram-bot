@@ -8,10 +8,12 @@ import yt_dlp
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
 from telegram.ext import filters
+from playwright.async_api import async_playwright
 
 logger = logging.getLogger(__name__)
 
 MAX_MEDIA_SIZE = 49 * 1024 * 1024
+COOKIES_FILE = os.path.join(os.path.dirname(__file__), 'cookies.txt')
 
 YOUTUBE_REGEX = re.compile(
     r'(https?://)?(www\.)?(youtube\.com|youtu\.be)/(watch\?v=|shorts/|embed/)?([a-zA-Z0-9_-]+)'
@@ -41,34 +43,69 @@ def format_views(views):
         return f"{int(views / 1_000)}K"
     return str(views)
 
+async def refresh_cookies_auto():
+    """توليد الكوكيز تلقائياً عبر المتصفح الخفي لتجاوز حظر التحميل"""
+    try:
+        logger.info("جاري استخراج كوكيز جديدة تلقائياً...")
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=['--no-sandbox', '--disable-setuid-sandbox']
+            )
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+            )
+            page = await context.new_page()
+            await page.goto("https://www.youtube.com", wait_until="networkidle")
+            await asyncio.sleep(2)
+            
+            cookies = await context.cookies()
+            await browser.close()
+
+            with open(COOKIES_FILE, "w", encoding="utf-8") as f:
+                f.write("# Netscape HTTP Cookie File\n")
+                for c in cookies:
+                    domain = c['domain']
+                    flag = "TRUE" if domain.startswith(".") else "FALSE"
+                    path = c['path']
+                    secure = "TRUE" if c.get('secure') else "FALSE"
+                    expires = int(c.get('expires', 0))
+                    name = c['name']
+                    value = c['value']
+                    f.write(f"{domain}\t{flag}\t{path}\t{secure}\t{expires}\t{name}\t{value}\n")
+                    
+        logger.info("تم إنشاء وحفظ ملف الكوكيز بنجاح!")
+    except Exception as e:
+        logger.error(f"خطأ أثناء توليد الكوكيز: {e}")
+
 def get_youtube_options(download=False, outtmpl=None):
-    """إعدادات متقدمة لتجاوز حظر 'The page needs to be reloaded' وجميع أنواع الحظر"""
     opts = {
         'quiet': True,
         'no_warnings': True,
         'skip_download': not download,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        
-        # استخدام عدة عملاء للالتفاف على حظر يوتيوب للويب
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'ios', 'mweb', 'tv'],
-                'player_skip': ['webpage', 'configs'],
-            }
-        },
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
         }
     }
+
+    if os.path.exists(COOKIES_FILE):
+        opts['cookiefile'] = COOKIES_FILE
 
     if outtmpl:
         opts['outtmpl'] = outtmpl
         opts['writethumbnail'] = True
 
     return opts
+
+async def get_youtube_info_with_retry(url: str):
+    try:
+        return await asyncio.to_thread(get_youtube_info, url)
+    except Exception as e:
+        logger.warning(f"فشلت المحاولة الأولى لاستخراج البيانات، جاري تجديد الكوكيز... الخطأ: {e}")
+        await refresh_cookies_auto()
+        return await asyncio.to_thread(get_youtube_info, url)
 
 def get_youtube_info(url: str):
     ydl_opts = get_youtube_options(download=False)
@@ -90,6 +127,14 @@ def get_youtube_info(url: str):
             "thumbnail": info.get('thumbnail'),
             "url": url
         }
+
+async def download_youtube_media_with_retry(url: str, mode: str = "video"):
+    try:
+        return await asyncio.to_thread(download_youtube_media, url, mode)
+    except Exception as e:
+        logger.warning(f"فشل التحميل، جاري التجديد وإعادة المحاولة... الخطأ: {e}")
+        await refresh_cookies_auto()
+        return await asyncio.to_thread(download_youtube_media, url, mode)
 
 def download_youtube_media(url: str, mode: str = "video"):
     temp_dir = tempfile.mkdtemp()
@@ -143,7 +188,7 @@ async def handle_youtube_message(update, context):
     processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، جاري معالجة رابط يوتيوب...")
 
     try:
-        info = await asyncio.to_thread(get_youtube_info, url)
+        info = await get_youtube_info_with_retry(url)
 
         keyboard = [
             [InlineKeyboardButton("🎬 فيديو", callback_data="yt_video")],
@@ -203,7 +248,7 @@ async def handle_youtube_callback(query, context, session_data, mode):
     thumb_path = None
 
     try:
-        file_path, title, duration, thumb_path = await asyncio.to_thread(download_youtube_media, url, mode)
+        file_path, title, duration, thumb_path = await download_youtube_media_with_retry(url, mode)
 
         share_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔀 | شارك.", switch_inline_query=f"{title}")]
