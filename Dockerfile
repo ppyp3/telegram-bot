@@ -15,16 +15,20 @@ RUN apk update && apk add --no-cache \
 
 WORKDIR /app
 
-# إنشاء بيئة افتراضية لتثبيت مكتبات البايثون بداخلها بعيداً عن قيود النظام
+# إنشاء البيئة الافتراضية وتفعيلها
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# نسخ وتثبيت متطلبات البايثون داخل البيئة الافتراضية
+# نسخ ملف المتطلبات أولاً
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir --upgrade pip && \
-    pip3 install --no-cache-dir -r requirements.txt
 
-# نسخ باقي الملفات
+# تحديث أداة pip بمعزل عن الحزم
+RUN pip3 install --no-cache-dir --upgrade pip
+
+# تثبيت الحزم المطلوبة من الملف
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+# نسخ باقي ملفات المشروع
 COPY . .
 
 # إعداد ملف التشغيل
