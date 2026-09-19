@@ -44,24 +44,25 @@ def format_views(views):
     return str(views)
 
 async def refresh_cookies_auto():
-    """توليد وتحديث ملف الكوكيز تلقائياً عبر متصفح خفي لمنع الحظر"""
+    """توليد وتحديث ملف الكوكيز تلقائياً عبر المتصفح الخفي المثبت في السيرفر"""
     try:
-        logger.info("جاري تحديث ملف الكوكيز تلقائياً...")
+        logger.info("جاري تحديث ملف الكوكيز تلقائياً عبر Playwright...")
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(
+                headless=True,
+                args=['--no-sandbox', '--disable-setuid-sandbox']
+            )
             context = await browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             )
             page = await context.new_page()
             
-            # زيارة يوتيوب لتوليد كوكيز الجلسة
             await page.goto("https://www.youtube.com", wait_until="networkidle")
             await asyncio.sleep(3)
             
             cookies = await context.cookies()
             await browser.close()
 
-            # حفظ الكوكيز بتنسيق Netscape المعتمد لدى yt-dlp
             with open(COOKIES_FILE, "w", encoding="utf-8") as f:
                 f.write("# Netscape HTTP Cookie File\n")
                 for c in cookies:
@@ -97,12 +98,10 @@ def get_youtube_options(download=False, outtmpl=None):
     return opts
 
 async def get_youtube_info_with_retry(url: str):
-    """جلب معلومات الفيديو وإعادة تحديث الكوكيز تلقائياً في حال حدوث خطأ"""
     try:
         return await asyncio.to_thread(get_youtube_info, url)
     except Exception as e:
         if "not a bot" in str(e).lower() or not os.path.exists(COOKIES_FILE):
-            # توليد كوكيز جديدة وإعادة المحاولة
             await refresh_cookies_auto()
             return await asyncio.to_thread(get_youtube_info, url)
         raise e
