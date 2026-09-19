@@ -1,6 +1,6 @@
 instaloader>=4.14,<5
 python-telegram-bot
 requests
-yt-dlp>=2024.08.06
+yt-dlp
 ffmpeg-python
 playwright
