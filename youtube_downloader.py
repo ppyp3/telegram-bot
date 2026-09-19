@@ -213,45 +213,48 @@ async def handle_youtube_callback(query, context, session_data, mode):
     try:
         file_path, title, duration, thumb_path = await asyncio.to_thread(download_youtube_media, url, mode)
 
-        # زر شارك المشاركة المباشرة (Switch Inline Query)
+        # زر شارك المشاركة المباشرة
         share_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔀 | شارك.", switch_inline_query=f"{title}")]
         ])
 
-        if mode in ["yt_audio", "yt_voice"]:
-            if mode == "yt_voice":
-                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
-                with open(file_path, 'rb') as voice_file:
-                    await context.bot.send_voice(
-                        chat_id=chat_id,
-                        voice=voice_file,
-                        caption="- @G66Gbot",
-                        duration=int(duration),
-                        reply_markup=share_keyboard
-                    )
-            else:
-                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
-                with open(file_path, 'rb') as audio_file:
-                    thumb_file = open(thumb_path, 'rb') if thumb_path and os.path.exists(thumb_path) else None
-                    
-                    # استخراج حجم الملف بالـ MB للتوضيح بالكابشن مثل الصورة
-                    file_size_mb = f"{os.path.getsize(file_path) / (1024 * 1024):.1f}MB"
-                    minutes, seconds = divmod(int(duration), 60)
-                    time_str = f"{minutes:02d}:{seconds:02d}"
+        # حساب حجم الملف بالـ MB وتنسيق الوقت
+        file_size_mb = f"{os.path.getsize(file_path) / (1024 * 1024):.1f}MB"
+        minutes, seconds = divmod(int(duration), 60)
+        time_str = f"{minutes:02d}:{seconds:02d}"
+        
+        # التنسيق الموحد للكابشن مثل الصورة بالضبط
+        formatted_caption = f"@G66Gbot - {time_str}, {file_size_mb}"
 
-                    await context.bot.send_audio(
-                        chat_id=chat_id,
-                        audio=audio_file,
-                        title=title,
-                        performer="@G66Gbot",
-                        duration=int(duration),
-                        thumbnail=thumb_file,
-                        caption=f"@G66Gbot - {time_str}, {file_size_mb}",
-                        reply_markup=share_keyboard
-                    )
-                    
-                    if thumb_file:
-                        thumb_file.close()
+        if mode == "yt_voice":
+            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
+            with open(file_path, 'rb') as voice_file:
+                await context.bot.send_voice(
+                    chat_id=chat_id,
+                    voice=voice_file,
+                    caption=formatted_caption,
+                    duration=int(duration),
+                    reply_markup=share_keyboard
+                )
+
+        elif mode == "yt_audio":
+            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
+            with open(file_path, 'rb') as audio_file:
+                thumb_file = open(thumb_path, 'rb') if thumb_path and os.path.exists(thumb_path) else None
+
+                await context.bot.send_audio(
+                    chat_id=chat_id,
+                    audio=audio_file,
+                    title=title,
+                    performer="@G66Gbot",
+                    duration=int(duration),
+                    thumbnail=thumb_file,
+                    caption=formatted_caption,
+                    reply_markup=share_keyboard
+                )
+                
+                if thumb_file:
+                    thumb_file.close()
 
         else:  # فيديو
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
@@ -259,7 +262,7 @@ async def handle_youtube_callback(query, context, session_data, mode):
                 await context.bot.send_video(
                     chat_id=chat_id,
                     video=video_file,
-                    caption="- @G66Gbot",
+                    caption=formatted_caption,
                     duration=int(duration),
                     reply_markup=share_keyboard
                 )
