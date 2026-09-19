@@ -44,9 +44,9 @@ def format_views(views):
     return str(views)
 
 async def refresh_cookies_auto():
-    """توليد الكوكيز تلقائياً عبر المتصفح الخفي لتجاوز حظر التحميل"""
+    """توليد الكوكيز تلقائياً عبر Playwright عند حدوث حظر"""
     try:
-        logger.info("جاري استخراج كوكيز جديدة تلقائياً...")
+        logger.info("جاري تحديث ملف الكوكيز تلقائياً عبر Playwright...")
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=True,
@@ -74,9 +74,9 @@ async def refresh_cookies_auto():
                     value = c['value']
                     f.write(f"{domain}\t{flag}\t{path}\t{secure}\t{expires}\t{name}\t{value}\n")
                     
-        logger.info("تم إنشاء وحفظ ملف الكوكيز بنجاح!")
+        logger.info("تم تحديث الكوكيز بنجاح!")
     except Exception as e:
-        logger.error(f"خطأ أثناء توليد الكوكيز: {e}")
+        logger.error(f"فشل تحديث الكوكيز تلقائياً: {e}")
 
 def get_youtube_options(download=False, outtmpl=None):
     opts = {
@@ -85,6 +85,13 @@ def get_youtube_options(download=False, outtmpl=None):
         'skip_download': not download,
         'nocheckcertificate': True,
         'geo_bypass': True,
+        # توجيه yt-dlp لاستخدام عميل Android/iOS وتجنب طلب صفحات الويب المباشرة
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'ios', 'mweb', 'tv'],
+                'player_skip': ['webpage', 'configs'],
+            }
+        },
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
         }
@@ -103,7 +110,7 @@ async def get_youtube_info_with_retry(url: str):
     try:
         return await asyncio.to_thread(get_youtube_info, url)
     except Exception as e:
-        logger.warning(f"فشلت المحاولة الأولى لاستخراج البيانات، جاري تجديد الكوكيز... الخطأ: {e}")
+        logger.warning(f"حدث خطأ أثناء الفحص، جاري تجديد الكوكيز وإعادة المحاولة... الخطأ: {e}")
         await refresh_cookies_auto()
         return await asyncio.to_thread(get_youtube_info, url)
 
@@ -132,7 +139,7 @@ async def download_youtube_media_with_retry(url: str, mode: str = "video"):
     try:
         return await asyncio.to_thread(download_youtube_media, url, mode)
     except Exception as e:
-        logger.warning(f"فشل التحميل، جاري التجديد وإعادة المحاولة... الخطأ: {e}")
+        logger.warning(f"حدث خطأ أثناء التحميل، جاري التجديد وإعادة المحاولة... الخطأ: {e}")
         await refresh_cookies_auto()
         return await asyncio.to_thread(download_youtube_media, url, mode)
 
