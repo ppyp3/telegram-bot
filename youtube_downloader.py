@@ -11,6 +11,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from pathlib import Path
 
+import requests  # تمت إضافة مكتبة الـ requests للاتصال بالـ API الجديد
 import yt_dlp
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
@@ -97,32 +98,6 @@ def format_views(views):
     return str(views)
 
 
-def _ydl_base_options():
-    # إعدادات دائمية تستخدم المصادقة الرسمية OAuth2 وعملاء أندرويد لتجاوز الحظر نهائياً
-    options = {
-        "quiet": True,
-        "no_warnings": True,
-        "nocheckcertificate": True,
-        "geo_bypass": True,
-        "noplaylist": True,
-        "ignoreconfig": True,
-        "username": "oauth2",  # تفعيل المصادقة الدائمة لتجنب حظر السيرفرات
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["android", "tv", "mweb"],
-            }
-        },
-        "http_headers": {
-            "User-Agent": (
-                "Mozilla/5.0 (Linux; Android 14; K) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/125.0.0.0 Mobile Safari/537.36"
-            ),
-        },
-    }
-    return options
-
-
 def get_youtube_info(url: str):
     api_key = os.getenv(YOUTUBE_API_KEY_VARIABLE)
     if not api_key:
@@ -172,64 +147,66 @@ def get_youtube_info(url: str):
 
 
 def download_youtube_media(url: str, mode: str = "video"):
+    """
+    تم تعديل دالة التحميل لاستخدام الـ API الجديد (p.savenow.to) 
+    باستخدام مفتاح `DOWNLOAD_API_KEY` لتجنب حظر السيرفرات تماماً.
+    """
+    download_api_key = os.getenv("DOWNLOAD_API_KEY")
+    if not download_api_key:
+        raise RuntimeError("DOWNLOAD_API_KEY is not configured in environment variables")
+
+    # تحديد الصيغة بناءً على خيار المستخدم (فيديو أو صوت)
+    format_type = "mp3" if mode in ["audio", "yt_audio", "yt_voice"] else "mp4"
+    api_url = "https://p.savenow.to/api/v2/download"
+    
+    params = {
+        "format": format_type,
+        "url": url,
+        "apikey": download_api_key
+    }
+
     temp_dir = tempfile.mkdtemp()
-    outtmpl = os.path.join(temp_dir, "%(title)s.%(ext)s")
-    ydl_opts = _ydl_base_options()
-    ydl_opts.update({"outtmpl": outtmpl, "writethumbnail": True})
-
-    if mode in ["audio", "yt_audio", "yt_voice"]:
-        ydl_opts.update(
-            {
-                "format": "bestaudio/best",
-                "postprocessors": [
-                    {
-                        "key": "FFmpegExtractAudio",
-                        "preferredcodec": "mp3",
-                        "preferredquality": "192",
-                    },
-                    {"key": "FFmpegThumbnailsConvertor", "format": "jpg"},
-                ],
-            }
-        )
-    else:
-        ydl_opts.update(
-            {
-                "format": "best",
-            }
-        )
-
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+        # طلب رابط التحميل المباشر من الـ API الخارجي
+        response = requests.get(api_url, params=params, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        
+        # استخراج رابط التحميل المباشر من استجابة الـ API
+        direct_download_url = data.get("url") or data.get("download_url") or data.get("link")
+        if not direct_download_url:
+            raise ValueError("لم يتم العثور على رابط التحميل المباشر في استجابة الـ API.")
 
-        title = info.get("title", "فيديو يوتيوب")
-        duration = info.get("duration", 0) or 0
-        media_files = [
-            path
-            for path in Path(temp_dir).glob("*")
-            if path.suffix.lower() in [".mp3", ".mp4", ".m4a", ".webm", ".ogg", ".mkv"]
-        ]
-        if not media_files:
-            raise FileNotFoundError("لم يتم العثور على الملف المحمل.")
+        # تحميل الملف الفعلي من الرابط المباشر المستلم
+        suffix = ".mp3" if format_type == "mp3" else ".mp4"
+        with requests.get(direct_download_url, stream=True, timeout=60) as media_resp:
+            media_resp.raise_for_status()
+            
+            content_length = media_resp.headers.get("Content-Length")
+            if content_length and int(content_length) > MAX_MEDIA_SIZE:
+                raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
 
-        preferred_suffix = ".mp3" if mode in ["audio", "yt_audio", "yt_voice"] else ".mp4"
-        file_path = next((path for path in media_files if path.suffix.lower() == preferred_suffix), media_files[0])
-        thumb_path = next(
-            (
-                path
-                for path in Path(temp_dir).glob("*")
-                if path.suffix.lower() in [".jpg", ".jpeg", ".png"]
-            ),
-            None,
-        )
+            file_path = Path(temp_dir) / f"media{suffix}"
+            downloaded_size = 0
+            
+            with open(file_path, "wb") as f:
+                for chunk in media_resp.iter_content(chunk_size=128 * 1024):
+                    if chunk:
+                        downloaded_size += len(chunk)
+                        if downloaded_size > MAX_MEDIA_SIZE:
+                            raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
+                        f.write(chunk)
 
-        if file_path.stat().st_size > MAX_MEDIA_SIZE:
-            raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
+        # معلومات تقريبية للملف
+        title = data.get("title", "فيديو يوتيوب")
+        duration = int(data.get("duration", 180))
+        thumb_path = None
 
         return file_path, title, duration, thumb_path
+
     except Exception as e:
         print("=" * 40)
-        print("❌ [DEBUG ERROR] حدث خطأ أثناء تحميل يوتيوب:")
+        print("❌ [DEBUG ERROR] حدث خطأ أثناء تحميل يوتيوب عبر الـ API:")
         traceback.print_exc()
         print("=" * 40)
         shutil.rmtree(temp_dir, ignore_errors=True)
