@@ -1,6 +1,7 @@
 import logging
 from urllib.parse import urlparse
 import requests
+import re
 from telegram import Update, InputMediaPhoto
 from telegram.constants import ChatAction
 from media_helper import download_media, request_headers
@@ -18,25 +19,16 @@ def is_valid_pinterest_url(url):
 def fetch_pinterest_data(url):
     try:
         headers = request_headers()
-        headers["Accept"] = "application/json, text/javascript, */*; q=0.01"
-        headers["X-Requested-With"] = "XMLHttpRequest"
-
-        # إذا كان الرابط المختصر pin.it، نقوم بفك الروابط القصيرة أولاً للحصول على الرابط الأصلي
+        
+        # فك الروابط المختصرة pin.it
         if "pin.it" in url:
             with requests.get(url, headers=headers, allow_redirects=True, timeout=(5, 15)) as resp:
                 url = resp.url
 
-        # استخدام API عام مجاني ومستقر لجلب تفاصيل بينترست (فيديو أو صور)
-        api_url = f"https://www.pinterest._/resource/PinResource/get/?source_url={url}&data={%7B%22id%22:%22%22,%22field_set_key%22:%22detailed%22%7D"
-        # بديل api موثوق للعموم أو استخراج مباشر باستخدام الـ scraper البسيط
-        
-        # سنستخدم طريقة دقيقة وموثوقة عبر الـ scraping السريع لصفحة بينترست لاستخراج روابط الصور أو الفيديو
         with requests.get(url, headers=headers, timeout=(8, 20)) as response:
             response.raise_for_status()
             html_content = response.text
 
-        import re
-        
         # البحث عن روابط الفيديو (mp4)
         video_match = re.search(r'"contentUrl"\s*:\s*"([^"]+\.mp4[^"]*)"', html_content)
         if not video_match:
@@ -47,20 +39,17 @@ def fetch_pinterest_data(url):
             video_url = video_url.replace(r'\u0026', '&')
             return {"type": "video", "url": video_url}
 
-        # البحث عن الصور (عالية الدقة)
-        images = []
-        # البحث عن صور الـ originals أو العادية
+        # البحث عن الصور بجودة عالية
         img_matches = re.findall(r'https?://i\.pinimg\.com/originals/[^"\'\s]+', html_content)
         if not img_matches:
             img_matches = re.findall(r'https?://i\.pinimg\.com/736x/[^"\'\s]+', html_content)
 
-        # إزالة التكرار مع الحفاظ على الترتيب
+        # إزالة التكرار
         seen = set()
         unique_images = [img for img in img_matches if not (img in seen or seen.add(img))]
 
         if unique_images:
-            # إذا وجدت صور متعددة أو صورة واحدة
-            return {"type": "images", "urls": unique_images[:10]} # حد أقصى 10 صور كألبوم
+            return {"type": "images", "urls": unique_images[:10]}
 
         return None
 
@@ -105,7 +94,6 @@ async def handle_pinterest_message(update: Update, context):
             image_urls = data.get("urls", [])
             
             if len(image_urls) == 1:
-                # صورة واحدة فقط
                 img_url = image_urls[0]
                 local_path = download_media(img_url, ".jpg")
                 try:
@@ -117,7 +105,6 @@ async def handle_pinterest_message(update: Update, context):
                     if local_path:
                         local_path.unlink(missing_ok=True)
             else:
-                # عدة صور (ألبوم ميديا جروب)
                 await context.bot.send_chat_action(chat_id=message.chat_id, action=ChatAction.UPLOAD_PHOTO)
                 media_group = []
                 for idx, img_url in enumerate(image_urls):
