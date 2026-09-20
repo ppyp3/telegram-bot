@@ -216,11 +216,10 @@ def download_youtube_media(url: str, mode: str = "video"):
             }
         )
     else:
-        # صيغة آمنة ومرنة تتجاوز خطأ الصيغ الغير متوفرة تماماً
+        # الحل النهائي لخطأ الصيغة غير المتوفرة باستخدام التنسيق العام الآمن
         ydl_opts.update(
             {
-                "format": "best/bestvideo+bestaudio",
-                "merge_output_format": "mp4",
+                "format": "best",
             }
         )
 
