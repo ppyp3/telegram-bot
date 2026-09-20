@@ -19,9 +19,6 @@ from telegram.ext import filters
 logger = logging.getLogger(__name__)
 
 MAX_MEDIA_SIZE = 49 * 1024 * 1024
-COOKIES_FILE = os.path.join(os.path.dirname(__file__), "cookies.txt")
-VOLUME_COOKIES_FILE = "/cookies/cookies.txt"
-COOKIES_VARIABLE = "YOUTUBE_COOKIES"
 YOUTUBE_API_KEY_VARIABLE = "YOUTUBE_API_KEY"
 
 MAX_CONCURRENT_DOWNLOADS = 2
@@ -100,51 +97,28 @@ def format_views(views):
     return str(views)
 
 
-def get_cookies_file():
-    for candidate in (VOLUME_COOKIES_FILE, COOKIES_FILE):
-        if os.path.isfile(candidate):
-            return candidate
-
-    cookies_text = os.getenv(COOKIES_VARIABLE)
-    if not cookies_text:
-        return None
-
-    runtime_path = os.path.join(tempfile.gettempdir(), "youtube-cookies.txt")
-    try:
-        with open(runtime_path, "w", encoding="utf-8", newline="\n") as cookies_file:
-            cookies_file.write(cookies_text)
-        os.chmod(runtime_path, 0o600)
-        return runtime_path
-    except OSError:
-        logger.exception("Unable to create the runtime cookie file")
-        return None
-
-
 def _ydl_base_options():
+    # إعدادات متقدمة تعمل بدون كوكيز نهائياً وتتجاوز الحظر عبر عملاء أندرويد وتلفاز
     options = {
         "quiet": True,
         "no_warnings": True,
         "nocheckcertificate": True,
         "geo_bypass": True,
         "noplaylist": True,
+        "ignoreconfig": True,
         "extractor_args": {
             "youtube": {
-                "player_client": ["android", "web"],
+                "player_client": ["android", "tv", "mweb"],
             }
         },
         "http_headers": {
             "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "Mozilla/5.0 (Linux; Android 14; K) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/125.0.0.0 Safari/537.36"
+                "Chrome/125.0.0.0 Mobile Safari/537.36"
             ),
         },
     }
-    
-    cookies_file = get_cookies_file()
-    if cookies_file:
-        options["cookiefile"] = cookies_file
-        
     return options
 
 
@@ -217,6 +191,7 @@ def download_youtube_media(url: str, mode: str = "video"):
             }
         )
     else:
+        # استخدام التنسيق المرن الذي يتجنب مشاكل الصيغ غير المتاحة
         ydl_opts.update(
             {
                 "format": "best",
@@ -253,7 +228,6 @@ def download_youtube_media(url: str, mode: str = "video"):
 
         return file_path, title, duration, thumb_path
     except Exception as e:
-        # نظام كشف الأخطاء المفصل: يطبع اسم الخطأ ورقم السطر بوضوح في الـ Logs
         print("=" * 40)
         print("❌ [DEBUG ERROR] حدث خطأ أثناء تحميل يوتيوب:")
         traceback.print_exc()
