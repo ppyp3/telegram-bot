@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import tempfile
+import traceback
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from pathlib import Path
@@ -216,7 +217,6 @@ def download_youtube_media(url: str, mode: str = "video"):
             }
         )
     else:
-        # الحل النهائي لخطأ الصيغة غير المتوفرة باستخدام التنسيق العام الآمن
         ydl_opts.update(
             {
                 "format": "best",
@@ -252,7 +252,12 @@ def download_youtube_media(url: str, mode: str = "video"):
             raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
 
         return file_path, title, duration, thumb_path
-    except Exception:
+    except Exception as e:
+        # نظام كشف الأخطاء المفصل: يطبع اسم الخطأ ورقم السطر بوضوح في الـ Logs
+        print("=" * 40)
+        print("❌ [DEBUG ERROR] حدث خطأ أثناء تحميل يوتيوب:")
+        traceback.print_exc()
+        print("=" * 40)
         shutil.rmtree(temp_dir, ignore_errors=True)
         raise
 
