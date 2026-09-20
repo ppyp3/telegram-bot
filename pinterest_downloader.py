@@ -28,7 +28,7 @@ def is_valid_pinterest_url(text):
     url_lower = url.lower()
     return "pinterest." in url_lower or "pin.it/" in url_lower
 
-def fetch_pinterest_thumbnail(raw_url):
+def fetch_pinterest_media(raw_url):
     try:
         url = extract_url(raw_url)
         headers = request_headers()
@@ -40,26 +40,37 @@ def fetch_pinterest_thumbnail(raw_url):
 
         with requests.get(url, headers=headers, timeout=(8, 20)) as response:
             response.raise_for_status()
-            soup = BeautifulSoup(response.text, 'html.parser')
+            html_content = response.text
+            soup = BeautifulSoup(html_content, 'html.parser')
 
-            # 1. البحث عن وسوم og:image أو twitter:image (صورة المعاينة الرسمية للرابط)
-            og_image = soup.find('meta', property='og:image')
-            if og_image and og_image.get('content'):
-                return og_image['content']
+        # 1. البحث أولاً عما إذا كان الرابط يحتوي على فيديو (عبر وسوم og:video أو البحث عن روابط mp4)
+        video_match = re.search(r'"contentUrl"\s*:\s*"([^"]+\.mp4[^"]*)"', html_content)
+        if not video_match:
+            og_video = soup.find('meta', property='og:video')
+            if og_video and og_video.get('content'):
+                video_url = og_video['content']
+                return {"type": "video", "url": video_url}
+            
+            video_match = re.search(r'https?://[^"\s]+\.mp4[^"\s]*', html_content)
 
-            twitter_image = soup.find('meta', name='twitter:image')
-            if twitter_image and twitter_image.get('content'):
-                return twitter_image['content']
+        if video_match:
+            video_url = video_match.group(1) if '"contentUrl"' in video_match.string else video_match.group(0)
+            video_url = video_url.replace(r'\u0026', '&')
+            return {"type": "video", "url": video_url}
 
-            # 2. كاحتياط، البحث عن أول صورة واضحة داخل الصفحة
-            img_tag = soup.find('img', src=True)
-            if img_tag and 'pinimg.com' in img_tag['src']:
-                return img_tag['src']
+        # 2. إذا لم يكن فيديو، نبحث عن صورة المعاينة (og:image)
+        og_image = soup.find('meta', property='og:image')
+        if og_image and og_image.get('content'):
+            return {"type": "image", "url": og_image['content']}
+
+        twitter_image = soup.find('meta', name='twitter:image')
+        if twitter_image and twitter_image.get('content'):
+            return {"type": "image", "url": twitter_image['content']}
 
         return None
 
     except Exception:
-        logger.exception("Error fetching Pinterest thumbnail")
+        logger.exception("Error fetching Pinterest media")
         return None
 
 async def handle_pinterest_message(update: Update, context):
@@ -71,27 +82,42 @@ async def handle_pinterest_message(update: Update, context):
     if not is_valid_pinterest_url(raw_text):
         return
 
-    processing_msg = await message.reply_text("⏰┇جاري جلب الصورة من بينترست...")
+    processing_msg = await message.reply_text("⏰┇جاري معالجة المحتوى من بينترست...")
 
     try:
-        img_url = fetch_pinterest_thumbnail(raw_text)
+        media_data = fetch_pinterest_media(raw_text)
 
-        if not img_url:
-            await processing_msg.edit_text("❌ لم يتم العثور على صورة قابلة للتحميل في هذا الرابط.")
+        if not media_data:
+            await processing_msg.edit_text("❌ لم يتم العثور على محتوى قابل للتحميل في هذا الرابط.")
             return
 
-        # تنزيل وإرسال الصورة المصغرة بدقة وثبات
-        local_path = download_media(img_url, ".jpg")
+        media_type = media_data.get("type")
+        media_url = media_data.get("url")
 
-        try:
-            await context.bot.send_chat_action(chat_id=message.chat_id, action=ChatAction.UPLOAD_PHOTO)
-            with open(local_path, "rb") as img_file:
-                await message.reply_photo(photo=img_file, caption="- @G66Gbot")
-            await processing_msg.delete()
-        finally:
-            if local_path:
-                local_path.unlink(missing_ok=True)
+        if media_type == "video":
+            local_path = download_media(media_url, ".mp4")
+            try:
+                await context.bot.send_chat_action(chat_id=message.chat_id, action=ChatAction.UPLOAD_VIDEO)
+                with open(local_path, "rb") as vid_file:
+                    await message.reply_video(video=vid_file, caption="- @G66Gbot")
+                await processing_msg.delete()
+            finally:
+                if local_path:
+                    local_path.unlink(missing_ok=True)
+
+        elif media_type == "image":
+            local_path = download_media(media_url, ".jpg")
+            try:
+                await context.bot.send_chat_action(chat_id=message.chat_id, action=ChatAction.UPLOAD_PHOTO)
+                with open(local_path, "rb") as img_file:
+                    await message.reply_photo(photo=img_file, caption="- @G66Gbot")
+                await processing_msg.delete()
+            finally:
+                if local_path:
+                    local_path.unlink(missing_ok=True)
+        else:
+            await processing_msg.edit_text("❌ عذراً، لم نتمكن من تحديد نوع المحتوى.")
 
     except Exception:
         logger.exception("Error in handle_pinterest_message")
-        await processing_msg.edit_text("⚠️ حدث خطأ أثناء تحميل الصورة، جرب رابطاً آخر.")
+        await processing_msg.edit_text("⚠️ حدث خطأ أثناء التحميل، جرب رابطاً آخر.")
