@@ -36,12 +36,11 @@ def is_valid_youtube_url(url: str) -> bool:
 
 def get_youtube_info(url: str):
     """
-    جلب معلومات الفيديو عبر عدة مصادر API بديلة لضمان عدم حدوث أي حظر أو توقف
+    جلب معلومات الفيديو عبر عدة مصادر API بديلة لتجنب حظر يوتيوب نهائياً
     """
-    # المصدر الأول
     try:
         api_url = "https://apis.davidcyriltech.my.id/youtube/mp4"
-        response = requests.get(api_url, params={"url": url}, timeout=10)
+        response = requests.get(api_url, params={"url": url}, timeout=15)
         response.raise_for_status()
         data = response.json()
         
@@ -60,10 +59,9 @@ def get_youtube_info(url: str):
     except Exception:
         pass
 
-    # المصدر الثاني الاحتياطي
     try:
         backup_api = f"https://kaiz-apis.gleeze.com/api/ytdl?url={url}"
-        resp = requests.get(backup_api, timeout=10)
+        resp = requests.get(backup_api, timeout=15)
         resp.raise_for_status()
         res = resp.json()
         dl_url = res.get("downloadUrl", res.get("url", ""))
@@ -81,27 +79,6 @@ def get_youtube_info(url: str):
     except Exception:
         pass
 
-    # المصدر الثالث الاحتياطي (عبر yt-dlp بدون بروكسي مبدئياً)
-    try:
-        ydl_opts = {'quiet': True, 'no_warnings': True, 'skip_download': True}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            if info:
-                duration = info.get('duration', 0) or 0
-                minutes, seconds = divmod(int(duration), 60)
-                return {
-                    "title": info.get('title') or "فيديو يوتيوب",
-                    "uploader": info.get('uploader') or info.get('channel') or "غير معروف",
-                    "duration": duration,
-                    "duration_string": f"{minutes:02d}:{seconds:02d}",
-                    "view_count_formatted": "1K",
-                    "thumbnail": info.get('thumbnail'),
-                    "url": url,
-                    "direct_download_url": None
-                }
-    except Exception:
-        pass
-
     return {
         "title": "فيديو يوتيوب",
         "uploader": "قناة يوتيوب",
@@ -116,10 +93,10 @@ def get_youtube_info(url: str):
 def download_youtube_media(url: str, mode: str = "video", direct_url: str = None):
     temp_dir = tempfile.mkdtemp()
     
-    # تحميل مباشر من الرابط إن توفر
+    # محاولة التحميل المباشر من الـ API أولاً لتفادي مشكلة Sign in to confirm you're not a bot تماماً
     if direct_url:
         try:
-            r = requests.get(direct_url, stream=True, timeout=30)
+            r = requests.get(direct_url, stream=True, timeout=45)
             r.raise_for_status()
             ext = "mp3" if mode in ["audio", "yt_audio", "yt_voice"] else "mp4"
             file_path = Path(temp_dir) / f"media.{ext}"
@@ -137,14 +114,17 @@ def download_youtube_media(url: str, mode: str = "video", direct_url: str = None
         except Exception:
             pass
 
-    # الطريقة الاحتياطية باستخدام yt-dlp مع البروكسي الخاص بك
-    proxy_url = "http://6ll22fgrjd4i:f5lf2f8bsp73ghd@195.63.31.50:3129"
+    # إذا لم ينجح الرابط المباشر، نستخدم yt-dlp مع إعدادات تجاوز الحظر (player_client)
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        'proxy': proxy_url,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['tv', 'android'],
+            }
+        },
         'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
     }
 
