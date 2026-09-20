@@ -13,16 +13,21 @@ from telegram.ext import filters
 
 logger = logging.getLogger(__name__)
 
-# --- دالة التحديث التلقائي لمكتبة yt-dlp ---
-def auto_update_ytdlp():
+# --- دالة تثبيت ffmpeg و yt-dlp تلقائياً في بيئة الاستضافة ---
+def setup_environment():
     try:
-        logger.info("🔄 جاري التحقق من تحديثات yt-dlp...")
+        logger.info("🔄 جاري التحقق من التحديثات وتثبيت الأدوات اللازمة...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"])
-        logger.info("✅ تم تحديث yt-dlp بنجاح!")
+        
+        # محاولة تثبيت ffmpeg إذا لم يكن موجوداً في النظام (يعمل على بيئات Linux/Railway)
+        if sys.platform.startswith("linux"):
+            os.system("apt-get update && apt-get install -y ffmpeg")
+            
+        logger.info("✅ تم إعداد البيئة بنجاح!")
     except Exception as e:
-        logger.error(f"❌ فشل تحديث yt-dlp: {e}")
+        logger.error(f"❌ خطأ أثناء إعداد البيئة: {e}")
 
-auto_update_ytdlp()
+setup_environment()
 
 MAX_MEDIA_SIZE = 49 * 1024 * 1024
 
@@ -129,9 +134,10 @@ def download_youtube_media(url: str, mode: str = "video"):
             ],
         })
     else:
-        # استخدام صيغة جاهزة مدمجة مسبقاً لا تحتاج إلى ffmpeg لتجنب أخطاء الاستضافة
+        # استخدام الدمج الذكي والآمن بوجود ffmpeg
         ydl_opts.update({
-            'format': 'best[ext=mp4]/best',
+            'format': 'bestvideo+bestaudio/best',
+            'merge_output_format': 'mp4',
         })
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
