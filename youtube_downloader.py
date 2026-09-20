@@ -129,9 +129,9 @@ def download_youtube_media(url: str, mode: str = "video"):
             ],
         })
     else:
+        # استخدام صيغة جاهزة مدمجة مسبقاً لا تحتاج إلى ffmpeg لتجنب أخطاء الاستضافة
         ydl_opts.update({
-            'format': 'bestvideo+bestaudio/best',
-            'merge_output_format': 'mp4',
+            'format': 'best[ext=mp4]/best',
         })
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
