@@ -98,7 +98,7 @@ def format_views(views):
 
 
 def _ydl_base_options():
-    # إعدادات متقدمة تعمل بدون كوكيز نهائياً وتتجاوز الحظر عبر عملاء أندرويد وتلفاز
+    # إعدادات دائمية تستخدم المصادقة الرسمية OAuth2 وعملاء أندرويد لتجاوز الحظر نهائياً
     options = {
         "quiet": True,
         "no_warnings": True,
@@ -106,6 +106,7 @@ def _ydl_base_options():
         "geo_bypass": True,
         "noplaylist": True,
         "ignoreconfig": True,
+        "username": "oauth2",  # تفعيل المصادقة الدائمة لتجنب حظر السيرفرات
         "extractor_args": {
             "youtube": {
                 "player_client": ["android", "tv", "mweb"],
@@ -191,7 +192,6 @@ def download_youtube_media(url: str, mode: str = "video"):
             }
         )
     else:
-        # استخدام التنسيق المرن الذي يتجنب مشاكل الصيغ غير المتاحة
         ydl_opts.update(
             {
                 "format": "best",
