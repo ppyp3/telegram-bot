@@ -140,7 +140,6 @@ def _ydl_base_options():
         },
     }
     
-    # التحقق المباشر والواضح من ملف الكوكيز في الفوليوم أو المسارات الاحتياطية
     cookies_file = get_cookies_file()
     if cookies_file:
         options["cookiefile"] = cookies_file
@@ -217,9 +216,11 @@ def download_youtube_media(url: str, mode: str = "video"):
             }
         )
     else:
+        # استخدام خيار مرن يضمن توافر ودعم دمج الصيغ عبر ffmpeg
         ydl_opts.update(
             {
-                "format": "best",
+                "format": "bestvideo+bestaudio/best/best",
+                "merge_output_format": "mp4",
             }
         )
 
