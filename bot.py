@@ -6,8 +6,10 @@ import tempfile
 import time
 from pathlib import Path
 from urllib.parse import urlparse
+import re
 
 import requests
+from bs4 import BeautifulSoup
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -58,11 +60,72 @@ def is_valid_tiktok_url(url):
         hostname == "tiktok.com" or hostname.endswith(".tiktok.com")
     )
 
+def is_valid_pinterest_url(text):
+    if not text:
+        return False
+    parsed = urlparse(text.strip())
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    return "pinterest." in hostname or hostname == "pin.it" or hostname.endswith(".pin.it")
+
 def request_headers():
     return {
         "User-Agent": random.choice(USER_AGENTS),
         "Accept-Language": "en-US,en;q=0.9",
     }
+
+def upgrade_image_to_hd(img_url):
+    if not img_url:
+        return img_url
+    hd_url = re.sub(r'/(?:736x|564x|470x|236x|150x|originals)/', '/originals/', img_url)
+    return hd_url
+
+def fetch_pinterest_media(raw_url):
+    try:
+        url = raw_url.strip()
+        headers = request_headers()
+        
+        parsed = urlparse(url)
+        hostname = (parsed.hostname or "").lower().rstrip(".")
+        if "pin.it" in hostname:
+            with requests.get(url, headers=headers, allow_redirects=True, timeout=(5, 15)) as resp:
+                url = resp.url
+
+        with requests.get(url, headers=headers, timeout=(8, 20)) as response:
+            response.raise_for_status()
+            html_content = response.text
+            soup = BeautifulSoup(html_content, 'html.parser')
+
+        video_match = re.search(r'"contentUrl"\s*:\s*"([^"]+\.mp4[^"]*)"', html_content)
+        if not video_match:
+            og_video = soup.find('meta', property='og:video')
+            if og_video and og_video.get('content'):
+                return {"type": "video", "url": og_video['content']}
+            
+            video_match = re.search(r'https?://[^"\s]+\.mp4[^"\s]*', html_content)
+
+        if video_match:
+            video_url = video_match.group(1) if '"contentUrl"' in video_match.string else video_match.group(0)
+            video_url = video_url.replace(r'\u0026', '&')
+            return {"type": "video", "url": video_url}
+
+        img_url = None
+        og_image = soup.find('meta', property='og:image')
+        if og_image and og_image.get('content'):
+            img_url = og_image['content']
+        else:
+            twitter_image = soup.find('meta', name='twitter:image')
+            if twitter_image and twitter_image.get('content'):
+                img_url = twitter_image['content']
+
+        if img_url:
+            hd_img_url = upgrade_image_to_hd(img_url)
+            return {"type": "image", "url": hd_img_url}
+
+        return None
+
+    except Exception:
+        logger.exception("Error fetching Pinterest media")
+        return None
 
 def fetch_tiktok_data(url):
     try:
@@ -195,7 +258,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_msg = (
         f"✦ أهلاً بك ⦗ {user_name} ⦘ 🖤\n\n"
         f"▫︎ بوت التحميل السريع 📥\n"
-        f"▫︎ يوتيوب • تيك توك • إنستغرام\n\n"
+        f"▫︎ يوتيوب • تيك توك • إنستغرام • بينترست\n\n"
         f"⚡ أرسل الرابط الآن للبدء 🔻"
     )
 
@@ -246,8 +309,54 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     url = text.strip()
 
+    # معالجة روابط بينترست
+    if is_valid_pinterest_url(url):
+        processing_msg = await update.message.reply_text("⏰┇جاري جلب المحتوى من بينترست بأعلى دقة...")
+        try:
+            media_data = await asyncio.to_thread(fetch_pinterest_media, url)
+            if not media_data:
+                await processing_msg.edit_text("❌ لم يتم العثور على محتوى قابل للتحميل في هذا الرابط.")
+                return
+
+            media_type = media_data.get("type")
+            media_url = media_data.get("url")
+
+            if media_type == "video":
+                local_path = await asyncio.to_thread(download_media, media_url, ".mp4")
+                try:
+                    await context.bot.send_chat_action(
+                        chat_id=update.effective_chat.id,
+                        action=ChatAction.UPLOAD_VIDEO,
+                    )
+                    with local_path.open("rb") as vid_file:
+                        await update.message.reply_video(video=vid_file, caption="- @G66Gbot")
+                    await processing_msg.delete()
+                finally:
+                    if local_path:
+                        local_path.unlink(missing_ok=True)
+
+            elif media_type == "image":
+                local_path = await asyncio.to_thread(download_media, media_url, ".jpg")
+                try:
+                    await context.bot.send_chat_action(
+                        chat_id=update.effective_chat.id,
+                        action=ChatAction.UPLOAD_PHOTO,
+                    )
+                    with local_path.open("rb") as img_file:
+                        await update.message.reply_photo(photo=img_file, caption="- @G66Gbot")
+                    await processing_msg.delete()
+                finally:
+                    if local_path:
+                        local_path.unlink(missing_ok=True)
+            else:
+                await processing_msg.edit_text("❌ عذراً، لم نتمكن من تحديد نوع المحتوى.")
+        except Exception:
+            logger.exception("Error in Pinterest handling")
+            await processing_msg.edit_text("⚠️ حدث خطأ أثناء التحميل، جرب رابطاً آخر.")
+        return
+
     if not is_valid_tiktok_url(url):
-        await update.message.reply_text("❌ أرسل رابط تيك توك صحيحاً من فضلك.")
+        await update.message.reply_text("❌ أرسل رابط تيك توك أو بينترست صحيحاً من فضلك.")
         return
 
     processing_msg = await update.message.reply_text(
@@ -389,7 +498,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.answer()
 
-    # معالجة أزرار اليوتيوب
     if query.data in ["yt_video", "yt_audio", "yt_voice"]:
         chat_id = query.message.chat_id
         yt_sessions = context.application.bot_data.get("yt_sessions", {})
@@ -403,7 +511,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_youtube_callback(query, context, session, query.data)
         return
 
-    # معالجة أزرار التيك توك
     chat_id = query.message.chat_id
     sessions = context.application.bot_data.setdefault("download_sessions", {})
     session_key = (chat_id, query.message.message_id)
