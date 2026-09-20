@@ -13,13 +13,12 @@ from telegram.ext import filters
 
 logger = logging.getLogger(__name__)
 
-# --- دالة تثبيت ffmpeg و yt-dlp تلقائياً في بيئة الاستضافة ---
+# --- دالة إعداد البيئة وتثبيت الأدوات ---
 def setup_environment():
     try:
         logger.info("🔄 جاري التحقق من التحديثات وتثبيت الأدوات اللازمة...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"])
         
-        # محاولة تثبيت ffmpeg إذا لم يكن موجوداً في النظام (يعمل على بيئات Linux/Railway)
         if sys.platform.startswith("linux"):
             os.system("apt-get update && apt-get install -y ffmpeg")
             
@@ -120,7 +119,7 @@ def download_youtube_media(url: str, mode: str = "video"):
 
     if mode in ["audio", "yt_audio", "yt_voice"]:
         ydl_opts.update({
-            'format': 'bestaudio/best',
+            'format': 'bestaudio',
             'postprocessors': [
                 {
                     'key': 'FFmpegExtractAudio',
@@ -134,10 +133,9 @@ def download_youtube_media(url: str, mode: str = "video"):
             ],
         })
     else:
-        # استخدام الدمج الذكي والآمن بوجود ffmpeg
+        # استخدام الصيغة المباشرة والأكثر استقراراً لتجنب مشاكل الدمج والحظر
         ydl_opts.update({
-            'format': 'bestvideo+bestaudio/best',
-            'merge_output_format': 'mp4',
+            'format': 'best',
         })
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
