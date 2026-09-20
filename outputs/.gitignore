@@ -1,0 +1,5 @@
+# Authentication cookies must remain local to the server.
+cookies.txt
+# Python runtime artifacts
+__pycache__/
+*.py[cod]
