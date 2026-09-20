@@ -55,14 +55,17 @@ def format_views(views):
     return str(views)
 
 def get_youtube_options(download=False, outtmpl=None):
+    # استخدام المسار المطلق لضمان قراءة ملف الكوكيز بدون أخطاء في مسارات الاستضافة
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    cookies_path = os.path.join(base_dir, 'cookies.txt')
+
     opts = {
         'quiet': True,
         'no_warnings': True,
         'skip_download': not download,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        'cookiefile': 'cookies.txt',  # ملف الكوكيز لتجاوز الحظر
-        # التمويه كعميل أندرويد لتجاوز حظر Bot Check
+        'cookiefile': cookies_path,  
         'extractor_args': {
             'youtube': {
                 'player_client': ['android', 'ios', 'web'],
