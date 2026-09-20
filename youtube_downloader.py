@@ -61,8 +61,8 @@ def get_youtube_options(download=False, outtmpl=None):
         'skip_download': not download,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        'cookiefile': 'cookies.txt',  # <--- تفعيل ملف الكوكيز هنا لمنع الحظر
-        # التمويه كعميل أندرويد لتجاوز حظر Bot Check و Sign in to confirm
+        'cookiefile': 'cookies.txt',  # ملف الكوكيز لتجاوز الحظر
+        # التمويه كعميل أندرويد لتجاوز حظر Bot Check
         'extractor_args': {
             'youtube': {
                 'player_client': ['android', 'ios', 'web'],
@@ -130,10 +130,9 @@ def download_youtube_media(url: str, mode: str = "video"):
             ],
         })
     else:
-        # إجبار التحميل بصيغة mp4 لتشغيل الفيديو فوراً في تيليجرام
+        # استخدام أفضل صيغة مباشرة لتجنب مشاكل الدمج وغياب الفريموير
         ydl_opts.update({
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-            'merge_output_format': 'mp4',
+            'format': 'best',
         })
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -164,35 +163,30 @@ async def handle_youtube_message(update, context):
     try:
         info = await asyncio.to_thread(get_youtube_info, url)
 
+        # ترتيب الأزرار بالشكل المطلوب
         keyboard = [
-            [InlineKeyboardButton("🎬 فيديو", callback_data="yt_video")],
+            [InlineKeyboardButton("🎬 | مقطع فيديو.", callback_data="yt_video")],
             [
-                InlineKeyboardButton("🎧 ملف صوتي", callback_data="yt_audio"),
-                InlineKeyboardButton("🎙 بصمة صوتية", callback_data="yt_voice")
+                InlineKeyboardButton("🎙 | بصمة صوتية.", callback_data="yt_voice"),
+                InlineKeyboardButton("🎧 | ملف صوتي.", callback_data="yt_audio")
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
+        # جعل الرابط في نهاية النص لتظهر معاينة يوتيوب بالشكل الصحيح فوق النص
         caption = (
             f'🎬 <a href="{info["url"]}">{info["title"]}</a>\n'
             f'👤 {info["uploader"]}\n'
-            f'⏱ {info["duration_string"]} - 👁 {info["view_count_formatted"]}'
+            f'⏱ {info["duration_string"]} - 👁 {info["view_count_formatted"]}\n\n'
+            f'{info["url"]}'
         )
 
-        sent_msg = None
-        if info['thumbnail']:
-            sent_msg = await update.message.reply_photo(
-                photo=info['thumbnail'],
-                caption=caption,
-                parse_mode="HTML",
-                reply_markup=reply_markup
-            )
-        else:
-            sent_msg = await update.message.reply_text(
-                text=caption,
-                parse_mode="HTML",
-                reply_markup=reply_markup
-            )
+        sent_msg = await update.message.reply_text(
+            text=caption,
+            parse_mode="HTML",
+            disable_web_page_preview=False,
+            reply_markup=reply_markup
+        )
 
         sessions = context.application.bot_data.setdefault("yt_sessions", {})
         key = (sent_msg.chat_id, sent_msg.message_id)
