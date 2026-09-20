@@ -34,15 +34,6 @@ def is_valid_youtube_url(url: str) -> bool:
         return False
     return bool(YOUTUBE_REGEX.search(url.strip()))
 
-def format_views(views):
-    if not views:
-        return "631.9K"
-    if views >= 1_000_000:
-        return f"{views / 1_000_000:.1f}M"
-    elif views >= 1_000:
-        return f"{views / 1_000:.1f}K"
-    return str(views)
-
 def get_youtube_info(url: str):
     try:
         api_url = "https://apis.davidcyriltech.my.id/youtube/mp4"
@@ -99,6 +90,7 @@ def get_youtube_info(url: str):
 def download_youtube_media(url: str, mode: str = "video", direct_url: str = None):
     temp_dir = tempfile.mkdtemp()
     
+    # محاولة التحميل المباشر أولاً
     if direct_url:
         try:
             r = requests.get(direct_url, stream=True, timeout=45)
@@ -119,6 +111,7 @@ def download_youtube_media(url: str, mode: str = "video", direct_url: str = None
         except Exception:
             pass
 
+    # الطريقة الاحتياطية عبر yt-dlp
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
@@ -177,9 +170,9 @@ async def handle_youtube_message(update, context):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # تنسيق النص والعنوان ليطابق الصورة تماماً
+        # تنسيق النص بدون روابط لتجنب معاينة تيليجرام المزعجة ولتطابق الصورة تماماً[span_1](start_span)[span_1](end_span)
         caption = (
-            f'<a href="{info["url"]}"><b>{info["title"]}</b></a> 🎬\n'
+            f'{info["title"]}\n'
             f'👤 {info["uploader"]}\n'
             f'⏱ {info["duration_string"]} - 👁 {info["view_count_formatted"]}'
         )
@@ -189,13 +182,11 @@ async def handle_youtube_message(update, context):
             sent_msg = await update.message.reply_photo(
                 photo=info['thumbnail'],
                 caption=caption,
-                parse_mode="HTML",
                 reply_markup=reply_markup
             )
         else:
             sent_msg = await update.message.reply_text(
                 text=caption,
-                parse_mode="HTML",
                 reply_markup=reply_markup
             )
 
