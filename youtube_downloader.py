@@ -23,8 +23,6 @@ VOLUME_COOKIES_FILE = "/cookies/cookies.txt"
 COOKIES_VARIABLE = "YOUTUBE_COOKIES"
 YOUTUBE_API_KEY_VARIABLE = "YOUTUBE_API_KEY"
 
-# Keep expensive yt-dlp/FFmpeg work bounded during traffic spikes.  These values
-# deliberately favour bot stability over starting every download immediately.
 MAX_CONCURRENT_DOWNLOADS = 2
 DOWNLOAD_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 USER_DOWNLOAD_LOCKS = {}
@@ -54,7 +52,6 @@ def is_valid_youtube_url(url: str) -> bool:
 
 
 def extract_youtube_url(text: str) -> str:
-    """Return only the YouTube link when it is sent alongside other text."""
     match = YOUTUBE_REGEX.search(text or "")
     if not match:
         raise ValueError("Invalid YouTube URL")
@@ -69,7 +66,6 @@ def get_youtube_video_id(url: str) -> str:
 
 
 def parse_iso8601_duration(value: str) -> int:
-    """Convert the duration returned by YouTube, e.g. PT1H02M03S, to seconds."""
     match = re.fullmatch(
         r"P(?:(?P<days>\d+)D)?(?:T(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?(?:(?P<seconds>\d+)S)?)?",
         value or "",
@@ -86,7 +82,6 @@ def parse_iso8601_duration(value: str) -> int:
 
 
 def get_user_download_lock(user_id: int) -> asyncio.Lock:
-    """One download at a time for each user, while different users queue fairly."""
     lock = USER_DOWNLOAD_LOCKS.get(user_id)
     if lock is None:
         lock = asyncio.Lock()
@@ -111,6 +106,12 @@ def _ydl_base_options():
         "nocheckcertificate": True,
         "geo_bypass": True,
         "noplaylist": True,
+        # إضافة عملاء متعددين لتجاوز حظر "The page needs to be reloaded"
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "ios", "web"],
+            }
+        },
         "http_headers": {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -126,7 +127,6 @@ def _ydl_base_options():
 
 
 def get_cookies_file():
-    """Use a local file, the Railway Volume, or a small Railway secret variable."""
     for candidate in (COOKIES_FILE, VOLUME_COOKIES_FILE):
         if os.path.isfile(candidate):
             return candidate
@@ -135,8 +135,6 @@ def get_cookies_file():
     if not cookies_text:
         return None
 
-    # yt-dlp requires a file in Netscape cookie format.  Railway keeps the
-    # source value private; this runtime-only file is deliberately outside Git.
     runtime_path = os.path.join(tempfile.gettempdir(), "youtube-cookies.txt")
     try:
         with open(runtime_path, "w", encoding="utf-8", newline="\n") as cookies_file:
@@ -149,7 +147,6 @@ def get_cookies_file():
 
 
 def get_youtube_info(url: str):
-    """Fetch public video metadata using the official YouTube Data API."""
     api_key = os.getenv(YOUTUBE_API_KEY_VARIABLE)
     if not api_key:
         raise RuntimeError("YOUTUBE_API_KEY is not configured")
@@ -218,10 +215,10 @@ def download_youtube_media(url: str, mode: str = "video"):
             }
         )
     else:
+        # استخدام الصيغة المباشرة لتفادي أي مشاكل في الدمج على الاستضافة
         ydl_opts.update(
             {
-                "format": "bestvideo+bestaudio/best",
-                "merge_output_format": "mp4",
+                "format": "best",
             }
         )
 
@@ -239,7 +236,6 @@ def download_youtube_media(url: str, mode: str = "video"):
         if not media_files:
             raise FileNotFoundError("لم يتم العثور على الملف المحمل.")
 
-        # Prefer the final expected format when yt-dlp leaves an intermediate file.
         preferred_suffix = ".mp3" if mode in ["audio", "yt_audio", "yt_voice"] else ".mp4"
         file_path = next((path for path in media_files if path.suffix.lower() == preferred_suffix), media_files[0])
         thumb_path = next(
@@ -330,8 +326,6 @@ async def handle_youtube_callback(query, context, session_data, mode):
     thumb_path = None
 
     try:
-        # The per-user lock stops repeat taps from starting duplicate downloads;
-        # the global semaphore prevents a traffic burst exhausting server resources.
         async with get_user_download_lock(user_id):
             async with DOWNLOAD_SEMAPHORE:
                 file_path, title, duration, thumb_path = await asyncio.to_thread(
