@@ -170,20 +170,28 @@ def download_youtube_media(url: str, mode: str = "video"):
         progress_url = data.get("progress_url")
 
         import time
-        max_attempts = 30
+        max_attempts = 40
         attempt = 0
         
         while not direct_download_url and progress_url and attempt < max_attempts:
             attempt += 1
-            time.sleep(2)
+            time.sleep(3)
             
-            prog_resp = requests.get(progress_url, timeout=30)
-            if prog_resp.status_code == 200:
-                prog_data = prog_resp.json()
-                direct_download_url = prog_data.get("url") or prog_data.get("download_url")
-                if direct_download_url:
-                    data = prog_data
-                    break
+            try:
+                # دعم جلب التقدم عبر طلبات GET أو POST حسب استجابة السيرفر
+                prog_resp = requests.get(progress_url, timeout=30)
+                if prog_resp.status_code == 200:
+                    prog_data = prog_resp.json()
+                    direct_download_url = (
+                        prog_data.get("url") 
+                        or prog_data.get("download_url") 
+                        or (prog_data.get("info", {}) if isinstance(prog_data.get("info"), dict) else {}).get("url")
+                    )
+                    if direct_download_url:
+                        data = prog_data
+                        break
+            except Exception:
+                pass
 
         if not direct_download_url:
             raise ValueError(f"فشل الحصول على رابط التحميل المباشر بعد عدة محاولات: {data}")
@@ -203,8 +211,9 @@ def download_youtube_media(url: str, mode: str = "video"):
                             raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
                         f.write(chunk)
 
-        title = data.get("title", "فيديو يوتيوب")
-        duration = int(data.get("duration", 180))
+        # استخراج العنوان والمدة مباشرة من استجابة الـ API مع وضع قيم افتراضية آمنة
+        title = data.get("title") or (data.get("info", {}) if isinstance(data.get("info"), dict) else {}).get("title") or "فيديو يوتيوب"
+        duration = int(data.get("duration") or (data.get("info", {}) if isinstance(data.get("info"), dict) else {}).get("duration") or 180)
         thumb_path = None
 
         return file_path, title, duration, thumb_path
