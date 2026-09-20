@@ -8,14 +8,30 @@ from media_helper import download_media, request_headers
 
 logger = logging.getLogger(__name__)
 
-def is_valid_pinterest_url(url):
+def extract_url(text):
+    if not text:
+        return None
+    # البحث عن أي رابط يبدأ بـ http:// أو https:// داخل الرسالة
+    match = re.search(r'https?://[^\s<>"]+|www\.[^\s<>"]+', text)
+    if match:
+        url = match.group(0)
+        if url.startswith('www.'):
+            url = 'https://' + url
+        return url
+    return text.strip()
+
+def is_valid_pinterest_url(text):
+    if not text:
+        return False
+    url = extract_url(text)
     if not url:
         return False
-    url_lower = url.lower().strip()
+    url_lower = url.lower()
     return "pinterest." in url_lower or "pin.it/" in url_lower
 
-def fetch_pinterest_data(url):
+def fetch_pinterest_data(raw_url):
     try:
+        url = extract_url(raw_url)
         headers = request_headers()
         
         # فك الروابط المختصرة pin.it
@@ -60,10 +76,11 @@ async def handle_pinterest_message(update: Update, context):
     if not message or not message.text:
         return
 
-    url = message.text.strip()
-    if not is_valid_pinterest_url(url):
+    raw_text = message.text.strip()
+    if not is_valid_pinterest_url(raw_text):
         return
 
+    url = extract_url(raw_text)
     processing_msg = await message.reply_text("⏰┇جاري جلب المحتوى من بينترست...")
 
     try:
