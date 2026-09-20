@@ -55,13 +55,16 @@ def format_views(views):
     return str(views)
 
 def get_youtube_options(download=False, outtmpl=None):
+    # إعداد البروكسي الخاص بك من ProxyScrape لتجاوز حظر يوتيوب نهائياً
+    proxy_url = "http://61122fgrjd4i:f51f2f8bsp73ghd@p.proxyscrape.com:9000"
+    
     opts = {
         'quiet': True,
         'no_warnings': True,
         'skip_download': not download,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        # استخدام عميل التلفزيون والأندرويد لتجاوز الحظر بدون كوكيز
+        'proxy': proxy_url, # تفعيل البروكسي
         'extractor_args': {
             'youtube': {
                 'player_client': ['tv', 'android'],
