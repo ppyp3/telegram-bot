@@ -9,12 +9,10 @@ from media_helper import download_media, request_headers
 logger = logging.getLogger(__name__)
 
 def is_valid_pinterest_url(url):
-    try:
-        parsed = urlparse(url.strip())
-        hostname = (parsed.hostname or "").lower().rstrip(".")
-        return "pinterest" in hostname or "pin.it" in hostname
-    except Exception:
+    if not url:
         return False
+    url_lower = url.lower().strip()
+    return "pinterest." in url_lower or "pin.it/" in url_lower
 
 def fetch_pinterest_data(url):
     try:
