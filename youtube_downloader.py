@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from pathlib import Path
 
-import requests  # تمت إضافة مكتبة الـ requests للاتصال بالـ API الجديد
+import requests
 import yt_dlp
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
@@ -147,15 +147,10 @@ def get_youtube_info(url: str):
 
 
 def download_youtube_media(url: str, mode: str = "video"):
-    """
-    تم تعديل دالة التحميل لاستخدام الـ API الجديد (p.savenow.to) 
-    باستخدام مفتاح `DOWNLOAD_API_KEY` لتجنب حظر السيرفرات تماماً.
-    """
     download_api_key = os.getenv("DOWNLOAD_API_KEY")
     if not download_api_key:
         raise RuntimeError("DOWNLOAD_API_KEY is not configured in environment variables")
 
-    # تحديد الصيغة بناءً على خيار المستخدم (فيديو أو صوت)
     format_type = "mp3" if mode in ["audio", "yt_audio", "yt_voice"] else "mp4"
     api_url = "https://p.savenow.to/api/v2/download"
     
@@ -167,25 +162,27 @@ def download_youtube_media(url: str, mode: str = "video"):
 
     temp_dir = tempfile.mkdtemp()
     try:
-        # طلب رابط التحميل المباشر من الـ API الخارجي
         response = requests.get(api_url, params=params, timeout=30)
         response.raise_for_status()
         data = response.json()
         
-        # استخراج رابط التحميل المباشر من استجابة الـ API
-        direct_download_url = data.get("url") or data.get("download_url") or data.get("link")
-        if not direct_download_url:
-            raise ValueError("لم يتم العثور على رابط التحميل المباشر في استجابة الـ API.")
+        print("=" * 40)
+        print("📥 [API RESPONSE]:", json.dumps(data, indent=4, ensure_ascii=False))
+        print("=" * 40)
 
-        # تحميل الملف الفعلي من الرابط المباشر المستلم
+        direct_download_url = None
+        if isinstance(data, dict):
+            direct_download_url = data.get("url") or data.get("download_url") or data.get("link")
+            if not direct_download_url and "data" in data and isinstance(data["data"], dict):
+                direct_download_url = data["data"].get("url") or data["data"].get("download_url") or data["data"].get("link")
+
+        if not direct_download_url:
+            raise ValueError(f"استجابة الـ API لا تحتوي على رابط: {data}")
+
         suffix = ".mp3" if format_type == "mp3" else ".mp4"
         with requests.get(direct_download_url, stream=True, timeout=60) as media_resp:
             media_resp.raise_for_status()
             
-            content_length = media_resp.headers.get("Content-Length")
-            if content_length and int(content_length) > MAX_MEDIA_SIZE:
-                raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
-
             file_path = Path(temp_dir) / f"media{suffix}"
             downloaded_size = 0
             
@@ -197,7 +194,6 @@ def download_youtube_media(url: str, mode: str = "video"):
                             raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
                         f.write(chunk)
 
-        # معلومات تقريبية للملف
         title = data.get("title", "فيديو يوتيوب")
         duration = int(data.get("duration", 180))
         thumb_path = None
