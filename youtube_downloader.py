@@ -116,7 +116,7 @@ def download_youtube_media(url: str, mode: str = "video"):
 
     if mode in ["audio", "yt_audio", "yt_voice"]:
         ydl_opts.update({
-            'format': 'bestaudio/best',
+            'format': 'bestaudio',
             'postprocessors': [
                 {
                     'key': 'FFmpegExtractAudio',
@@ -130,9 +130,9 @@ def download_youtube_media(url: str, mode: str = "video"):
             ],
         })
     else:
-        # استخدام أفضل صيغة مباشرة لتجنب مشاكل الدمج وغياب الفريموير
+        # اختيار أفضل صيغة فيديو متاحة لتجنب أخطاء الدمج
         ydl_opts.update({
-            'format': 'best',
+            'format': 'best/bestvideo+bestaudio',
         })
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -140,7 +140,7 @@ def download_youtube_media(url: str, mode: str = "video"):
         title = info.get('title', 'فيديو يوتيوب')
         duration = info.get('duration', 0)
 
-        media_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.mp3', '.mp4', '.m4a', '.webm', '.ogg']]
+        media_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.mp3', '.mp4', '.m4a', '.webm', '.ogg', '.mkv']]
         if not media_files:
             raise FileNotFoundError("لم يتم العثور على الملف المحمل.")
 
@@ -163,7 +163,6 @@ async def handle_youtube_message(update, context):
     try:
         info = await asyncio.to_thread(get_youtube_info, url)
 
-        # ترتيب الأزرار بالشكل المطلوب
         keyboard = [
             [InlineKeyboardButton("🎬 | مقطع فيديو.", callback_data="yt_video")],
             [
@@ -173,7 +172,7 @@ async def handle_youtube_message(update, context):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # جعل الرابط في نهاية النص لتظهر معاينة يوتيوب بالشكل الصحيح فوق النص
+        # ترتيب النص بحيث تظهر معاينة يوتيوب بالشكل المطلوب فوق النص
         caption = (
             f'🎬 <a href="{info["url"]}">{info["title"]}</a>\n'
             f'👤 {info["uploader"]}\n'
@@ -260,7 +259,7 @@ async def handle_youtube_callback(query, context, session_data, mode):
                 if thumb_file:
                     thumb_file.close()
 
-        else:  # فيديو MP4
+        else:  # فيديو
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
             video_caption = f"@G66Gbot - {time_str}, {file_size_mb}"
             
