@@ -40,11 +40,6 @@ class YoutubeFilter(filters.MessageFilter):
 
 YOUTUBE_FILTER = YoutubeFilter()
 
-def is_valid_youtube_url(url: str) -> bool:
-    if not url:
-        return False
-    return bool(YOUTUBE_REGEX.search(url.strip()))
-
 def format_views(views):
     if not views:
         return "0"
@@ -55,7 +50,6 @@ def format_views(views):
     return str(views)
 
 def get_youtube_options(download=False, outtmpl=None):
-    # استخدام المسار المطلق لضمان قراءة ملف الكوكيز بدون أخطاء في مسارات الاستضافة
     base_dir = os.path.dirname(os.path.abspath(__file__))
     cookies_path = os.path.join(base_dir, 'cookies.txt')
 
@@ -80,10 +74,11 @@ def get_youtube_options(download=False, outtmpl=None):
     return opts
 
 def get_youtube_info(url: str):
+    clean_url = url.strip()
     ydl_opts = get_youtube_options(download=False)
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+            info = ydl.extract_info(clean_url, download=False)
             if not info:
                 raise ValueError("Could not extract info")
                 
@@ -97,7 +92,7 @@ def get_youtube_info(url: str):
                 "duration_string": f"{minutes:02d}:{seconds:02d}",
                 "view_count_formatted": format_views(info.get('view_count')),
                 "thumbnail": info.get('thumbnail'),
-                "url": url
+                "url": clean_url
             }
     except Exception:
         return {
@@ -107,10 +102,11 @@ def get_youtube_info(url: str):
             "duration_string": "00:00",
             "view_count_formatted": "0",
             "thumbnail": None,
-            "url": url
+            "url": clean_url
         }
 
 def download_youtube_media(url: str, mode: str = "video"):
+    clean_url = url.strip()
     temp_dir = tempfile.mkdtemp()
     outtmpl = os.path.join(temp_dir, '%(title)s.%(ext)s')
 
@@ -133,13 +129,12 @@ def download_youtube_media(url: str, mode: str = "video"):
             ],
         })
     else:
-        # استخدام 'best' لتجنب أخطاء الصيغ المفقودة والدمج
         ydl_opts.update({
             'format': 'best',
         })
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
+        info = ydl.extract_info(clean_url, download=True)
         title = info.get('title', 'فيديو يوتيوب')
         duration = info.get('duration', 0)
 
@@ -158,7 +153,12 @@ def download_youtube_media(url: str, mode: str = "video"):
         return file_path, title, duration, thumb_path
 
 async def handle_youtube_message(update, context):
-    url = update.message.text.strip()
+    text_content = update.message.text or update.message.caption or ""
+    match = YOUTUBE_REGEX.search(text_content.strip())
+    if not match:
+        return
+    
+    url = match.group(0)
     user_id = update.effective_user.id
 
     processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، جاري معالجة رابط يوتيوب...")
@@ -193,7 +193,7 @@ async def handle_youtube_message(update, context):
         key = (sent_msg.chat_id, sent_msg.message_id)
         sessions[key] = {
             "user_id": user_id,
-            "url": url,
+            "url": info["url"],
             "title": info["title"]
         }
 
@@ -205,12 +205,16 @@ async def handle_youtube_message(update, context):
 
 async def handle_youtube_callback(query, context, session_data, mode):
     chat_id = query.message.chat_id
-    url = session_data["url"]
+    url = session_data.get("url", "").strip()
     
     try:
         await query.message.delete()
     except Exception:
         pass
+
+    if not url:
+        await context.bot.send_message(chat_id=chat_id, text="❌ خطأ: لم يتم العثور على الرابط المرتبط بهذه الجلسة.")
+        return
 
     status_msg = await context.bot.send_message(chat_id=chat_id, text="🔄 جاري التحميل، يرجى الانتظار...")
     file_path = None
