@@ -216,10 +216,10 @@ def download_youtube_media(url: str, mode: str = "video"):
             }
         )
     else:
-        # استخدام خيار مرن يضمن توافر ودعم دمج الصيغ عبر ffmpeg
+        # صيغة آمنة ومرنة تتجاوز خطأ الصيغ الغير متوفرة تماماً
         ydl_opts.update(
             {
-                "format": "bestvideo+bestaudio/best/best",
+                "format": "best/bestvideo+bestaudio",
                 "merge_output_format": "mp4",
             }
         )
