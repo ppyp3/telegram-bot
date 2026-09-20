@@ -1,7 +1,7 @@
 instaloader>=4.14,<5
 python-telegram-bot
 requests
-yt-dlp
+yt-dlp[default]
 ffmpeg-python
 playwright
 beautifulsoup4
