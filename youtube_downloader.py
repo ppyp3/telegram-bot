@@ -130,9 +130,9 @@ def download_youtube_media(url: str, mode: str = "video"):
             ],
         })
     else:
-        # اختيار أفضل صيغة فيديو متاحة لتجنب أخطاء الدمج
+        # استخدام الخيار الأبسط لتجنب أي خطأ في صيغ الدمج
         ydl_opts.update({
-            'format': 'best/bestvideo+bestaudio',
+            'format': 'b',
         })
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -172,7 +172,7 @@ async def handle_youtube_message(update, context):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # ترتيب النص بحيث تظهر معاينة يوتيوب بالشكل المطلوب فوق النص
+        # ترتيب النص لتظهر معاينة يوتيوب فوق النص بالشكل الصحيح
         caption = (
             f'🎬 <a href="{info["url"]}">{info["title"]}</a>\n'
             f'👤 {info["uploader"]}\n'
