@@ -162,7 +162,6 @@ def download_youtube_media(url: str, mode: str = "video"):
 
     temp_dir = tempfile.mkdtemp()
     try:
-        # 1. إرسال طلب التحمّل الأولي
         response = requests.get(api_url, params=params, timeout=30)
         response.raise_for_status()
         data = response.json()
@@ -170,27 +169,25 @@ def download_youtube_media(url: str, mode: str = "video"):
         direct_download_url = data.get("url")
         progress_url = data.get("progress_url")
 
-        # 2. إذا كان الرابط غير جاهز ويحتاج متابعة (Polling) عبر progress_url
         import time
         max_attempts = 30
         attempt = 0
         
         while not direct_download_url and progress_url and attempt < max_attempts:
             attempt += 1
-            time.sleep(2)  # الانتظار لثانيتين بين كل محاولة
+            time.sleep(2)
             
             prog_resp = requests.get(progress_url, timeout=30)
             if prog_resp.status_code == 200:
                 prog_data = prog_resp.json()
                 direct_download_url = prog_data.get("url") or prog_data.get("download_url")
                 if direct_download_url:
-                    data = prog_data  نقوم بتحديث البيانات لتشمل العنوان والمدة إن وجدت
+                    data = prog_data
                     break
 
         if not direct_download_url:
             raise ValueError(f"فشل الحصول على رابط التحميل المباشر بعد عدة محاولات: {data}")
 
-        # 3. تحميل الملف الفعلي باستخدام الرابط المباشر المستخرج
         suffix = ".mp3" if format_type == "mp3" else ".mp4"
         with requests.get(direct_download_url, stream=True, timeout=60) as media_resp:
             media_resp.raise_for_status()
