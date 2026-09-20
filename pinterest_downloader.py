@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 def extract_url(text):
     if not text:
         return None
-    # البحث عن أي رابط يبدأ بـ http:// أو https:// داخل الرسالة
     match = re.search(r'https?://[^\s<>"]+|www\.[^\s<>"]+', text)
     if match:
         url = match.group(0)
@@ -43,7 +42,7 @@ def fetch_pinterest_data(raw_url):
             response.raise_for_status()
             html_content = response.text
 
-        # البحث عن روابط الفيديو (mp4)
+        # 1. البحث عن روابط الفيديو (mp4)
         video_match = re.search(r'"contentUrl"\s*:\s*"([^"]+\.mp4[^"]*)"', html_content)
         if not video_match:
             video_match = re.search(r'https?://[^"\s]+\.mp4[^"\s]*', html_content)
@@ -53,16 +52,30 @@ def fetch_pinterest_data(raw_url):
             video_url = video_url.replace(r'\u0026', '&')
             return {"type": "video", "url": video_url}
 
-        # البحث عن الصور بجودة عالية
-        img_matches = re.findall(r'https?://i\.pinimg\.com/originals/[^"\'\s]+', html_content)
+        # 2. البحث الشامل عن روابط الصور في بينترست (تشمل originals, 736x, 564x, وغيرها)
+        img_matches = re.findall(r'https?://i\.pinimg\.com/(?:originals|736x|564x|470x|236x)/[0-9a-f/]+[^\s"\'<>]+', html_content)
+        
+        # إذا لم يتم العثور بالطريقة الأولى، نلتقط أي رابط يحتوي على pinimg.com/originals أو 736x
         if not img_matches:
-            img_matches = re.findall(r'https?://i\.pinimg\.com/736x/[^"\'\s]+', html_content)
+            img_matches = re.findall(r'https?://i\.pinimg\.com/[^"\'\s>]+', html_content)
 
-        # إزالة التكرار
+        # تصفية الروابط لاستبعاد الأيقونات والصور الصغيرة جداً (مثل الـ avatars أو الـ emojis)
+        filtered_images = []
+        for img in img_matches:
+            # استبعاد الروابط الصغيرة أو الأيقونات الشخصية المعتادة
+            if any(x in img for x in ["avatars", "profile", "icon", "16x16", "32x32", "60x60"]):
+                continue
+            # التأكد من أنها صورة صالحة (تهدُف للصور الكبيرة)
+            if any(ext in img.lower() for ext in [".jpg", ".png", ".webp", "/originals/", "/736x/", "/564x/"]):
+                filtered_images.append(img)
+
+        # إزالة التكرار مع الحفاظ على الترتيب
         seen = set()
-        unique_images = [img for img in img_matches if not (img in seen or seen.add(img))]
+        unique_images = [img for img in filtered_images if not (img in seen or seen.add(img))]
 
         if unique_images:
+            # إعادة ترتيب الروابط بحيث تكون صور الـ originals أو الدقة العالية في المقدمة إن وجدت
+            unique_images.sort(key=lambda x: 0 if "originals" in x else (1 if "736x" in x else 2))
             return {"type": "images", "urls": unique_images[:10]}
 
         return None
