@@ -99,35 +99,8 @@ def format_views(views):
     return str(views)
 
 
-def _ydl_base_options():
-    options = {
-        "quiet": True,
-        "no_warnings": True,
-        "nocheckcertificate": True,
-        "geo_bypass": True,
-        "noplaylist": True,
-        # إضافة عملاء متعددين لتجاوز حظر "The page needs to be reloaded"
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["android", "ios", "web"],
-            }
-        },
-        "http_headers": {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/125.0.0.0 Safari/537.36"
-            ),
-        },
-    }
-    cookies_file = get_cookies_file()
-    if cookies_file:
-        options["cookiefile"] = cookies_file
-    return options
-
-
 def get_cookies_file():
-    for candidate in (COOKIES_FILE, VOLUME_COOKIES_FILE):
+    for candidate in (VOLUME_COOKIES_FILE, COOKIES_FILE):
         if os.path.isfile(candidate):
             return candidate
 
@@ -144,6 +117,35 @@ def get_cookies_file():
     except OSError:
         logger.exception("Unable to create the runtime cookie file")
         return None
+
+
+def _ydl_base_options():
+    options = {
+        "quiet": True,
+        "no_warnings": True,
+        "nocheckcertificate": True,
+        "geo_bypass": True,
+        "noplaylist": True,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "web"],
+            }
+        },
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/125.0.0.0 Safari/537.36"
+            ),
+        },
+    }
+    
+    # التحقق المباشر والواضح من ملف الكوكيز في الفوليوم أو المسارات الاحتياطية
+    cookies_file = get_cookies_file()
+    if cookies_file:
+        options["cookiefile"] = cookies_file
+        
+    return options
 
 
 def get_youtube_info(url: str):
@@ -215,7 +217,6 @@ def download_youtube_media(url: str, mode: str = "video"):
             }
         )
     else:
-        # استخدام الصيغة المباشرة لتفادي أي مشاكل في الدمج على الاستضافة
         ydl_opts.update(
             {
                 "format": "best",
