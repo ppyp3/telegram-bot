@@ -28,6 +28,13 @@ def is_valid_pinterest_url(text):
     url_lower = url.lower()
     return "pinterest." in url_lower or "pin.it/" in url_lower
 
+def upgrade_image_to_hd(img_url):
+    if not img_url:
+        return img_url
+    # استبدال أي حجم متوسط (مثل 736x, 564x, 470x) إلى الدقة الأصلية originals
+    hd_url = re.sub(r'/(?:736x|564x|470x|236x|150x|originals)/', '/originals/', img_url)
+    return hd_url
+
 def fetch_pinterest_media(raw_url):
     try:
         url = extract_url(raw_url)
@@ -43,13 +50,12 @@ def fetch_pinterest_media(raw_url):
             html_content = response.text
             soup = BeautifulSoup(html_content, 'html.parser')
 
-        # 1. البحث أولاً عما إذا كان الرابط يحتوي على فيديو (عبر وسوم og:video أو البحث عن روابط mp4)
+        # 1. البحث أولاً عن الفيديو
         video_match = re.search(r'"contentUrl"\s*:\s*"([^"]+\.mp4[^"]*)"', html_content)
         if not video_match:
             og_video = soup.find('meta', property='og:video')
             if og_video and og_video.get('content'):
-                video_url = og_video['content']
-                return {"type": "video", "url": video_url}
+                return {"type": "video", "url": og_video['content']}
             
             video_match = re.search(r'https?://[^"\s]+\.mp4[^"\s]*', html_content)
 
@@ -58,14 +64,19 @@ def fetch_pinterest_media(raw_url):
             video_url = video_url.replace(r'\u0026', '&')
             return {"type": "video", "url": video_url}
 
-        # 2. إذا لم يكن فيديو، نبحث عن صورة المعاينة (og:image)
+        # 2. البحث عن الصورة وتحسينها لأعلى دقة (originals)
+        img_url = None
         og_image = soup.find('meta', property='og:image')
         if og_image and og_image.get('content'):
-            return {"type": "image", "url": og_image['content']}
+            img_url = og_image['content']
+        else:
+            twitter_image = soup.find('meta', name='twitter:image')
+            if twitter_image and twitter_image.get('content'):
+                img_url = twitter_image['content']
 
-        twitter_image = soup.find('meta', name='twitter:image')
-        if twitter_image and twitter_image.get('content'):
-            return {"type": "image", "url": twitter_image['content']}
+        if img_url:
+            hd_img_url = upgrade_image_to_hd(img_url)
+            return {"type": "image", "url": hd_img_url}
 
         return None
 
@@ -82,7 +93,7 @@ async def handle_pinterest_message(update: Update, context):
     if not is_valid_pinterest_url(raw_text):
         return
 
-    processing_msg = await message.reply_text("⏰┇جاري معالجة المحتوى من بينترست...")
+    processing_msg = await message.reply_text("⏰┇جاري جلب المحتوى بأعلى دقة...")
 
     try:
         media_data = fetch_pinterest_media(raw_text)
@@ -110,6 +121,7 @@ async def handle_pinterest_message(update: Update, context):
             try:
                 await context.bot.send_chat_action(chat_id=message.chat_id, action=ChatAction.UPLOAD_PHOTO)
                 with open(local_path, "rb") as img_file:
+                    # استخدام reply_photo يرسل الصورة كاملة وصافية (وليس كملف مضغوط أو مصغر)
                     await message.reply_photo(photo=img_file, caption="- @G66Gbot")
                 await processing_msg.delete()
             finally:
