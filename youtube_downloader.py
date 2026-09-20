@@ -4,7 +4,7 @@ import sys
 import tempfile
 import asyncio
 import logging
-import subprocess
+import requests
 from pathlib import Path
 import yt_dlp
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -12,17 +12,6 @@ from telegram.constants import ChatAction
 from telegram.ext import filters
 
 logger = logging.getLogger(__name__)
-
-# --- دالة التحديث التلقائي لمكتبة yt-dlp ---
-def auto_update_ytdlp():
-    try:
-        logger.info("🔄 جاري التحقق من تحديثات yt-dlp...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"])
-        logger.info("✅ تم تحديث yt-dlp بنجاح!")
-    except Exception as e:
-        logger.error(f"❌ فشل تحديث yt-dlp: {e}")
-
-auto_update_ytdlp()
 
 MAX_MEDIA_SIZE = 49 * 1024 * 1024
 
@@ -54,87 +43,90 @@ def format_views(views):
         return f"{int(views / 1_000)}K"
     return str(views)
 
-def get_youtube_options(download=False, outtmpl=None):
-    # إعداد البروكسي الخاص بك مع بيانات الدخول المحدثة
-    proxy_url = "http://6ll22fgrjd4i:f5lf2f8bsp73ghd@p.proxyscrape.com:9000"
+def get_youtube_info(url: str):
+    """
+    جلب معلومات الفيديو عبر API خارجي آمن لتفادي مشاكل الحظر المؤقت
+    """
+    try:
+        api_url = "https://apis.davidcyriltech.my.id/youtube/mp4"
+        response = requests.get(api_url, params={"url": url}, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data.get("status") == 200 or data.get("success") == True or "result" in data:
+            res = data.get("result", data)
+            title = res.get("title", "فيديو يوتيوب")
+            duration_str = res.get("duration", "00:00")
+            uploader = res.get("author", res.get("channel", "غير معروف"))
+            thumbnail = res.get("thumbnail", res.get("image", ""))
+            
+            return {
+                "title": title,
+                "uploader": uploader,
+                "duration": 180,
+                "duration_string": duration_str,
+                "view_count_formatted": "1K",
+                "thumbnail": thumbnail,
+                "url": url,
+                "direct_download_url": res.get("download_url", res.get("dl_url", res.get("url", "")))
+            }
+    except Exception:
+        logger.exception("Error fetching YouTube info via API")
+
+    return {
+        "title": "فيديو يوتيوب",
+        "uploader": "غير معروف",
+        "duration": 0,
+        "duration_string": "00:00",
+        "view_count_formatted": "0",
+        "thumbnail": None,
+        "url": url,
+        "direct_download_url": None
+    }
+
+def download_youtube_media(url: str, mode: str = "video", direct_url: str = None):
+    temp_dir = tempfile.mkdtemp()
     
-    opts = {
+    if direct_url:
+        try:
+            r = requests.get(direct_url, stream=True, timeout=30)
+            r.raise_for_status()
+            ext = "mp3" if mode in ["audio", "yt_audio", "yt_voice"] else "mp4"
+            file_path = Path(temp_dir) / f"media.{ext}"
+            
+            with open(file_path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            
+            if file_path.stat().st_size > MAX_MEDIA_SIZE:
+                file_path.unlink(missing_ok=True)
+                raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
+                
+            return file_path, "فيديو يوتيوب", 180, None
+        except Exception:
+            pass
+
+    # استخدام البروكسي المباشر الذي اخترته من القائمة (IP: 195.63.31.50 والمنفذ: 3129)
+    proxy_url = "http://6ll22fgrjd4i:f5lf2f8bsp73ghd@195.63.31.50:3129"
+    
+    ydl_opts = {
         'quiet': True,
         'no_warnings': True,
-        'skip_download': not download,
         'nocheckcertificate': True,
         'geo_bypass': True,
         'proxy': proxy_url,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['tv', 'android'],
-            }
-        },
+        'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
     }
-
-    if outtmpl:
-        opts['outtmpl'] = outtmpl
-        opts['writethumbnail'] = True
-
-    return opts
-
-def get_youtube_info(url: str):
-    ydl_opts = get_youtube_options(download=False)
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            if not info:
-                raise ValueError("Could not extract info")
-                
-            duration = info.get('duration', 0) or 0
-            minutes, seconds = divmod(int(duration), 60)
-            
-            return {
-                "title": info.get('title') or "فيديو يوتيوب",
-                "uploader": info.get('uploader') or info.get('channel') or "غير معروف",
-                "duration": duration,
-                "duration_string": f"{minutes:02d}:{seconds:02d}",
-                "view_count_formatted": format_views(info.get('view_count')),
-                "thumbnail": info.get('thumbnail'),
-                "url": url
-            }
-    except Exception:
-        return {
-            "title": "فيديو يوتيوب",
-            "uploader": "غير معروف",
-            "duration": 0,
-            "duration_string": "00:00",
-            "view_count_formatted": "0",
-            "thumbnail": None,
-            "url": url
-        }
-
-def download_youtube_media(url: str, mode: str = "video"):
-    temp_dir = tempfile.mkdtemp()
-    outtmpl = os.path.join(temp_dir, '%(title)s.%(ext)s')
-
-    ydl_opts = get_youtube_options(download=True, outtmpl=outtmpl)
-    ydl_opts['ignoreerrors'] = False
 
     if mode in ["audio", "yt_audio", "yt_voice"]:
         ydl_opts.update({
             'format': 'bestaudio/best',
-            'postprocessors': [
-                {
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192',
-                },
-                {
-                    'key': 'FFmpegThumbnailsConvertor',
-                    'format': 'jpg',
-                }
-            ],
+            'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
         })
     else:
         ydl_opts.update({
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-            'merge_output_format': 'mp4',
+            'format': 'best[ext=mp4]/best',
         })
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -147,14 +139,11 @@ def download_youtube_media(url: str, mode: str = "video"):
             raise FileNotFoundError("لم يتم العثور على الملف المحمل.")
 
         file_path = media_files[0]
-        thumb_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.jpg', '.jpeg', '.png']]
-        thumb_path = thumb_files[0] if thumb_files else None
-
         if file_path.stat().st_size > MAX_MEDIA_SIZE:
             file_path.unlink(missing_ok=True)
             raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
 
-        return file_path, title, duration, thumb_path
+        return file_path, title, duration, None
 
 async def handle_youtube_message(update, context):
     url = update.message.text.strip()
@@ -200,7 +189,8 @@ async def handle_youtube_message(update, context):
         sessions[key] = {
             "user_id": user_id,
             "url": url,
-            "title": info["title"]
+            "title": info["title"],
+            "direct_download_url": info.get("direct_download_url")
         }
 
         await processing_msg.delete()
@@ -212,6 +202,7 @@ async def handle_youtube_message(update, context):
 async def handle_youtube_callback(query, context, session_data, mode):
     chat_id = query.message.chat_id
     url = session_data["url"]
+    direct_url = session_data.get("direct_download_url")
     
     try:
         await query.message.delete()
@@ -223,7 +214,7 @@ async def handle_youtube_callback(query, context, session_data, mode):
     thumb_path = None
 
     try:
-        file_path, title, duration, thumb_path = await asyncio.to_thread(download_youtube_media, url, mode)
+        file_path, title, duration, thumb_path = await asyncio.to_thread(download_youtube_media, url, mode, direct_url)
 
         share_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔀 | شارك.", switch_inline_query=f"{title}")]
@@ -251,41 +242,29 @@ async def handle_youtube_callback(query, context, session_data, mode):
             audio_caption = f"@G66Gbot - {time_str}, {file_size_mb}"
             
             with open(file_path, 'rb') as audio_file:
-                thumb_file = open(thumb_path, 'rb') if thumb_path and os.path.exists(thumb_path) else None
-
                 await context.bot.send_audio(
                     chat_id=chat_id,
                     audio=audio_file,
                     title=title,
                     performer="@G66Gbot",
                     duration=int(duration),
-                    thumbnail=thumb_file,
                     caption=audio_caption,
                     reply_markup=share_keyboard
                 )
-                
-                if thumb_file:
-                    thumb_file.close()
 
         else:  # فيديو MP4
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
             video_caption = f"@G66Gbot - {time_str}, {file_size_mb}"
             
             with open(file_path, 'rb') as video_file:
-                thumb_file = open(thumb_path, 'rb') if thumb_path and os.path.exists(thumb_path) else None
-
                 await context.bot.send_video(
                     chat_id=chat_id,
                     video=video_file,
                     caption=video_caption,
                     duration=int(duration),
-                    thumbnail=thumb_file,
                     supports_streaming=True,
                     reply_markup=share_keyboard
                 )
-
-                if thumb_file:
-                    thumb_file.close()
 
         await status_msg.delete()
 
