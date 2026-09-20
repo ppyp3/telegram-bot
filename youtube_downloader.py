@@ -115,7 +115,7 @@ def download_youtube_media(url: str, mode: str = "video"):
 
     if mode in ["audio", "yt_audio", "yt_voice"]:
         ydl_opts.update({
-            'format': 'bestaudio',
+            'format': 'bestaudio/best',
             'postprocessors': [
                 {
                     'key': 'FFmpegExtractAudio',
@@ -130,7 +130,8 @@ def download_youtube_media(url: str, mode: str = "video"):
         })
     else:
         ydl_opts.update({
-            'format': 'best',
+            'format': 'bestvideo+bestaudio/best',
+            'merge_output_format': 'mp4',
         })
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
