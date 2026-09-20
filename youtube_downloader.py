@@ -1,10 +1,13 @@
 import asyncio
 import html
+import json
 import logging
 import os
 import re
 import shutil
 import tempfile
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 from pathlib import Path
 
 import yt_dlp
@@ -16,6 +19,9 @@ logger = logging.getLogger(__name__)
 
 MAX_MEDIA_SIZE = 49 * 1024 * 1024
 COOKIES_FILE = os.path.join(os.path.dirname(__file__), "cookies.txt")
+VOLUME_COOKIES_FILE = "/cookies/cookies.txt"
+COOKIES_VARIABLE = "YOUTUBE_COOKIES"
+YOUTUBE_API_KEY_VARIABLE = "YOUTUBE_API_KEY"
 
 # Keep expensive yt-dlp/FFmpeg work bounded during traffic spikes.  These values
 # deliberately favour bot stability over starting every download immediately.
@@ -55,6 +61,30 @@ def extract_youtube_url(text: str) -> str:
     return match.group(0)
 
 
+def get_youtube_video_id(url: str) -> str:
+    match = YOUTUBE_REGEX.search(url)
+    if not match:
+        raise ValueError("Invalid YouTube URL")
+    return match.group(5)
+
+
+def parse_iso8601_duration(value: str) -> int:
+    """Convert the duration returned by YouTube, e.g. PT1H02M03S, to seconds."""
+    match = re.fullmatch(
+        r"P(?:(?P<days>\d+)D)?(?:T(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?(?:(?P<seconds>\d+)S)?)?",
+        value or "",
+    )
+    if not match:
+        return 0
+    parts = match.groupdict(default="0")
+    return (
+        int(parts["days"]) * 86400
+        + int(parts["hours"]) * 3600
+        + int(parts["minutes"]) * 60
+        + int(parts["seconds"])
+    )
+
+
 def get_user_download_lock(user_id: int) -> asyncio.Lock:
     """One download at a time for each user, while different users queue fairly."""
     lock = USER_DOWNLOAD_LOCKS.get(user_id)
@@ -89,32 +119,82 @@ def _ydl_base_options():
             ),
         },
     }
-    if os.path.exists(COOKIES_FILE):
-        options["cookiefile"] = COOKIES_FILE
+    cookies_file = get_cookies_file()
+    if cookies_file:
+        options["cookiefile"] = cookies_file
     return options
 
 
+def get_cookies_file():
+    """Use a local file, the Railway Volume, or a small Railway secret variable."""
+    for candidate in (COOKIES_FILE, VOLUME_COOKIES_FILE):
+        if os.path.isfile(candidate):
+            return candidate
+
+    cookies_text = os.getenv(COOKIES_VARIABLE)
+    if not cookies_text:
+        return None
+
+    # yt-dlp requires a file in Netscape cookie format.  Railway keeps the
+    # source value private; this runtime-only file is deliberately outside Git.
+    runtime_path = os.path.join(tempfile.gettempdir(), "youtube-cookies.txt")
+    try:
+        with open(runtime_path, "w", encoding="utf-8", newline="\n") as cookies_file:
+            cookies_file.write(cookies_text)
+        os.chmod(runtime_path, 0o600)
+        return runtime_path
+    except OSError:
+        logger.exception("Unable to create the runtime cookie file")
+        return None
+
+
 def get_youtube_info(url: str):
-    """استخراج معلومات الفيديو بدون فرض أي صيغة محددة لتجنب Requested format is not available"""
-    ydl_opts = _ydl_base_options()
-    ydl_opts["skip_download"] = True
+    """Fetch public video metadata using the official YouTube Data API."""
+    api_key = os.getenv(YOUTUBE_API_KEY_VARIABLE)
+    if not api_key:
+        raise RuntimeError("YOUTUBE_API_KEY is not configured")
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-        if not info:
-            raise ValueError("Could not extract info")
-
-        duration = info.get("duration", 0) or 0
-        minutes, seconds = divmod(int(duration), 60)
-        return {
-            "title": info.get("title") or "فيديو يوتيوب",
-            "uploader": info.get("uploader") or info.get("channel") or "غير معروف",
-            "duration": duration,
-            "duration_string": f"{minutes:02d}:{seconds:02d}",
-            "view_count_formatted": format_views(info.get("view_count")),
-            "thumbnail": info.get("thumbnail"),
-            "url": url,
+    query = urlencode(
+        {
+            "part": "snippet,contentDetails,statistics",
+            "id": get_youtube_video_id(url),
+            "key": api_key,
         }
+    )
+    request = Request(
+        f"https://www.googleapis.com/youtube/v3/videos?{query}",
+        headers={"Accept": "application/json"},
+    )
+    with urlopen(request, timeout=15) as response:
+        payload = json.load(response)
+
+    items = payload.get("items", [])
+    if not items:
+        raise ValueError("Video was not found or is not publicly available")
+
+    item = items[0]
+    snippet = item.get("snippet", {})
+    thumbnails = snippet.get("thumbnails", {})
+    thumbnail = next(
+        (
+            thumbnails[size].get("url")
+            for size in ("maxres", "standard", "high", "medium", "default")
+            if thumbnails.get(size, {}).get("url")
+        ),
+        None,
+    )
+    duration = parse_iso8601_duration(item.get("contentDetails", {}).get("duration", ""))
+    minutes, seconds = divmod(duration, 60)
+
+    return {
+        "title": snippet.get("title") or "فيديو يوتيوب",
+        "uploader": snippet.get("channelTitle") or "غير معروف",
+        "duration": duration,
+        "duration_string": f"{minutes:02d}:{seconds:02d}",
+        "view_count_formatted": format_views(int(item.get("statistics", {}).get("viewCount", 0))),
+        "thumbnail": thumbnail,
+        "url": url,
+    }
 
 
 def download_youtube_media(url: str, mode: str = "video"):
