@@ -137,8 +137,8 @@ def get_youtube_info(url: str):
 def download_youtube_media(url: str, mode: str = "video"):
     format_type = "mp3" if mode in ["audio", "yt_audio", "yt_voice"] else "mp4"
     
-    # ربط التحميل بسيرفر Cobalt الخاص بك على ريلواي
-    api_url = "https://Cobalt-production-78f2.up.railway.app/api/json"
+    # الرابط المباشر لسيرفر Cobalt بدون مسار خاطئ لتجنب مشكلة 404
+    api_url = "https://cobalt-production-78f2.up.railway.app/"
     payload = {
         "url": url,
         "isAudioOnly": True if format_type == "mp3" else False,
@@ -179,7 +179,7 @@ def download_youtube_media(url: str, mode: str = "video"):
                         f.write(chunk)
 
         title = res_data.get("filename") or "فيديو يوتيوب"
-        duration = 180  # افتراضي إذا لم يتوفر
+        duration = 180  
         thumb_path = None
 
         return file_path, title, duration, thumb_path
@@ -294,7 +294,7 @@ async def handle_youtube_callback(query, context, session_data, mode):
                     chat_id=chat_id, video=video_file, caption=f"@G66Gbot - {time_str}, {file_size_mb}",
                     duration=int(duration), reply_markup=share_keyboard
                 )
-        status_msg.delete()
+        await status_msg.delete()
     except DownloadTooLarge:
         await status_msg.edit_text("⚠️┇هذا الملف لا يمكنني تحميله، لأن حجمه يتجاوز ( 50 MB ).")
     except Exception:
