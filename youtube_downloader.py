@@ -11,8 +11,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from pathlib import Path
 
-import requests
-import yt_dlp
+import youtube_dl  # الاعتماد حصراً على مكتبة youtube-dl
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
 from telegram.ext import filters
@@ -148,14 +147,20 @@ def get_youtube_info(url: str):
 
 def download_youtube_media(url: str, mode: str = "video"):
     format_type = "mp3" if mode in ["audio", "yt_audio", "yt_voice"] else "mp4"
-    api_url = "https://p.savenow.to/api/v2/download"
+    temp_dir = tempfile.mkdtemp()
     
-    params = {
-        "format": format_type,
-        "url": url
+    output_template = os.path.join(temp_dir, "media.%(ext)s")
+
+    # إعدادات مكتبة youtube-dl الكلاسيكية مع ملف الكوكيز
+    ydl_opts = {
+        'format': 'bestaudio/best' if format_type == 'mp3' else 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'outtmpl': output_template,
+        'noplaylist': True,
+        'socket_timeout': 30,
+        'quiet': True,
     }
 
-    # تم تضمين الكوكيز الخاص بك هنا بنجاح
+    # ملف الكوكيز الخاص بك لتجاوز الحظر
     youtube_cookies_content = """
 # Netscape HTTP Cookie File
 # http://curl.haxx.se/rfc/cookie_spec.html
@@ -184,76 +189,47 @@ def download_youtube_media(url: str, mode: str = "video"):
 #HttpOnly_.youtube.com	TRUE	/	TRUE	1802726032	VISITOR_INFO1_LIVE	K2aTK5Ph7bc
     """.strip()
 
-    temp_dir = tempfile.mkdtemp()
-    files = {}
-    
+    cookies_file_path = None
     try:
         if youtube_cookies_content:
             cookies_file_path = Path(temp_dir) / "cookies.txt"
             cookies_file_path.write_text(youtube_cookies_content, encoding="utf-8")
-            files = {"cookies": open(cookies_file_path, "rb")}
+            ydl_opts['cookiefile'] = str(cookies_file_path)
 
-        response = requests.get(api_url, params=params, files=files if files else None, timeout=30)
-        
-        for f in files.values():
-            f.close()
+        if format_type == "mp3":
+            ydl_opts['postprocessors'] = [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }]
 
-        response.raise_for_status()
-        data = response.json()
-        
-        direct_download_url = data.get("url")
-        progress_url = data.get("progress_url")
-
-        import time
-        max_attempts = 40
-        attempt = 0
-        
-        while not direct_download_url and progress_url and attempt < max_attempts:
-            attempt += 1
-            time.sleep(3)
+        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+            info_dict = ydl.extract_info(url, download=True)
+            title = info_dict.get('title', 'فيديو يوتيوب')
+            duration = int(info_dict.get('duration', 180))
             
-            try:
-                prog_resp = requests.get(progress_url, timeout=30)
-                if prog_resp.status_code == 200:
-                    prog_data = prog_resp.json()
-                    direct_download_url = (
-                        prog_data.get("url") 
-                        or prog_data.get("download_url") 
-                        or (prog_data.get("info", {}) if isinstance(prog_data.get("info"), dict) else {}).get("url")
-                    )
-                    if direct_download_url:
-                        data = prog_data
-                        break
-            except Exception:
-                pass
+            if format_type == "mp3":
+                file_path = Path(temp_dir) / "media.mp3"
+            else:
+                downloaded_files = list(Path(temp_dir).glob("media.*"))
+                file_path = next((f for f in downloaded_files if f.suffix != '.txt'), Path(temp_dir) / "media.mp4")
 
-        if not direct_download_url:
-            raise ValueError(f"فشل الحصول على رابط التحميل المباشر بعد عدة محاولات: {data}")
+            if not file_path.exists():
+                files = [f for f in Path(temp_dir).iterdir() if f.name != "cookies.txt"]
+                if files:
+                    file_path = files[0]
+                else:
+                    raise FileNotFoundError("فشل العثور على الملف المحمل في المجلد المؤقت.")
 
-        suffix = ".mp3" if format_type == "mp3" else ".mp4"
-        with requests.get(direct_download_url, stream=True, timeout=60) as media_resp:
-            media_resp.raise_for_status()
-            
-            file_path = Path(temp_dir) / f"media{suffix}"
-            downloaded_size = 0
-            
-            with open(file_path, "wb") as f:
-                for chunk in media_resp.iter_content(chunk_size=128 * 1024):
-                    if chunk:
-                        downloaded_size += len(chunk)
-                        if downloaded_size > MAX_MEDIA_SIZE:
-                            raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
-                        f.write(chunk)
+            if file_path.stat().st_size > MAX_MEDIA_SIZE:
+                raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
 
-        title = data.get("title") or (data.get("info", {}) if isinstance(data.get("info"), dict) else {}).get("title") or "فيديو يوتيوب"
-        duration = int(data.get("duration") or (data.get("info", {}) if isinstance(data.get("info"), dict) else {}).get("duration") or 180)
         thumb_path = None
-
         return file_path, title, duration, thumb_path
 
     except Exception as e:
         print("=" * 40)
-        print("❌ [DEBUG ERROR] حدث خطأ أثناء تحميل يوتيوب:")
+        print("❌ [DEBUG ERROR] حدث خطأ أثناء تحميل يوتيوب بـ youtube-dl:")
         traceback.print_exc()
         print("=" * 40)
         shutil.rmtree(temp_dir, ignore_errors=True)
