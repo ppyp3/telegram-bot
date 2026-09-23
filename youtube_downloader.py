@@ -4,6 +4,7 @@ import tempfile
 import asyncio
 import logging
 from pathlib import Path
+import requests
 import yt_dlp
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
@@ -42,14 +43,60 @@ def format_views(views):
     return str(views)
 
 def get_youtube_info(url: str):
+    # استخراج معرف الفيديو (Video ID) لاستخدامه مع Google API
+    video_id = None
+    if "youtu.be/" in url:
+        video_id = url.split("youtu.be/")[1].split("?")[0]
+    elif "watch?v=" in url:
+        video_id = url.split("watch?v=")[1].split("&")[0]
+    elif "shorts/" in url:
+        video_id = url.split("shorts/")[1].split("?")[0]
+
+    api_key = os.environ.get("YOUTUBE_API_KEY")
+
+    if video_id and api_key:
+        try:
+            api_url = f"https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id={video_id}&key={api_key}"
+            response = requests.get(api_url, timeout=5)
+            if response.status_code == 200:
+                items = response.json().get("items", [])
+                if items:
+                    item = items[0]
+                    snippet = item.get("snippet", {})
+                    statistics = item.get("statistics", {})
+                    
+                    title = snippet.get("title", "فيديو يوتيوب")
+                    uploader = snippet.get("channelTitle", "غير معروف")
+                    
+                    thumbnails = snippet.get("thumbnails", {})
+                    thumb_url = (
+                        thumbnails.get("maxres", {}).get("url")
+                        or thumbnails.get("high", {}).get("url")
+                        or thumbnails.get("medium", {}).get("url")
+                        or thumbnails.get("default", {}).get("url")
+                    )
+                    
+                    view_count = int(statistics.get("viewCount", 0))
+                    
+                    return {
+                        "title": title,
+                        "uploader": uploader,
+                        "duration": 0,
+                        "duration_string": "00:00",
+                        "view_count_formatted": format_views(view_count),
+                        "thumbnail": thumb_url,
+                        "url": url
+                    }
+        except Exception:
+            pass
+
+    # الطريقة الاحتياطية في حال تعذر استخدام الـ API
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
         'skip_download': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        # إضافة بروكسي Oxylabs لحماية جلب المعلومات من الحظر
-        'proxy': 'http://PPYP3_wm2ys:07801233Ss__@unblock.oxylabs.io:60000',
         'extractor_args': {
             'youtube': {
                 'player_client': ['ios', 'android'],
@@ -98,7 +145,7 @@ def download_youtube_media(url: str, mode: str = "video"):
         'nocheckcertificate': True,
         'geo_bypass': True,
         'writethumbnail': True,
-        # إضافة بروكسي Oxylabs السكني لحماية التحميل الفعلي من الحظر
+        # بروكسي Oxylabs السكني مخصص لعملية التحميل الفعلي فقط لحمايته من الحظر
         'proxy': 'http://PPYP3_wm2ys:07801233Ss__@unblock.oxylabs.io:60000',
         'extractor_args': {
             'youtube': {
