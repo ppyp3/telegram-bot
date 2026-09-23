@@ -48,6 +48,8 @@ def get_youtube_info(url: str):
         'skip_download': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
+        # إضافة بروكسي Oxylabs لحماية جلب المعلومات من الحظر
+        'proxy': 'http://PPYP3_wm2ys:07801233Ss__@unblock.oxylabs.io:60000',
         'extractor_args': {
             'youtube': {
                 'player_client': ['ios', 'android'],
@@ -96,6 +98,8 @@ def download_youtube_media(url: str, mode: str = "video"):
         'nocheckcertificate': True,
         'geo_bypass': True,
         'writethumbnail': True,
+        # إضافة بروكسي Oxylabs السكني لحماية التحميل الفعلي من الحظر
+        'proxy': 'http://PPYP3_wm2ys:07801233Ss__@unblock.oxylabs.io:60000',
         'extractor_args': {
             'youtube': {
                 'player_client': ['ios', 'android'],
@@ -200,7 +204,6 @@ async def handle_youtube_callback(query, context, session_data, mode):
     chat_id = query.message.chat_id
     url = session_data["url"]
     
-    # إخفاء رسالة المعاينة والبطاقة الأصلية بمجرد الضغط على الزر
     try:
         await query.message.delete()
     except Exception:
@@ -213,21 +216,16 @@ async def handle_youtube_callback(query, context, session_data, mode):
     try:
         file_path, title, duration, thumb_path = await asyncio.to_thread(download_youtube_media, url, mode)
 
-        # زر شارك المشاركة المباشرة
         share_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔀 | شارك.", switch_inline_query=f"{title}")]
         ])
 
-        # حساب صيغة الوقت والحجم
         file_size_mb = f"{os.path.getsize(file_path) / (1024 * 1024):.1f}MB"
         minutes, seconds = divmod(int(duration), 60)
         time_str = f"{minutes:02d}:{seconds:02d}"
 
         if mode == "yt_voice":
-            # إظهار حالة "يسجل رسالة صوتية..." أعلى المحادثة
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.RECORD_VOICE)
-            
-            # كابشن البصمة الصوتية (يوزر البوت والوقت فقط بدون حجم)
             voice_caption = f"@G66Gbot - {time_str}"
             
             with open(file_path, 'rb') as voice_file:
@@ -240,9 +238,7 @@ async def handle_youtube_callback(query, context, session_data, mode):
                 )
 
         elif mode == "yt_audio":
-            # إظهار حالة "يرسل ملفاً صوتياً..."
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
-            
             audio_caption = f"@G66Gbot - {time_str}, {file_size_mb}"
             
             with open(file_path, 'rb') as audio_file:
@@ -262,9 +258,8 @@ async def handle_youtube_callback(query, context, session_data, mode):
                 if thumb_file:
                     thumb_file.close()
 
-        else:  # فيديو
+        else:
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
-            
             video_caption = f"@G66Gbot - {time_str}, {file_size_mb}"
             
             with open(file_path, 'rb') as video_file:
