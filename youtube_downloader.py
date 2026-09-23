@@ -138,7 +138,7 @@ def download_youtube_media(url: str, mode: str = "video"):
     format_type = "mp3" if mode in ["audio", "yt_audio", "yt_voice"] else "mp4"
     
     # الرابط المباشر لسيرفر Cobalt بدون مسار خاطئ لتجنب مشكلة 404
-    api_url = "https://cobalt-production-5277.up.railway.app/"
+    api_url = "https://cobalt-production-5277.up.railway.app/api/json"
     payload = {
         "url": url,
         "isAudioOnly": True if format_type == "mp3" else False,
