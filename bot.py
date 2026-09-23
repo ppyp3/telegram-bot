@@ -247,13 +247,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     url = text.strip()
 
-    # التحقق مما إذا كان الرابط تابعاً لبينترست أو تيك توك
     if is_valid_pinterest_url(url):
         await handle_pinterest_message(update, context)
-        return
-
-    if not is_valid_tiktok_url(url):
-        await update.message.reply_text("❌ أرسل رابط تيك توك أو بينترست صحيحاً من فضلك.")
         return
 
     if not is_valid_tiktok_url(url):
@@ -399,7 +394,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.answer()
 
-    # معالجة أزرار اليوتيوب
+    # معالجة أزرار اليوتيوب المحدثة لتتوافق مع yt_dlp وتجاوز البروكسي
     if query.data in ["yt_video", "yt_audio", "yt_voice"]:
         chat_id = query.message.chat_id
         yt_sessions = context.application.bot_data.get("yt_sessions", {})
