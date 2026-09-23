@@ -1,38 +1,6 @@
-import re
-import requests
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import ContextTypes, MessageHandler, filters
-
-# فلتر الروابط لليوتيوب
-YOUTUBE_FILTER = filters.TEXT & ~filters.COMMAND & filters.Regex(
-    r"(https?://)?(www\.)?(youtube\.com|youtu\.be)/.+"
-)
-
-COBALT_API_URL = "https://cobalt-production-5277.up.railway.app"
-
-async def handle_youtube_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    url = update.message.text.strip()
-    
-    keyboard = [
-        [InlineKeyboardButton("🎬 فيديو (دقة عالية)", callback_data="yt_video")],
-        [InlineKeyboardButton("🎵 ملف صوتي (MP3)", callback_data="yt_audio")],
-        [InlineKeyboardButton("🎙️ بصمة صوتية (Voice)", callback_data="yt_voice")],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    # حفظ الجلسة مؤقتاً
-    yt_sessions = context.application.bot_data.setdefault("yt_sessions", {})
-    sent_msg = await update.message.reply_text("📺 اختر طريقة التحميل المناسبة:", reply_markup=reply_markup)
-    
-    session_key = (update.effective_chat.id, sent_msg.message_id)
-    yt_sessions[session_key] = {
-        "user_id": update.effective_user.id,
-        "url": url,
-    }
-
 async def handle_youtube_callback(query, context, session, mode):
     url = session["url"]
-    status_msg = await query.message.reply_text("🔄 جاري جلب الرابط من سيرفر التحميل...")
+    status_msg = await query.message.reply_text("🔄 جاري المعالجة وسحب الرابط...")
 
     try:
         payload = {
@@ -48,14 +16,22 @@ async def handle_youtube_callback(query, context, session, mode):
             "Content-Type": "application/json"
         }
 
+        # طباعة معلومات للتشخيص في السجلات
+        print(f"Sending request to Cobalt for URL: {url} with mode: {mode}")
+
         response = requests.post(COBALT_API_URL, json=payload, headers=headers, timeout=30)
+        
+        # طباعة حالة الاستجابة لتصحيح الأخطاء إن وجدت
+        print(f"Cobalt response status: {response.status_code}")
+        print(f"Cobalt response text: {response.text}")
+
         response.raise_for_status()
         data = response.json()
 
         download_url = data.get("url") or data.get("picker", [{}])[0].get("url")
         
         if not download_url:
-            await status_msg.edit_text("❌ لم يتم العثور على رابط مباشر للتحميل.")
+            await status_msg.edit_text("❌ لم يتم العثور على رابط مباشر للتحميل من سيرفر كوبالت.")
             return
 
         await status_msg.edit_text("📥 جاري رفع الملف إلى تيليجرام...")
@@ -70,5 +46,6 @@ async def handle_youtube_callback(query, context, session, mode):
         await status_msg.delete()
 
     except Exception as e:
-        print(f"YouTube Error: {e}")
-        await status_msg.edit_text("⚠️ حدث خطأ أثناء المعالجة، يرجى المحاولة لاحقاً.")
+        import traceback
+        traceback.print_exc()  # هذا سيطبع الخطأ التفصيلي الكامل في لوحة السجلات (Logs)
+        await status_msg.edit_text(f"⚠️ حدث خطأ تقني: {str(e)}")
