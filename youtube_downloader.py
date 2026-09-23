@@ -1,3 +1,33 @@
+import requests
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import ContextTypes, filters
+
+# تعريف الفلتر الذي يحتاجه ملف bot.py للتعامل مع روابط يوتيوب
+YOUTUBE_FILTER = filters.TEXT & ~filters.COMMAND & filters.Regex(
+    r"(https?://)?(www\.)?(youtube\.com|youtu\.be)/.+"
+)
+
+COBALT_API_URL = "https://cobalt-production-5277.up.railway.app"
+
+async def handle_youtube_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    url = update.message.text.strip()
+    
+    keyboard = [
+        [InlineKeyboardButton("🎬 فيديو (دقة عالية)", callback_data="yt_video")],
+        [InlineKeyboardButton("🎵 ملف صوتي (MP3)", callback_data="yt_audio")],
+        [InlineKeyboardButton("🎙️ بصمة صوتية (Voice)", callback_data="yt_voice")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    yt_sessions = context.application.bot_data.setdefault("yt_sessions", {})
+    sent_msg = await update.message.reply_text("📺 اختر طريقة التحميل المناسبة:", reply_markup=reply_markup)
+    
+    session_key = (update.effective_chat.id, sent_msg.message_id)
+    yt_sessions[session_key] = {
+        "user_id": update.effective_user.id,
+        "url": url,
+    }
+
 async def handle_youtube_callback(query, context, session, mode):
     url = session["url"]
     status_msg = await query.message.reply_text("🔄 جاري المعالجة وسحب الرابط...")
@@ -16,15 +46,7 @@ async def handle_youtube_callback(query, context, session, mode):
             "Content-Type": "application/json"
         }
 
-        # طباعة معلومات للتشخيص في السجلات
-        print(f"Sending request to Cobalt for URL: {url} with mode: {mode}")
-
         response = requests.post(COBALT_API_URL, json=payload, headers=headers, timeout=30)
-        
-        # طباعة حالة الاستجابة لتصحيح الأخطاء إن وجدت
-        print(f"Cobalt response status: {response.status_code}")
-        print(f"Cobalt response text: {response.text}")
-
         response.raise_for_status()
         data = response.json()
 
@@ -47,5 +69,5 @@ async def handle_youtube_callback(query, context, session, mode):
 
     except Exception as e:
         import traceback
-        traceback.print_exc()  # هذا سيطبع الخطأ التفصيلي الكامل في لوحة السجلات (Logs)
+        traceback.print_exc()
         await status_msg.edit_text(f"⚠️ حدث خطأ تقني: {str(e)}")
