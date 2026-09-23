@@ -138,7 +138,7 @@ def download_youtube_media(url: str, mode: str = "video"):
     format_type = "mp3" if mode in ["audio", "yt_audio", "yt_voice"] else "mp4"
     
     # الرابط المباشر الصحيح مع مسار api/json المتوافق مع إصدار v11.5
-    api_url = "https://cobalt-production-5277.up.railway.app/api/json"
+    api_url = "https://cobalt-production-5277.up.railway.app"
     
     payload = {
         "url": url,
