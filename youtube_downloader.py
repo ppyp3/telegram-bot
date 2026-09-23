@@ -6,7 +6,7 @@ YOUTUBE_FILTER = filters.TEXT & ~filters.COMMAND & filters.Regex(
     r"(https?://)?(www\.)?(youtube\.com|youtu\.be)/.+"
 )
 
-COBALT_API_URL = "https://cobalt-production-5277.up.railway.app"
+COBALT_API_URL = "https://cobalt-production-5277.up.railway.app/"
 
 async def handle_youtube_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
@@ -32,9 +32,10 @@ async def handle_youtube_callback(query, context, session, mode):
     status_msg = await query.message.reply_text("🔄 جاري المعالجة وسحب الرابط...")
 
     try:
-        # هيكل مبسط وآمن يتوافق مع مختلف إصدارات كوبالت
+        # الهيكل القياسي المحدث لخدمة كوبالت
         payload = {
-            "url": url
+            "url": url,
+            "downloadMode": "audio" if mode in ["yt_audio", "yt_voice"] else "auto"
         }
         
         if mode in ["yt_audio", "yt_voice"]:
