@@ -29,6 +29,7 @@ from telegram.ext import (
 )
 from instagram_public_downloader import INSTAGRAM_FILTER, handle_instagram_message
 from youtube_downloader import YOUTUBE_FILTER, handle_youtube_message, handle_youtube_callback
+from pinterest_downloader import is_valid_pinterest_url, handle_pinterest_message
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -195,7 +196,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_msg = (
         f"✦ أهلاً بك ⦗ {user_name} ⦘ 🖤\n\n"
         f"▫︎ بوت التحميل السريع 📥\n"
-        f"▫︎ يوتيوب • تيك توك • إنستغرام\n\n"
+        f"▫︎ يوتيوب • تيك توك • إنستغرام • بينترست\n\n"
         f"⚡ أرسل الرابط الآن للبدء 🔻"
     )
 
@@ -246,8 +247,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     url = text.strip()
 
+    # التحقق مما إذا كان الرابط تابعاً لبينترست أو تيك توك
+    if is_valid_pinterest_url(url):
+        await handle_pinterest_message(update, context)
+        return
+
     if not is_valid_tiktok_url(url):
-        await update.message.reply_text("❌ أرسل رابط تيك توك صحيحاً من فضلك.")
+        await update.message.reply_text("❌ أرسل رابط تيك توك أو بينترست صحيحاً من فضلك.")
+        return
+
+    if not is_valid_tiktok_url(url):
+        await update.message.reply_text("❌ أرسل رابط تيك توك أو بينترست صحيحاً من فضلك.")
         return
 
     processing_msg = await update.message.reply_text(
