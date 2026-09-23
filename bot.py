@@ -29,7 +29,6 @@ from telegram.ext import (
 )
 from instagram_public_downloader import INSTAGRAM_FILTER, handle_instagram_message
 from youtube_downloader import YOUTUBE_FILTER, handle_youtube_message, handle_youtube_callback
-from pinterest_downloader import is_valid_pinterest_url, handle_pinterest_message
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -196,7 +195,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_msg = (
         f"✦ أهلاً بك ⦗ {user_name} ⦘ 🖤\n\n"
         f"▫︎ بوت التحميل السريع 📥\n"
-        f"▫︎ يوتيوب • تيك توك • إنستغرام • بينترست\n\n"
+        f"▫︎ يوتيوب • تيك توك • إنستغرام\n\n"
         f"⚡ أرسل الرابط الآن للبدء 🔻"
     )
 
@@ -247,12 +246,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     url = text.strip()
 
-    if is_valid_pinterest_url(url):
-        await handle_pinterest_message(update, context)
-        return
-
     if not is_valid_tiktok_url(url):
-        await update.message.reply_text("❌ أرسل رابط تيك توك أو بينترست صحيحاً من فضلك.")
+        await update.message.reply_text("❌ أرسل رابط تيك توك صحيحاً من فضلك.")
         return
 
     processing_msg = await update.message.reply_text(
@@ -394,7 +389,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.answer()
 
-    # معالجة أزرار اليوتيوب المحدثة لتتوافق مع yt_dlp وتجاوز البروكسي
+    # معالجة أزرار اليوتيوب
     if query.data in ["yt_video", "yt_audio", "yt_voice"]:
         chat_id = query.message.chat_id
         yt_sessions = context.application.bot_data.get("yt_sessions", {})
@@ -558,4 +553,4 @@ def main():
     app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    main() 
