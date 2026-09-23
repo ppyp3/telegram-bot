@@ -2,7 +2,6 @@ import requests
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, filters
 
-# تعريف الفلتر الذي يحتاجه ملف bot.py للتعامل مع روابط يوتيوب
 YOUTUBE_FILTER = filters.TEXT & ~filters.COMMAND & filters.Regex(
     r"(https?://)?(www\.)?(youtube\.com|youtu\.be)/.+"
 )
@@ -33,9 +32,9 @@ async def handle_youtube_callback(query, context, session, mode):
     status_msg = await query.message.reply_text("🔄 جاري المعالجة وسحب الرابط...")
 
     try:
+        # هيكل مبسط وآمن يتوافق مع مختلف إصدارات كوبالت
         payload = {
-            "url": url,
-            "vQuality": "720"
+            "url": url
         }
         
         if mode in ["yt_audio", "yt_voice"]:
