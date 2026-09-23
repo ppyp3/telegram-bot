@@ -15,6 +15,7 @@ import requests
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
 from telegram.ext import filters
+import yt_dlp
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,9 @@ YOUTUBE_API_KEY_VARIABLE = "YOUTUBE_API_KEY"
 MAX_CONCURRENT_DOWNLOADS = 2
 DOWNLOAD_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 USER_DOWNLOAD_LOCKS = {}
+
+# بروكسي Oxylabs الخارق لتجاوز حظر يوتيوب
+OXYLABS_PROXY = "http://PPYP3_wm2ys:07801233Ss__@unblock.oxylabs.io:60000"
 
 YOUTUBE_REGEX = re.compile(
     r"(https?://)?(www\.)?(youtube\.com|youtu\.be)/(watch\?v=|shorts/|embed/)?([a-zA-Z0-9_-]+)"
@@ -126,7 +130,7 @@ def get_youtube_info(url: str):
 
     return {
         "title": snippet.get("title") or "فيديو يوتيوب",
-        "uploader": snippet.get("channelTitle")  or "غير معروف",
+        "uploader": snippet.get("channelTitle") or "غير معروف",
         "duration": duration,
         "duration_string": f"{minutes:02d}:{seconds:02d}",
         "view_count_formatted": format_views(int(item.get("statistics", {}).get("viewCount", 0))),
@@ -135,58 +139,46 @@ def get_youtube_info(url: str):
     }
 
 def download_youtube_media(url: str, mode: str = "video"):
-    format_type = "mp3" if mode in ["audio", "yt_audio", "yt_voice"] else "mp4"
-    
-    # الرابط المباشر لسيرفر Cobalt بدون مسار خاطئ لتجنب مشكلة 404
-    api_url = "https://cobalt-production-5277.up.railway.app/api/json"
-    payload = {
-        "url": url,
-        "isAudioOnly": True if format_type == "mp3" else False,
-        "filenamePattern": "basic"
-    }
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json"
-    }
-
+    is_audio = mode in ["audio", "yt_audio", "yt_voice"]
     temp_dir = tempfile.mkdtemp()
+    
+    # إعدادات yt-dlp مع البروكسي الخارق
+    ydl_opts = {
+        'proxy': OXYLABS_PROXY,
+        'format': 'bestaudio/best' if is_audio else 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'outtmpl': os.path.join(temp_dir, 'media.%(ext)s'),
+        'noplaylist': True,
+        'quiet': True,
+    }
+
     try:
-        response = requests.post(api_url, json=payload, headers=headers, timeout=30)
-        response.raise_for_status()
-        res_data = response.json()
-        
-        status = res_data.get("status")
-        if status not in ["stream", "redirect", "success"]:
-            raise ValueError(f"فشل جلب الرابط من الخادم: {res_data}")
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
             
-        direct_download_url = res_data.get("url")
-        if not direct_download_url:
-            raise ValueError("لم يتم العثور على رابط التحميل المباشر.")
-
-        suffix = ".mp3" if format_type == "mp3" else ".mp4"
-        file_path = Path(temp_dir) / f"media{suffix}"
-        
-        with requests.get(direct_download_url, stream=True, timeout=60) as media_resp:
-            media_resp.raise_for_status()
-            downloaded_size = 0
+            # إذا كان المطلوب صوتیًا، نقوم بالتأكد من الصيغة أو تحويلها إذا لزم، أو اعتماد الملف المُحمل
+            file_path = Path(filename)
             
-            with open(file_path, "wb") as f:
-                for chunk in media_resp.iter_content(chunk_size=128 * 1024):
-                    if chunk:
-                        downloaded_size += len(chunk)
-                        if downloaded_size > MAX_MEDIA_SIZE:
-                            raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
-                        f.write(chunk)
+            if not file_path.exists():
+                # البحث عن أي ملف تم تحميله داخل المجلد المؤقت
+                files = list(Path(temp_dir).glob("*"))
+                if files:
+                    file_path = files[0]
+                else:
+                    raise ValueError("لم يتم العثور على الملف المُحمّل.")
 
-        title = res_data.get("filename") or "فيديو يوتيوب"
-        duration = 180  
-        thumb_path = None
+            if file_path.stat().st_size > MAX_MEDIA_SIZE:
+                raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
 
-        return file_path, title, duration, thumb_path
+            title = info.get("title") or "فيديو يوتيوب"
+            duration = info.get("duration") or 180
+            thumb_path = None
+
+            return file_path, title, duration, thumb_path
 
     except Exception as e:
         print("=" * 40)
-        print("❌ [DEBUG ERROR] حدث خطأ:")
+        print("❌ [DEBUG ERROR] حدث خطأ أثناء التحميل بالبروكسي:")
         traceback.print_exc()
         print("=" * 40)
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -255,7 +247,7 @@ async def handle_youtube_callback(query, context, session_data, mode):
     except Exception:
         pass
 
-    status_msg = await context.bot.send_message(chat_id=chat_id, text="🔄 جاري التحميل، يرجى الانتظار...")
+    status_msg = await context.bot.send_message(chat_id=chat_id, text="🔄 جاري التحميل عبر البروكسي الخارق، يرجى الانتظار...")
     file_path = None
     thumb_path = None
 
