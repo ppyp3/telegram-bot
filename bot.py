@@ -67,7 +67,7 @@ def request_headers():
     }
 
 def fetch_tiktok_data(url):
-    """تم التحديث لاعتماد yt-dlp وتجاوز تحديثات تيك توك"""
+    """دالة محدثة تعتمد على yt-dlp وتدعم الفيديوهات وصور تيك توك والأغاني"""
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
@@ -87,10 +87,21 @@ def fetch_tiktok_data(url):
                     if 'url' in entry:
                         images.append(entry['url'])
             
+            title = str(info.get('title') or "محتوى تيك توك")
+            clean_title = "".join(
+                character
+                for character in title
+                if character.isalnum() or character in (" ", "_", "-", "🔥")
+            ).strip()
+
+            if not clean_title:
+                clean_title = "tiktok_audio"
+
             return {
-                "title": info.get('title') or "محتوى تيك توك",
+                "title": title,
                 "author": info.get('uploader') or "مستخدم تيك توك",
                 "music": info.get('url'),
+                "audio_title": f"{clean_title}.mp3",
                 "images": images,
                 "play": info.get('url') or info.get('webpage_url'),
             }
@@ -99,7 +110,7 @@ def fetch_tiktok_data(url):
         return None
 
 def download_media(url, suffix):
-    """تم التحديث ليعتمد على yt-dlp و ffmpeg للتحميل المباشر الآمن"""
+    """دالة التحميل المحدثة عبر yt-dlp و ffmpeg"""
     temp_dir = tempfile.mkdtemp()
     ydl_opts = {
         'outtmpl': os.path.join(temp_dir, '%(id)s.%(ext)s'),
@@ -246,10 +257,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if tiktok_data:
             title = tiktok_data["title"]
             images = tiktok_data["images"]
+            video_url = tiktok_data["play"]
+            audio_url = tiktok_data["music"]
             caption_text = "- @G66Gbot"
 
             if images:
-                if tiktok_data.get("music"):
+                if audio_url:
                     local_audio_path = None
 
                     try:
@@ -307,7 +320,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await processing_msg.delete()
                 return
 
-            else:
+            elif video_url:
                 local_video_path = await asyncio.to_thread(
                     download_media, url, ".mp4"
                 )
@@ -355,6 +368,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception:
         logger.exception("Error in handle_message")
+
         error_custom_msg = (
             "⚠️┇هذا الملف لا يمكنني تحميله،\n"
             "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
