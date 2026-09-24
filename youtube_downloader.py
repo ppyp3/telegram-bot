@@ -30,19 +30,11 @@ class YoutubeFilter(filters.MessageFilter):
 YOUTUBE_FILTER = YoutubeFilter()
 
 def get_cookie_file_path():
-    """قراءة الكوكيز من متغير البيئة وحمايتها بملف مؤقت آمن في مسار النظام الداخلي"""
-    cookie_data = os.environ.get("YOUTUBE_COOKIE_DATA")
-    if not cookie_data:
-        return None
-    
-    try:
-        clean_data = cookie_data.strip().encode('utf-8').decode('utf-8')
-        temp_cookie = tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8', suffix='.txt')
-        temp_cookie.write(clean_data)
-        temp_cookie.close()
-        return temp_cookie.name
-    except Exception:
-        return None
+    """قراءة الكوكيز مباشرة من ملف cookies.txt المحلي الثابت في المشروع"""
+    cookie_path = Path("cookies.txt")
+    if cookie_path.exists() and cookie_path.stat().st_size > 0:
+        return str(cookie_path.resolve())
+    return None
 
 def format_views(views):
     if not views:
@@ -164,12 +156,6 @@ def get_youtube_info(url: str):
             "thumbnail": None,
             "url": url
         }
-    finally:
-        if cookie_file and os.path.exists(cookie_file):
-            try:
-                os.remove(cookie_file)
-            except Exception:
-                pass
 
 def check_media_size_before_download(url: str, mode: str = "video") -> bool:
     cookie_file = get_cookie_file_path()
@@ -206,12 +192,6 @@ def check_media_size_before_download(url: str, mode: str = "video") -> bool:
                 return False
     except Exception:
         pass
-    finally:
-        if cookie_file and os.path.exists(cookie_file):
-            try:
-                os.remove(cookie_file)
-            except Exception:
-                pass
     return True
 
 def download_youtube_media(url: str, mode: str = "video"):
@@ -269,31 +249,24 @@ def download_youtube_media(url: str, mode: str = "video"):
             'format': 'bestvideo[max_filesize<=49M][ext=mp4]+bestaudio[ext=m4a]/best[max_filesize<=49M][ext=mp4]/best[max_filesize<=49M]/best',
         })
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            title = info.get('title', 'فيديو يوتيوب')
-            duration = info.get('duration', 0)
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        title = info.get('title', 'فيديو يوتيوب')
+        duration = info.get('duration', 0)
 
-            media_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.mp3', '.mp4', '.m4a', '.webm', '.ogg', '.opus']]
-            if not media_files:
-                raise FileNotFoundError("لم يتم العثور على الملف المحمل.")
+        media_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.mp3', '.mp4', '.m4a', '.webm', '.ogg', '.opus']]
+        if not media_files:
+            raise FileNotFoundError("لم يتم العثور على الملف المحمل.")
 
-            file_path = media_files[0]
-            thumb_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.jpg', '.jpeg', '.png']]
-            thumb_path = thumb_files[0] if thumb_files else None
+        file_path = media_files[0]
+        thumb_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.jpg', '.jpeg', '.png']]
+        thumb_path = thumb_files[0] if thumb_files else None
 
-            if file_path.stat().st_size > MAX_MEDIA_SIZE:
-                file_path.unlink(missing_ok=True)
-                raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
+        if file_path.stat().st_size > MAX_MEDIA_SIZE:
+            file_path.unlink(missing_ok=True)
+            raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
 
-            return file_path, title, duration, thumb_path
-    finally:
-        if cookie_file and os.path.exists(cookie_file):
-            try:
-                os.remove(cookie_file)
-            except Exception:
-                pass
+        return file_path, title, duration, thumb_path
 
 async def handle_youtube_message(update, context):
     url = update.message.text.strip()
