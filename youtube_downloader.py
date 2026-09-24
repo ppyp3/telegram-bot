@@ -42,8 +42,23 @@ def format_views(views):
         return f"{int(views / 1_000)}K"
     return str(views)
 
+def parse_iso8601_duration(duration_str):
+    match = re.match(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?', duration_str)
+    if not match:
+        return 0, "00:00"
+    hours = int(match.group(1)) if match.group(1) else 0
+    minutes = int(match.group(2)) if match.group(2) else 0
+    seconds = int(match.group(3)) if match.group(3) else 0
+    
+    total_seconds = hours * 3600 + minutes * 60 + seconds
+    if hours > 0:
+        time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    else:
+        time_str = f"{minutes:02d}:{seconds:02d}"
+        
+    return total_seconds, time_str
+
 def get_youtube_info(url: str):
-    # استخراج معرف الفيديو (Video ID) لاستخدامه مع Google API
     video_id = None
     if "youtu.be/" in url:
         video_id = url.split("youtu.be/")[1].split("?")[0]
@@ -64,6 +79,7 @@ def get_youtube_info(url: str):
                     item = items[0]
                     snippet = item.get("snippet", {})
                     statistics = item.get("statistics", {})
+                    content_details = item.get("contentDetails", {})
                     
                     title = snippet.get("title", "فيديو يوتيوب")
                     uploader = snippet.get("channelTitle", "غير معروف")
@@ -77,12 +93,14 @@ def get_youtube_info(url: str):
                     )
                     
                     view_count = int(statistics.get("viewCount", 0))
+                    raw_duration = content_details.get("duration", "PT0S")
+                    duration, duration_string = parse_iso8601_duration(raw_duration)
                     
                     return {
                         "title": title,
                         "uploader": uploader,
-                        "duration": 0,
-                        "duration_string": "00:00",
+                        "duration": duration,
+                        "duration_string": duration_string,
                         "view_count_formatted": format_views(view_count),
                         "thumbnail": thumb_url,
                         "url": url
@@ -90,7 +108,6 @@ def get_youtube_info(url: str):
         except Exception:
             pass
 
-    # الطريقة الاحتياطية في حال تعذر استخدام الـ API
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
@@ -145,7 +162,6 @@ def download_youtube_media(url: str, mode: str = "video"):
         'nocheckcertificate': True,
         'geo_bypass': True,
         'writethumbnail': True,
-        # بروكسي Oxylabs السكني مخصص لعملية التحميل الفعلي فقط لحمايته من الحظر
         'proxy': 'http://PPYP3_wm2ys:07801233Ss__@unblock.oxylabs.io:60000',
         'extractor_args': {
             'youtube': {
@@ -155,7 +171,18 @@ def download_youtube_media(url: str, mode: str = "video"):
         },
     }
 
-    if mode in ["audio", "yt_audio", "yt_voice"]:
+    if mode == "yt_voice":
+        ydl_opts.update({
+            'format': 'bestaudio/best',
+            'postprocessors': [
+                {
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'opus',
+                    'preferredquality': '128',
+                }
+            ],
+        })
+    elif mode in ["audio", "yt_audio"]:
         ydl_opts.update({
             'format': 'bestaudio/best',
             'postprocessors': [
@@ -180,7 +207,7 @@ def download_youtube_media(url: str, mode: str = "video"):
         title = info.get('title', 'فيديو يوتيوب')
         duration = info.get('duration', 0)
 
-        media_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.mp3', '.mp4', '.m4a', '.webm', '.ogg']]
+        media_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.mp3', '.mp4', '.m4a', '.webm', '.ogg', '.opus']]
         if not media_files:
             raise FileNotFoundError("لم يتم العثور على الملف المحمل.")
 
