@@ -322,7 +322,7 @@ async def handle_youtube_callback(query, context, session_data, mode):
     except Exception:
         pass
 
-    status_msg = await context.bot.send_message(chat_id=chat_id, text="♻️┇جاري التحميل....")
+    status_msg = await context.bot.send_message(chat_id=chat_id, text="♻️┇جاري التحميل...")
     file_path = None
     thumb_path = None
 
