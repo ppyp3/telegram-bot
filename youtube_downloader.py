@@ -109,11 +109,16 @@ def get_youtube_info(url: str):
             pass
 
     ydl_opts = {
+        'outtmpl': outtmpl,
         'quiet': True,
         'no_warnings': True,
-        'skip_download': True,
+        'ignoreerrors': False,
         'nocheckcertificate': True,
         'geo_bypass': True,
+        'writethumbnail': True,
+        'socket_timeout': 60,  # زيادة مهلة الاتصال إلى 60 ثانية لتجنب الـ Timeout
+        'retries': 10,         # زيادة محاولات إعادة الاتصال عند الفشل
+        'proxy': 'http://PPYP3_wm2ys:07801233Ss__@unblock.oxylabs.io:60000',
         'extractor_args': {
             'youtube': {
                 'player_client': ['android', 'mweb', 'web'],
