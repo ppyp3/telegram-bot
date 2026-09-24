@@ -122,7 +122,7 @@ def get_youtube_info(url: str):
         'geo_bypass': True,
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'web'],
+                'player_client': ['android'],
                 'player_skip': ['webpage', 'configs'],
             }
         },
@@ -170,7 +170,7 @@ def check_media_size_before_download(url: str, mode: str = "video") -> bool:
         'geo_bypass': True,
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'web'],
+                'player_client': ['android'],
                 'player_skip': ['webpage', 'configs'],
             }
         },
@@ -212,7 +212,7 @@ def download_youtube_media(url: str, mode: str = "video"):
         'writethumbnail': True,
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'web'],
+                'player_client': ['android'],
                 'player_skip': ['webpage', 'configs'],
             }
         },
