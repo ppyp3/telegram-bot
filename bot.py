@@ -67,8 +67,8 @@ def request_headers():
     }
 
 def fetch_tiktok_data(url):
-    """دالة تتعامل مع الفيديوهات وروابط الصور لتيك توك دون أخطاء"""
-    if "/photo/" in url:
+    """دالة آمنة لمعالجة روابط تيك توك وتجنب أخطاء روابط الصور"""
+    if "/photo/" in url or "photo" in url:
         try:
             headers = request_headers()
             with requests.get(
@@ -92,6 +92,9 @@ def fetch_tiktok_data(url):
                             }
         except Exception:
             logger.exception("Error fetching TikTok photo via alternative API")
+
+    if "/photo/" in url:
+        return None
 
     ydl_opts = {
         'quiet': True,
