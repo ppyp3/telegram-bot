@@ -110,6 +110,14 @@ def get_youtube_info(url: str):
         'skip_download': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['ios', 'web'],
+            }
+        },
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+        }
     }
 
     try:
@@ -148,12 +156,20 @@ def check_media_size_before_download(url: str, mode: str = "video") -> bool:
         'skip_download': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['ios', 'web'],
+            }
+        },
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+        }
     }
 
     if mode in ["audio", "yt_audio", "yt_voice"]:
-        ydl_opts['format'] = 'bestaudio'
+        ydl_opts['format'] = 'bestaudio/best'
     else:
-        ydl_opts['format'] = 'best'
+        ydl_opts['format'] = 'best/bestvideo+bestaudio'
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -180,11 +196,19 @@ def download_youtube_media(url: str, mode: str = "video"):
         'nocheckcertificate': True,
         'geo_bypass': True,
         'writethumbnail': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['ios', 'web'],
+            }
+        },
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+        }
     }
 
     if mode == "yt_voice":
         ydl_opts.update({
-            'format': 'bestaudio',
+            'format': 'bestaudio/best',
             'postprocessors': [
                 {
                     'key': 'FFmpegExtractAudio',
@@ -195,7 +219,7 @@ def download_youtube_media(url: str, mode: str = "video"):
         })
     elif mode in ["audio", "yt_audio"]:
         ydl_opts.update({
-            'format': 'bestaudio',
+            'format': 'bestaudio/best',
             'postprocessors': [
                 {
                     'key': 'FFmpegExtractAudio',
@@ -210,7 +234,7 @@ def download_youtube_media(url: str, mode: str = "video"):
         })
     else:
         ydl_opts.update({
-            'format': 'best',
+            'format': 'best/bestvideo+bestaudio',
         })
 
     try:
