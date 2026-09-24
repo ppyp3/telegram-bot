@@ -184,7 +184,7 @@ def check_media_size_before_download(url: str, mode: str = "video") -> bool:
     if mode in ["audio", "yt_audio", "yt_voice"]:
         ydl_opts['format'] = 'bestaudio/best'
     else:
-        ydl_opts['format'] = 'bv*[filesize<49M]+ba/b[filesize<49M]/best'
+        ydl_opts['format'] = 'best[filesize<49M]/bestvideo[filesize<49M]+bestaudio/best'
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -251,7 +251,7 @@ def download_youtube_media(url: str, mode: str = "video"):
         })
     else:
         ydl_opts.update({
-            'format': 'bv*[filesize<49M]+ba/b[filesize<49M]/best',
+            'format': 'best[filesize<49M]/bestvideo[filesize<49M]+bestaudio/best',
         })
 
     try:
