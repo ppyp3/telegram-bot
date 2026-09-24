@@ -29,6 +29,15 @@ class YoutubeFilter(filters.MessageFilter):
 
 YOUTUBE_FILTER = YoutubeFilter()
 
+def get_cookie_file_path():
+    """يقوم بإنشاء ملف كوكيز مؤقت آمن من متغيرات البيئة ليتعامل معه yt-dlp"""
+    cookie_data = os.environ.get("YOUTUBE_COOKIE_DATA")
+    if cookie_data:
+        cookie_path = Path("temp_cookies.txt")
+        cookie_path.write_text(cookie_data, encoding="utf-8")
+        return str(cookie_path)
+    return None
+
 def format_views(views):
     if not views:
         return "0"
@@ -104,6 +113,7 @@ def get_youtube_info(url: str):
         except Exception:
             pass
 
+    cookie_file = get_cookie_file_path()
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
@@ -112,11 +122,14 @@ def get_youtube_info(url: str):
         'geo_bypass': True,
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'mweb', 'web'],
+                'player_client': ['android', 'web'],
                 'player_skip': ['webpage', 'configs'],
             }
         },
     }
+    if cookie_file:
+        ydl_opts['cookiefile'] = cookie_file
+
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -148,14 +161,24 @@ def get_youtube_info(url: str):
 
 def check_media_size_before_download(url: str, mode: str = "video") -> bool:
     """فحص حجم الملف مسبقاً قبل التحميل الفعلي للتأكد أنه لا يتجاوز 49MB"""
+    cookie_file = get_cookie_file_path()
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
         'skip_download': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web'],
+                'player_skip': ['webpage', 'configs'],
+            }
+        },
     }
     
+    if cookie_file:
+        ydl_opts['cookiefile'] = cookie_file
+
     if mode in ["audio", "yt_audio", "yt_voice"]:
         ydl_opts['format'] = 'bestaudio/best'
     else:
@@ -165,9 +188,8 @@ def check_media_size_before_download(url: str, mode: str = "video") -> bool:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             if not info:
-                return True # السماح بالمحاولة إذا تعذر الفحص
+                return True 
             
-            # التحقق من حجم الملف إذا كان مسجلاً في البيانات
             filesize = info.get('filesize') or info.get('filesize_approx') or 0
             if filesize and filesize > MAX_MEDIA_SIZE:
                 return False
@@ -179,6 +201,7 @@ def download_youtube_media(url: str, mode: str = "video"):
     temp_dir = tempfile.mkdtemp()
     outtmpl = os.path.join(temp_dir, '%(title)s.%(ext)s')
 
+    cookie_file = get_cookie_file_path()
     ydl_opts = {
         'outtmpl': outtmpl,
         'quiet': True,
@@ -189,11 +212,14 @@ def download_youtube_media(url: str, mode: str = "video"):
         'writethumbnail': True,
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'mweb', 'web'],
+                'player_client': ['android', 'web'],
                 'player_skip': ['webpage', 'configs'],
             }
         },
     }
+
+    if cookie_file:
+        ydl_opts['cookiefile'] = cookie_file
 
     if mode == "yt_voice":
         ydl_opts.update({
@@ -312,7 +338,6 @@ async def handle_youtube_callback(query, context, session_data, mode):
     thumb_path = None
 
     try:
-        # فحص الحجم مسبقاً قبل بدء التحميل لمنع التعليق
         is_size_ok = await asyncio.to_thread(check_media_size_before_download, url, mode)
         if not is_size_ok:
             await status_msg.edit_text("⚠️┇عذراً، هذا الملف كبير جداً ولا يمكن تحميله لأن حجمه يتجاوز ( 50 MB ).")
