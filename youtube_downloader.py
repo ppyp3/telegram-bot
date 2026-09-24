@@ -110,11 +110,6 @@ def get_youtube_info(url: str):
         'skip_download': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'web'],
-            }
-        },
     }
 
     try:
@@ -153,17 +148,12 @@ def check_media_size_before_download(url: str, mode: str = "video") -> bool:
         'skip_download': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'web'],
-            }
-        },
     }
 
     if mode in ["audio", "yt_audio", "yt_voice"]:
-        ydl_opts['format'] = 'bestaudio/best'
+        ydl_opts['format'] = 'bestaudio'
     else:
-        ydl_opts['format'] = 'bv*[ext=mp4][filesize<49M]/b[ext=mp4][filesize<49M]/best'
+        ydl_opts['format'] = 'best'
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -190,16 +180,11 @@ def download_youtube_media(url: str, mode: str = "video"):
         'nocheckcertificate': True,
         'geo_bypass': True,
         'writethumbnail': True,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'web'],
-            }
-        },
     }
 
     if mode == "yt_voice":
         ydl_opts.update({
-            'format': 'bestaudio/best',
+            'format': 'bestaudio',
             'postprocessors': [
                 {
                     'key': 'FFmpegExtractAudio',
@@ -210,7 +195,7 @@ def download_youtube_media(url: str, mode: str = "video"):
         })
     elif mode in ["audio", "yt_audio"]:
         ydl_opts.update({
-            'format': 'bestaudio/best',
+            'format': 'bestaudio',
             'postprocessors': [
                 {
                     'key': 'FFmpegExtractAudio',
@@ -225,7 +210,7 @@ def download_youtube_media(url: str, mode: str = "video"):
         })
     else:
         ydl_opts.update({
-            'format': 'bv*[ext=mp4][filesize<49M]/b[ext=mp4][filesize<49M]/best',
+            'format': 'best',
         })
 
     try:
