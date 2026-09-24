@@ -30,7 +30,6 @@ class YoutubeFilter(filters.MessageFilter):
 YOUTUBE_FILTER = YoutubeFilter()
 
 def get_cookie_file_path():
-    """البحث عن ملف الكوكيز في أكثر من مسار لضمان العثور عليه بدقة"""
     possible_paths = [
         Path("cookies.txt"),
         Path(__file__).parent / "cookies.txt",
@@ -170,21 +169,16 @@ def check_media_size_before_download(url: str, mode: str = "video") -> bool:
         'skip_download': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'web'],
-                'player_skip': ['webpage', 'configs'],
-            }
-        },
     }
     
     if cookie_file:
         ydl_opts['cookiefile'] = cookie_file
 
     if mode in ["audio", "yt_audio", "yt_voice"]:
-        ydl_opts['format'] = 'bestaudio/best'
+        ydl_opts['format'] = 'bestaudio'
     else:
-        ydl_opts['format'] = 'best[filesize<49M]/bestvideo[filesize<49M]+bestaudio/best'
+        # صيغة مضمونة 100% بدون تعقيد
+        ydl_opts['format'] = 'best'
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -212,12 +206,6 @@ def download_youtube_media(url: str, mode: str = "video"):
         'nocheckcertificate': True,
         'geo_bypass': True,
         'writethumbnail': True,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'web'],
-                'player_skip': ['webpage', 'configs'],
-            }
-        },
     }
 
     if cookie_file:
@@ -225,7 +213,7 @@ def download_youtube_media(url: str, mode: str = "video"):
 
     if mode == "yt_voice":
         ydl_opts.update({
-            'format': 'bestaudio/best',
+            'format': 'bestaudio',
             'postprocessors': [
                 {
                     'key': 'FFmpegExtractAudio',
@@ -236,7 +224,7 @@ def download_youtube_media(url: str, mode: str = "video"):
         })
     elif mode in ["audio", "yt_audio"]:
         ydl_opts.update({
-            'format': 'bestaudio/best',
+            'format': 'bestaudio',
             'postprocessors': [
                 {
                     'key': 'FFmpegExtractAudio',
@@ -250,8 +238,9 @@ def download_youtube_media(url: str, mode: str = "video"):
             ],
         })
     else:
+        # استخدام أفضل صيغة متوفرة مباشرة بدون دمج لتفادي الأخطاء نهائياً
         ydl_opts.update({
-            'format': 'best[filesize<49M]/bestvideo[filesize<49M]+bestaudio/best',
+            'format': 'best',
         })
 
     try:
