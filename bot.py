@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
+import yt_dlp
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -56,7 +57,7 @@ def is_valid_tiktok_url(url):
     parsed = urlparse(url.strip())
     hostname = (parsed.hostname or "").lower().rstrip(".")
     return parsed.scheme == "https" and (
-        hostname == "tiktok.com" or hostname.endswith(".tiktok.com")
+        hostname == "tiktok.com" or hostname.endswith(".tiktok.com") or hostname in {"vm.tiktok.com", "vt.tiktok.com"}
     )
 
 def request_headers():
@@ -66,106 +67,79 @@ def request_headers():
     }
 
 def fetch_tiktok_data(url):
+    """تم التحديث لاعتماد yt-dlp وتجاوز تحديثات تيك توك"""
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True,
+        'nocheckcertificate': True,
+        'geo_bypass': True,
+    }
     try:
-        headers = request_headers()
-        parsed_url = urlparse(url)
-
-        if parsed_url.hostname in {"vm.tiktok.com", "vt.tiktok.com"}:
-            with requests.get(
-                url, allow_redirects=True, timeout=(8, 20), headers=headers
-            ) as response:
-                response.raise_for_status()
-                url = response.url
-
-        if not is_valid_tiktok_url(url):
-            return None
-
-        with requests.get(
-            "https://tikwm.com/api/",
-            params={"url": url, "music": 1},
-            headers=headers,
-            timeout=(8, 20),
-        ) as response:
-            response.raise_for_status()
-            alt_resp = response.json()
-
-        if alt_resp.get("code") != 0:
-            return None
-
-        data = alt_resp.get("data")
-        if not isinstance(data, dict):
-            return None
-
-        title = str(data.get("title") or "محتوى تيك توك")
-        clean_title = "".join(
-            character
-            for character in title
-            if character.isalnum() or character in (" ", "_", "-", "🔥")
-        ).strip()
-
-        if not clean_title:
-            clean_title = "tiktok_audio"
-
-        author = data.get("author")
-        if not isinstance(author, dict):
-            author = {}
-
-        images = data.get("images")
-        if not isinstance(images, list):
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if not info:
+                return None
+            
             images = []
-
-        return {
-            "title": title,
-            "author": author.get("nickname", "مستخدم تيك توك"),
-            "music": data.get("music"),
-            "audio_title": f"{clean_title}.mp3",
-            "images": images,
-            "play": data.get("play"),
-        }
-
-    except (requests.RequestException, ValueError, TypeError):
-        logger.exception("Error fetching TikTok data")
+            if info.get('_type') == 'playlist' and 'entries' in info:
+                for entry in info['entries']:
+                    if 'url' in entry:
+                        images.append(entry['url'])
+            
+            return {
+                "title": info.get('title') or "محتوى تيك توك",
+                "author": info.get('uploader') or "مستخدم تيك توك",
+                "music": info.get('url'),
+                "images": images,
+                "play": info.get('url') or info.get('webpage_url'),
+            }
+    except Exception:
+        logger.exception("Error fetching TikTok data via yt-dlp")
         return None
 
 def download_media(url, suffix):
-    temporary_path = None
-
+    """تم التحديث ليعتمد على yt-dlp و ffmpeg للتحميل المباشر الآمن"""
+    temp_dir = tempfile.mkdtemp()
+    ydl_opts = {
+        'outtmpl': os.path.join(temp_dir, '%(id)s.%(ext)s'),
+        'quiet': True,
+        'no_warnings': True,
+        'nocheckcertificate': True,
+        'geo_bypass': True,
+    }
+    
+    if suffix == ".mp3":
+        ydl_opts.update({
+            'format': 'bestaudio/best',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+        })
+    else:
+        ydl_opts.update({
+            'format': 'best/bestvideo+bestaudio/best',
+        })
+        
     try:
-        with requests.get(
-            url, headers=request_headers(), timeout=(8, 30), stream=True
-        ) as response:
-            response.raise_for_status()
-
-            content_length = response.headers.get("Content-Length")
-            if content_length:
-                try:
-                    if int(content_length) > MAX_MEDIA_SIZE:
-                        raise DownloadTooLarge
-                except ValueError:
-                    pass
-
-            with tempfile.NamedTemporaryFile(
-                delete=False, suffix=suffix
-            ) as temporary_file:
-                temporary_path = Path(temporary_file.name)
-                downloaded = 0
-
-                for chunk in response.iter_content(chunk_size=128 * 1024):
-                    if not chunk:
-                        continue
-
-                    downloaded += len(chunk)
-
-                    if downloaded > MAX_MEDIA_SIZE:
-                        raise DownloadTooLarge
-
-                    temporary_file.write(chunk)
-
-        return temporary_path
-
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.extract_info(url, download=True)
+            media_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.mp4', '.webm', '.m4a', '.mp3', '.ogg']]
+            if not media_files:
+                raise FileNotFoundError("لم يتم العثور على الملف المحمل.")
+            
+            file_path = media_files[0]
+            if file_path.stat().st_size > MAX_MEDIA_SIZE:
+                file_path.unlink(missing_ok=True)
+                raise DownloadTooLarge
+            
+            return file_path
     except Exception:
-        if temporary_path:
-            temporary_path.unlink(missing_ok=True)
+        if temp_dir and os.path.exists(temp_dir):
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
         raise
 
 def remember_session(context, message, user_id, url, title):
@@ -247,13 +221,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     url = text.strip()
 
-    # التحقق مما إذا كان الرابط تابعاً لبينترست أو تيك توك
     if is_valid_pinterest_url(url):
         await handle_pinterest_message(update, context)
-        return
-
-    if not is_valid_tiktok_url(url):
-        await update.message.reply_text("❌ أرسل رابط تيك توك أو بينترست صحيحاً من فضلك.")
         return
 
     if not is_valid_tiktok_url(url):
@@ -277,17 +246,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if tiktok_data:
             title = tiktok_data["title"]
             images = tiktok_data["images"]
-            video_url = tiktok_data["play"]
-            audio_url = tiktok_data["music"]
             caption_text = "- @G66Gbot"
 
             if images:
-                if audio_url:
+                if tiktok_data.get("music"):
                     local_audio_path = None
 
                     try:
                         local_audio_path = await asyncio.to_thread(
-                            download_media, audio_url, ".mp3"
+                            download_media, url, ".mp3"
                         )
 
                         await context.bot.send_chat_action(
@@ -340,9 +307,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await processing_msg.delete()
                 return
 
-            elif video_url:
+            else:
                 local_video_path = await asyncio.to_thread(
-                    download_media, video_url, ".mp4"
+                    download_media, url, ".mp4"
                 )
 
                 try:
@@ -380,9 +347,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await processing_msg.edit_text(error_custom_msg)
 
+    except DownloadTooLarge:
+        await processing_msg.edit_text(
+            "⚠️┇هذا الملف لا يمكنني تحميله،\n"
+            "⚠️┇لأن حجمه يتجاوز ( 50 MB )،\n"
+            "⚠️┇أعد المحاوله مع ملف اخر."
+        )
     except Exception:
         logger.exception("Error in handle_message")
-
         error_custom_msg = (
             "⚠️┇هذا الملف لا يمكنني تحميله،\n"
             "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
@@ -399,7 +371,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.answer()
 
-    # معالجة أزرار اليوتيوب
     if query.data in ["yt_video", "yt_audio", "yt_voice"]:
         chat_id = query.message.chat_id
         yt_sessions = context.application.bot_data.get("yt_sessions", {})
@@ -413,7 +384,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_youtube_callback(query, context, session, query.data)
         return
 
-    # معالجة أزرار التيك توك
     chat_id = query.message.chat_id
     sessions = context.application.bot_data.setdefault("download_sessions", {})
     session_key = (chat_id, query.message.message_id)
@@ -445,14 +415,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         local_audio_path = None
 
         try:
-            tiktok_data = await asyncio.to_thread(fetch_tiktok_data, url)
-            audio_link = tiktok_data.get("music") if tiktok_data else None
-
-            if not audio_link:
-                raise ValueError("Audio link is unavailable")
-
             local_audio_path = await asyncio.to_thread(
-                download_media, audio_link, ".mp3"
+                download_media, url, ".mp3"
             )
 
             await context.bot.send_chat_action(
@@ -489,12 +453,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         local_video_path = None
 
         try:
-            tiktok_data = await asyncio.to_thread(fetch_tiktok_data, url)
-            video_url = tiktok_data.get("play") if tiktok_data else None
-
-            if not video_url:
-                raise ValueError("Video link is unavailable")
-
             audio_only_keyboard = [
                 [InlineKeyboardButton("🎵 تحميل كملف صوتي.", callback_data="audio")]
             ]
@@ -502,7 +460,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             audio_reply_markup = InlineKeyboardMarkup(audio_only_keyboard)
 
             local_video_path = await asyncio.to_thread(
-                download_media, video_url, ".mp4"
+                download_media, url, ".mp4"
             )
 
             await context.bot.send_chat_action(
@@ -564,3 +522,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+ 
