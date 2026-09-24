@@ -264,7 +264,7 @@ async def handle_youtube_message(update, context):
     url = update.message.text.strip()
     user_id = update.effective_user.id
 
-    processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، جاري معالجة رابط يوتيوب...")
+    processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، يتم قياس حجم التحميل...")
 
     try:
         info = await asyncio.to_thread(get_youtube_info, url)
@@ -322,7 +322,7 @@ async def handle_youtube_callback(query, context, session_data, mode):
     except Exception:
         pass
 
-    status_msg = await context.bot.send_message(chat_id=chat_id, text="🔄 جاري التحميل، يرجى الانتظار...")
+    status_msg = await context.bot.send_message(chat_id=chat_id, text="♻️┇جاري التحميل....")
     file_path = None
     thumb_path = None
 
