@@ -30,10 +30,15 @@ class YoutubeFilter(filters.MessageFilter):
 YOUTUBE_FILTER = YoutubeFilter()
 
 def get_cookie_file_path():
-    """قراءة الكوكيز مباشرة من ملف cookies.txt المحلي الثابت في المشروع"""
-    cookie_path = Path("cookies.txt")
-    if cookie_path.exists() and cookie_path.stat().st_size > 0:
-        return str(cookie_path.resolve())
+    """البحث عن ملف الكوكيز في أكثر من مسار لضمان العثور عليه بدقة"""
+    possible_paths = [
+        Path("cookies.txt"),
+        Path(__file__).parent / "cookies.txt",
+        Path.cwd() / "cookies.txt"
+    ]
+    for path in possible_paths:
+        if path.exists() and path.stat().st_size > 0:
+            return str(path.resolve())
     return None
 
 def format_views(views):
@@ -201,8 +206,8 @@ def download_youtube_media(url: str, mode: str = "video"):
     cookie_file = get_cookie_file_path()
     ydl_opts = {
         'outtmpl': outtmpl,
-        'quiet': True,
-        'no_warnings': True,
+        'quiet': False,
+        'no_warnings': False,
         'ignoreerrors': False,
         'nocheckcertificate': True,
         'geo_bypass': True,
@@ -249,24 +254,28 @@ def download_youtube_media(url: str, mode: str = "video"):
             'format': 'bv*[filesize<49M]+ba/b[filesize<49M]/best',
         })
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        title = info.get('title', 'فيديو يوتيوب')
-        duration = info.get('duration', 0)
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            title = info.get('title', 'فيديو يوتيوب')
+            duration = info.get('duration', 0)
 
-        media_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.mp3', '.mp4', '.m4a', '.webm', '.ogg', '.opus']]
-        if not media_files:
-            raise FileNotFoundError("لم يتم العثور على الملف المحمل.")
+            media_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.mp3', '.mp4', '.m4a', '.webm', '.ogg', '.opus']]
+            if not media_files:
+                raise FileNotFoundError("لم يتم العثور على الملف المحمل.")
 
-        file_path = media_files[0]
-        thumb_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.jpg', '.jpeg', '.png']]
-        thumb_path = thumb_files[0] if thumb_files else None
+            file_path = media_files[0]
+            thumb_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.jpg', '.jpeg', '.png']]
+            thumb_path = thumb_files[0] if thumb_files else None
 
-        if file_path.stat().st_size > MAX_MEDIA_SIZE:
-            file_path.unlink(missing_ok=True)
-            raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
+            if file_path.stat().st_size > MAX_MEDIA_SIZE:
+                file_path.unlink(missing_ok=True)
+                raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
 
-        return file_path, title, duration, thumb_path
+            return file_path, title, duration, thumb_path
+    except Exception as e:
+        logger.error(f"Detailed Download Error: {str(e)}")
+        raise e
 
 async def handle_youtube_message(update, context):
     url = update.message.text.strip()
