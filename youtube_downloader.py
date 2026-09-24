@@ -12,6 +12,7 @@ from telegram.ext import filters
 
 logger = logging.getLogger(__name__)
 
+# حد أقصى 49 ميغابايت
 MAX_MEDIA_SIZE = 49 * 1024 * 1024
 
 YOUTUBE_REGEX = re.compile(
@@ -27,11 +28,6 @@ class YoutubeFilter(filters.MessageFilter):
         return bool(YOUTUBE_REGEX.search(text.strip()))
 
 YOUTUBE_FILTER = YoutubeFilter()
-
-def is_valid_youtube_url(url: str) -> bool:
-    if not url:
-        return False
-    return bool(YOUTUBE_REGEX.search(url.strip()))
 
 def format_views(views):
     if not views:
@@ -149,6 +145,35 @@ def get_youtube_info(url: str):
             "thumbnail": None,
             "url": url
         }
+
+def check_media_size_before_download(url: str, mode: str = "video") -> bool:
+    """فحص حجم الملف مسبقاً قبل التحميل الفعلي للتأكد أنه لا يتجاوز 49MB"""
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True,
+        'nocheckcertificate': True,
+        'geo_bypass': True,
+    }
+    
+    if mode in ["audio", "yt_audio", "yt_voice"]:
+        ydl_opts['format'] = 'bestaudio/best'
+    else:
+        ydl_opts['format'] = 'bestvideo[max_filesize<=49M][ext=mp4]+bestaudio[ext=m4a]/best[max_filesize<=49M][ext=mp4]/best[max_filesize<=49M]/best'
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if not info:
+                return True # السماح بالمحاولة إذا تعذر الفحص
+            
+            # التحقق من حجم الملف إذا كان مسجلاً في البيانات
+            filesize = info.get('filesize') or info.get('filesize_approx') or 0
+            if filesize and filesize > MAX_MEDIA_SIZE:
+                return False
+    except Exception:
+        pass
+    return True
 
 def download_youtube_media(url: str, mode: str = "video"):
     temp_dir = tempfile.mkdtemp()
@@ -287,6 +312,12 @@ async def handle_youtube_callback(query, context, session_data, mode):
     thumb_path = None
 
     try:
+        # فحص الحجم مسبقاً قبل بدء التحميل لمنع التعليق
+        is_size_ok = await asyncio.to_thread(check_media_size_before_download, url, mode)
+        if not is_size_ok:
+            await status_msg.edit_text("⚠️┇عذراً، هذا الملف كبير جداً ولا يمكن تحميله لأن حجمه يتجاوز ( 50 MB ).")
+            return
+
         file_path, title, duration, thumb_path = await asyncio.to_thread(download_youtube_media, url, mode)
 
         share_keyboard = InlineKeyboardMarkup([
