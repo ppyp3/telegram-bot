@@ -1,4 +1,4 @@
-import asyncio
+Import asyncio
 import json
 import logging
 import mimetypes
@@ -455,8 +455,12 @@ def normalize_media_files(media_files):
 MERGED_FORMAT = (
     "bv*[vcodec^=avc1][height<=1080]+ba[acodec^=mp4a]/bv*[ext=mp4]+ba/bv*+ba"
 )
+# A single progressive file already carries its audio, so FFmpeg never has to
+# merge anything.
 PREMUXED_FORMAT = "b[ext=mp4][acodec!=none]/b[acodec!=none]/b"
 AUDIO_FORMAT = "ba[ext=m4a]/ba/bestaudio*"
+# Some reels are published without any audio stream at all, so the last
+# selector must accept a video-only format instead of failing.
 FALLBACK_FORMAT = "bv*+ba/b/bv*/best"
 
 
@@ -523,11 +527,8 @@ def download_reel_audio(url, output_dir):
         output_dir, "audio_%(id)s.%(ext)s", AUDIO_FORMAT, max_filesize=None
     )
 
-    try:
-        with yt_dlp.YoutubeDL(options) as downloader:
-            downloader.extract_info(url, download=True)
-    except Exception:
-        pass
+    with yt_dlp.YoutubeDL(options) as downloader:
+        downloader.extract_info(url, download=True)
 
     audio_files = collect_downloaded(
         output_dir, "audio_", {".m4a", ".mp4", ".aac", ".webm", ".opus", ".mp3"}
@@ -613,6 +614,7 @@ def download_reel_with_audio(url, output_dir):
         try:
             media_files = run_reel_download(url, output_dir, media_format)
         except yt_dlp.utils.DownloadError as error:
+            # Some posts expose only a subset of formats; try the next selector.
             logger.warning("Format %s unavailable: %s", media_format, error)
             last_error = error
             media_files = []
@@ -656,15 +658,10 @@ def download_instagram_media(url):
     output_dir = Path(tempfile.mkdtemp(prefix="instagram_media_"))
 
     try:
-        # تحميل الملف الصوتي أولاً بشكل مستقل
-        audio_path = download_reel_audio(url, output_dir)
-
         url_kind = get_url_kind(url)
         if url_kind == "reel":
             try:
                 reel_files = download_reel_with_audio(url, output_dir)
-                if audio_path and audio_path.is_file() and audio_path not in reel_files:
-                    reel_files.insert(0, audio_path)
                 return output_dir, normalize_media_files(reel_files)
             except yt_dlp.utils.DownloadError:
                 logger.warning("Falling back to direct Instagram reel URL", exc_info=True)
@@ -686,8 +683,6 @@ def download_instagram_media(url):
         ):
             try:
                 reel_files = download_reel_with_audio(url, output_dir)
-                if audio_path and audio_path.is_file() and audio_path not in reel_files:
-                    reel_files.insert(0, audio_path)
                 return output_dir, normalize_media_files(reel_files)
             except yt_dlp.utils.DownloadError:
                 logger.warning("Falling back to direct Instagram reel URL", exc_info=True)
@@ -703,9 +698,6 @@ def download_instagram_media(url):
             ]
 
         media_files = []
-        if audio_path and audio_path.is_file():
-            media_files.append(audio_path)
-
         for index, (media_url, is_video) in enumerate(media_items, start=1):
             if not media_url:
                 continue
@@ -762,6 +754,141 @@ async def send_instagram_file(message, chat_id, context, file_path, index, total
     return [sent_message]
 
 
+async def send_instagram_album(message, context, media_files):
+    total_files = len(media_files)
+    sent_messages = []
+
+    for start in range(0, total_files, 10):
+        batch = media_files[start : start + 10]
+
+        if len(batch) == 1:
+            sent_messages.extend(
+                await send_instagram_file(
+                    message,
+                    message.chat_id,
+                    context,
+                    batch[0],
+                    start + 1,
+                    total_files,
+                )
+            )
+            continue
+
+        open_files = []
+        media_group = []
+        try:
+            for offset, file_path in enumerate(batch, start=1):
+                media_file = file_path.open("rb")
+                open_files.append(media_file)
+                absolute_index = start + offset
+                is_video = is_video_file(file_path)
+                caption = (
+                    media_caption(absolute_index, total_files)
+                    if absolute_index == total_files
+                    else None
+                )
+
+                if not is_video:
+                    media_group.append(InputMediaPhoto(media=media_file, caption=caption))
+                    continue
+
+                _, _, width, height, duration = await asyncio.to_thread(
+                    probe_video, file_path
+                )
+                thumbnail_path = await asyncio.to_thread(create_video_thumbnail, file_path)
+                thumbnail_file = thumbnail_path.open("rb") if thumbnail_path else None
+                if thumbnail_file:
+                    open_files.append(thumbnail_file)
+
+                media_group.append(
+                    InputMediaVideo(
+                        media=media_file,
+                        caption=caption,
+                        supports_streaming=True,
+                        width=width,
+                        height=height,
+                        duration=duration,
+                        thumbnail=thumbnail_file,
+                    )
+                )
+
+            sent_messages.extend(await message.reply_media_group(media=media_group))
+        finally:
+            for media_file in open_files:
+                media_file.close()
+
+    return sent_messages
+
+
+def get_sent_media_id(message):
+    video = getattr(message, "video", None)
+    if video is not None and getattr(video, "file_id", None):
+        return "video", video.file_id
+
+    photos = getattr(message, "photo", None)
+    if photos:
+        file_id = getattr(photos[-1], "file_id", None)
+        if file_id:
+            return "photo", file_id
+
+    return None
+
+
+def cache_sent_media(shortcode, sent_messages):
+    media_ids = [
+        media_id
+        for sent_message in sent_messages
+        if (media_id := get_sent_media_id(sent_message)) is not None
+    ]
+    if len(media_ids) != len(sent_messages):
+        return
+
+    store_in_cache(MEDIA_ID_CACHE, shortcode, media_ids)
+
+
+async def send_cached_media(message, context, media_ids):
+    total_files = len(media_ids)
+    await context.bot.send_chat_action(
+        chat_id=message.chat_id,
+        action=ChatAction.UPLOAD_PHOTO,
+    )
+
+    for start in range(0, total_files, 10):
+        batch = media_ids[start : start + 10]
+        if len(batch) == 1:
+            kind, file_id = batch[0]
+            caption = media_caption(start + 1, total_files)
+            if kind == "photo":
+                await message.reply_photo(photo=file_id, caption=caption)
+            else:
+                await message.reply_video(
+                    video=file_id,
+                    caption=caption,
+                    supports_streaming=True,
+                )
+            continue
+
+        media_group = []
+        for offset, (kind, file_id) in enumerate(batch, start=1):
+            absolute_index = start + offset
+            caption = (
+                media_caption(absolute_index, total_files)
+                if absolute_index == total_files
+                else None
+            )
+            if kind == "photo":
+                media_group.append(InputMediaPhoto(media=file_id, caption=caption))
+            else:
+                media_group.append(
+                    InputMediaVideo(
+                        media=file_id,
+                        caption=caption,
+                        supports_streaming=True,
+                    )
+                )
+        await message.reply_media_group(media=media_group)
+
+
 async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.effective_chat:
         return
@@ -771,98 +898,27 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
     if not shortcode:
         return
 
-    # 1. رسالة الحالة التفاعلية الأولى
-    status_message = await update.message.reply_text("يرسل ملفاً صوتياً")
+    status_message = await update.message.reply_text(
+        "⏰┇يرجى الانتظار، يتم قياس حجم التحميل..."
+    )
     output_dir = None
 
     try:
+        cached_media = MEDIA_ID_CACHE.get(shortcode)
+        if cached_media is not None:
+            await send_cached_media(update.message, context, cached_media)
+            await status_message.delete()
+            return
+
         output_dir, media_files = await asyncio.to_thread(download_instagram_media, url)
-
-        audio_file = None
-        visual_files = []
-
-        for f in media_files:
-            if f.suffix.lower() in {".m4a", ".mp3", ".aac", ".opus", ".webm"} and not is_video_file(f):
-                audio_file = f
-            else:
-                visual_files.append(f)
-
-        # إرسال الملف الصوتي أولاً إن وجد
-        if audio_file and audio_file.is_file():
-            await context.bot.send_chat_action(
-                chat_id=update.effective_chat.id,
-                action=ChatAction.UPLOAD_VOICE,
-            )
-            with audio_file.open("rb") as af:
-                await update.message.reply_audio(
-                    audio=af,
-                    caption="- @G66Gbot",
-                )
-
-        # 2. تحديث رسالة الحالة إلى النص الثاني المطلوب
-        try:
-            await status_message.edit_text("يرسل صورة")
-        except Exception:
-            pass
-
-        if visual_files:
-            total_files = len(visual_files)
-            for start in range(0, total_files, 10):
-                batch = visual_files[start : start + 10]
-
-                if len(batch) == 1:
-                    await send_instagram_file(
-                        update.message,
-                        update.message.chat_id,
-                        context,
-                        batch[0],
-                        start + 1,
-                        total_files,
-                    )
-                    continue
-
-                open_files = []
-                media_group = []
-                try:
-                    for offset, file_path in enumerate(batch, start=1):
-                        media_file = file_path.open("rb")
-                        open_files.append(media_file)
-                        absolute_index = start + offset
-                        is_video = is_video_file(file_path)
-                        caption = (
-                            media_caption(absolute_index, total_files)
-                            if absolute_index == total_files
-                            else None
-                        )
-
-                        if not is_video:
-                            media_group.append(InputMediaPhoto(media=media_file, caption=caption))
-                            continue
-
-                        _, _, width, height, duration = await asyncio.to_thread(
-                            probe_video, file_path
-                        )
-                        thumbnail_path = await asyncio.to_thread(create_video_thumbnail, file_path)
-                        thumbnail_file = thumbnail_path.open("rb") if thumbnail_path else None
-                        if thumbnail_file:
-                            open_files.append(thumbnail_file)
-
-                        media_group.append(
-                            InputMediaVideo(
-                                media=media_file,
-                                caption=caption,
-                                supports_streaming=True,
-                                width=width,
-                                height=height,
-                                duration=duration,
-                                thumbnail=thumbnail_file,
-                            )
-                        )
-
-                    await update.message.reply_media_group(media=media_group)
-                finally:
-                    for media_file in open_files:
-                        media_file.close()
+        await context.bot.send_chat_action(
+            chat_id=update.effective_chat.id,
+            action=ChatAction.UPLOAD_PHOTO,
+        )
+        sent_messages = await send_instagram_album(
+            update.message, context, media_files
+        )
+        cache_sent_media(shortcode, sent_messages)
 
         await status_message.delete()
     except InstagramMediaTooLarge:
