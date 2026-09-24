@@ -93,7 +93,7 @@ async def handle_pinterest_message(update: Update, context):
     if not is_valid_pinterest_url(raw_text):
         return
 
-    processing_msg = await message.reply_text("⏰┇جاري جلب المحتوى بأعلى دقة...")
+    processing_msg = await message.reply_text("⏰┇يرجى الانتظار، يتم قياس حجم التحميل...")
 
     try:
         media_data = fetch_pinterest_media(raw_text)
