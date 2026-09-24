@@ -485,7 +485,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except TelegramError:
             logger.exception("Could not remove video button")
 
-        status_msg = await query.message.reply_text("♻️┇جاري التحميل....")
+        status_msg = await query.message.reply_text("♻️┇جاري التحميل...")
         local_video_path = None
 
         try:
