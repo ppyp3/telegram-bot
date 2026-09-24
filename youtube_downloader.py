@@ -249,7 +249,7 @@ def download_youtube_media(url: str, mode: str = "video"):
         })
     else:
         ydl_opts.update({
-            ydl_opts['format'] = 'best'
+            'format': 'best',
         })
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
