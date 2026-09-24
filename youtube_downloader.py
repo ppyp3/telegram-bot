@@ -5,7 +5,6 @@ import asyncio
 import logging
 from pathlib import Path
 import requests
-import yt_dlp
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
 from telegram.ext import filters
@@ -28,15 +27,6 @@ class YoutubeFilter(filters.MessageFilter):
         return bool(YOUTUBE_REGEX.search(text.strip()))
 
 YOUTUBE_FILTER = YoutubeFilter()
-
-def get_cookie_file_path():
-    """يقوم بإنشاء ملف كوكيز مؤقت آمن من متغيرات البيئة ليتعامل معه yt-dlp"""
-    cookie_data = os.environ.get("YOUTUBE_COOKIE_DATA")
-    if cookie_data:
-        cookie_path = Path("temp_cookies.txt")
-        cookie_path.write_text(cookie_data, encoding="utf-8")
-        return str(cookie_path)
-    return None
 
 def format_views(views):
     if not views:
@@ -64,6 +54,7 @@ def parse_iso8601_duration(duration_str):
     return total_seconds, time_str
 
 def get_youtube_info(url: str):
+    """جلب معلومات المعاينة حصرياً عبر Google YouTube API"""
     video_id = None
     if "youtu.be/" in url:
         video_id = url.split("youtu.be/")[1].split("?")[0]
@@ -113,169 +104,75 @@ def get_youtube_info(url: str):
         except Exception:
             pass
 
-    cookie_file = get_cookie_file_path()
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'skip_download': True,
-        'nocheckcertificate': True,
-        'geo_bypass': True,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android'],
-                'player_skip': ['webpage', 'configs'],
-            }
-        },
+    return {
+        "title": "فيديو يوتيوب",
+        "uploader": "غير معروف",
+        "duration": 0,
+        "duration_string": "00:00",
+        "view_count_formatted": "0",
+        "thumbnail": None,
+        "url": url
     }
-    if cookie_file:
-        ydl_opts['cookiefile'] = cookie_file
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            if not info:
-                raise ValueError("Could not extract info")
-                
-            duration = info.get('duration', 0) or 0
-            minutes, seconds = divmod(int(duration), 60)
-            
-            return {
-                "title": info.get('title') or "فيديو يوتيوب",
-                "uploader": info.get('uploader') or info.get('channel') or "غير معروف",
-                "duration": duration,
-                "duration_string": f"{minutes:02d}:{seconds:02d}",
-                "view_count_formatted": format_views(info.get('view_count')),
-                "thumbnail": info.get('thumbnail'),
-                "url": url
-            }
-    except Exception:
-        return {
-            "title": "فيديو يوتيوب",
-            "uploader": "غير معروف",
-            "duration": 0,
-            "duration_string": "00:00",
-            "view_count_formatted": "0",
-            "thumbnail": None,
-            "url": url
-        }
-
-def check_media_size_before_download(url: str, mode: str = "video") -> bool:
-    """فحص حجم الملف مسبقاً قبل التحميل الفعلي للتأكد أنه لا يتجاوز 49MB"""
-    cookie_file = get_cookie_file_path()
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'skip_download': True,
-        'nocheckcertificate': True,
-        'geo_bypass': True,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android'],
-                'player_skip': ['webpage', 'configs'],
-            }
-        },
+def download_via_cobalt(url: str, mode: str = "video"):
+    """التحميل الفعلي عبر Cobalt API لتجاوز الحظر نهائياً"""
+    api_url = "https://api.cobalt.tools/api/json"
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json"
     }
     
-    if cookie_file:
-        ydl_opts['cookiefile'] = cookie_file
-
+    payload = {
+        "url": url,
+        "vQuality": "720"
+    }
+    
     if mode in ["audio", "yt_audio", "yt_voice"]:
-        ydl_opts['format'] = 'bestaudio/best'
-    else:
-        ydl_opts['format'] = 'best'
+        payload["isAudioOnly"] = True
+        payload["audioFormat"] = "mp3"
 
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            if not info:
-                return True 
-            
-            filesize = info.get('filesize') or info.get('filesize_approx') or 0
-            if filesize and filesize > MAX_MEDIA_SIZE:
-                return False
-    except Exception:
-        pass
-    return True
+        response = requests.post(api_url, json=payload, headers=headers, timeout=20)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("status") in ["stream", "redirect", "success"]:
+                return data.get("url"), data.get("filename", "media.mp4")
+            elif data.get("status") == "picker":
+                picker_items = data.get("picker", [])
+                if picker_items:
+                    return picker_items[0].get("url"), "media.mp4"
+    except Exception as e:
+        logger.error(f"Cobalt API error: {e}")
+        
+    return None, None
 
 def download_youtube_media(url: str, mode: str = "video"):
     temp_dir = tempfile.mkdtemp()
-    outtmpl = os.path.join(temp_dir, '%(title)s.%(ext)s')
-
-    cookie_file = get_cookie_file_path()
-    ydl_opts = {
-        'outtmpl': outtmpl,
-        'quiet': True,
-        'no_warnings': True,
-        'ignoreerrors': False,
-        'nocheckcertificate': True,
-        'geo_bypass': True,
-        'writethumbnail': True,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android'],
-                'player_skip': ['webpage', 'configs'],
-            }
-        },
-    }
-
-    if cookie_file:
-        ydl_opts['cookiefile'] = cookie_file
-
-    if mode == "yt_voice":
-        ydl_opts.update({
-            'format': 'bestaudio/best',
-            'postprocessors': [
-                {
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'opus',
-                    'preferredquality': '128',
-                }
-            ],
-        })
-    elif mode in ["audio", "yt_audio"]:
-        ydl_opts.update({
-            'format': 'bestaudio/best',
-            'postprocessors': [
-                {
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192',
-                },
-                {
-                    'key': 'FFmpegThumbnailsConvertor',
-                    'format': 'jpg',
-                }
-            ],
-        })
-    else:
-        ydl_opts.update({
-            'format': 'best',
-        })
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        title = info.get('title', 'فيديو يوتيوب')
-        duration = info.get('duration', 0)
-
-        media_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.mp3', '.mp4', '.m4a', '.webm', '.ogg', '.opus']]
-        if not media_files:
-            raise FileNotFoundError("لم يتم العثور على الملف المحمل.")
-
-        file_path = media_files[0]
-        thumb_files = [p for p in Path(temp_dir).glob('*') if p.suffix.lower() in ['.jpg', '.jpeg', '.png']]
-        thumb_path = thumb_files[0] if thumb_files else None
-
-        if file_path.stat().st_size > MAX_MEDIA_SIZE:
-            file_path.unlink(missing_ok=True)
-            raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
-
-        return file_path, title, duration, thumb_path
+    
+    download_url, filename = download_via_cobalt(url, mode)
+    if not download_url:
+        raise Exception("فشل جلب رابط التحميل من السيرفر الخارجي.")
+    
+    file_path = os.path.join(temp_dir, filename)
+    
+    with requests.get(download_url, stream=True, timeout=60) as r:
+        r.raise_for_status()
+        with open(file_path, 'wb') as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+                    
+    if os.path.getsize(file_path) > MAX_MEDIA_SIZE:
+        os.remove(file_path)
+        raise DownloadTooLarge("حجم الملف يتجاوز الحد المسموح.")
+        
+    return Path(file_path), "فيديو يوتيوب", 0
 
 async def handle_youtube_message(update, context):
     url = update.message.text.strip()
     user_id = update.effective_user.id
 
-    processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، جاري معالجة رابط يوتيوب...")
+    processing_msg = await update.message.reply_text("⏰┇يرجى الانتظار، جاري جلب المعاينة...")
 
     try:
         info = await asyncio.to_thread(get_youtube_info, url)
@@ -322,7 +219,7 @@ async def handle_youtube_message(update, context):
 
     except Exception:
         logger.exception("Error handling YouTube message")
-        await processing_msg.edit_text("❌ حدث خطأ أثناء معالجة رابط يوتيوب.")
+        await processing_msg.edit_text("❌ حدث خطأ أثناء جلب المعاينة.")
 
 async def handle_youtube_callback(query, context, session_data, mode):
     chat_id = query.message.chat_id
@@ -333,82 +230,41 @@ async def handle_youtube_callback(query, context, session_data, mode):
     except Exception:
         pass
 
-    status_msg = await context.bot.send_message(chat_id=chat_id, text="🔄 جاري التحميل، يرجى الانتظار...")
+    status_msg = await context.bot.send_message(chat_id=chat_id, text="🔄 جاري التحميل بالطريقة القوية، يرجى الانتظار...")
     file_path = None
-    thumb_path = None
 
     try:
-        is_size_ok = await asyncio.to_thread(check_media_size_before_download, url, mode)
-        if not is_size_ok:
-            await status_msg.edit_text("⚠️┇عذراً، هذا الملف كبير جداً ولا يمكن تحميله لأن حجمه يتجاوز ( 50 MB ).")
-            return
-
-        file_path, title, duration, thumb_path = await asyncio.to_thread(download_youtube_media, url, mode)
+        file_path, title, duration = await asyncio.to_thread(download_youtube_media, url, mode)
 
         share_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔀 | شارك.", switch_inline_query=f"{title}")]
+            [InlineKeyboardButton("🔀 | شارك.", switch_inline_query="فيديو يوتيوب")]
         ])
 
         file_size_mb = f"{os.path.getsize(file_path) / (1024 * 1024):.1f}MB"
-        minutes, seconds = divmod(int(duration), 60)
-        time_str = f"{minutes:02d}:{seconds:02d}"
 
         if mode == "yt_voice":
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.RECORD_VOICE)
-            voice_caption = f"@G66Gbot - {time_str}"
-            
             with open(file_path, 'rb') as voice_file:
-                await context.bot.send_voice(
-                    chat_id=chat_id,
-                    voice=voice_file,
-                    caption=voice_caption,
-                    duration=int(duration),
-                    reply_markup=share_keyboard
-                )
+                await context.bot.send_voice(chat_id=chat_id, voice=voice_file, caption=f"@G66Gbot", reply_markup=share_keyboard)
 
-        elif mode == "yt_audio":
+        elif mode in ["audio", "yt_audio"]:
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
-            audio_caption = f"@G66Gbot - {time_str}, {file_size_mb}"
-            
             with open(file_path, 'rb') as audio_file:
-                thumb_file = open(thumb_path, 'rb') if thumb_path and os.path.exists(thumb_path) else None
-
-                await context.bot.send_audio(
-                    chat_id=chat_id,
-                    audio=audio_file,
-                    title=title,
-                    performer="@G66Gbot",
-                    duration=int(duration),
-                    thumbnail=thumb_file,
-                    caption=audio_caption,
-                    reply_markup=share_keyboard
-                )
-                
-                if thumb_file:
-                    thumb_file.close()
+                await context.bot.send_audio(chat_id=chat_id, audio=audio_file, title=session_data["title"], performer="@G66Gbot", caption=f"@G66Gbot - {file_size_mb}", reply_markup=share_keyboard)
 
         else:
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
-            video_caption = f"@G66Gbot - {time_str}, {file_size_mb}"
-            
             with open(file_path, 'rb') as video_file:
-                await context.bot.send_video(
-                    chat_id=chat_id,
-                    video=video_file,
-                    caption=video_caption,
-                    duration=int(duration),
-                    reply_markup=share_keyboard
-                )
+                await context.bot.send_video(chat_id=chat_id, video=video_file, caption=f"@G66Gbot - {file_size_mb}", reply_markup=share_keyboard)
 
         await status_msg.delete()
 
     except DownloadTooLarge:
         await status_msg.edit_text("⚠️┇هذا الملف لا يمكنني تحميله، لأن حجمه يتجاوز ( 50 MB ).")
     except Exception:
-        logger.exception("Error in YouTube callback process")
+        logger.exception("Error in YouTube download process")
         await status_msg.edit_text("❌ حدث خطأ أثناء التحميل.")
     finally:
         if file_path and os.path.exists(file_path):
             os.remove(file_path)
-        if thumb_path and os.path.exists(thumb_path):
-            os.remove(thumb_path)
+ 
