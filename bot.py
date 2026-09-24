@@ -441,7 +441,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except TelegramError:
             logger.exception("Could not remove audio button")
 
-        status_msg = await query.message.reply_text("🔄 جاري تحميل الملف الصوتي...")
+        status_msg = await query.message.reply_text("♻️┇جاري التحميل....")
         local_audio_path = None
 
         try:
@@ -485,7 +485,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except TelegramError:
             logger.exception("Could not remove video button")
 
-        status_msg = await query.message.reply_text("🔄 جاري إرسال الفيديو...")
+        status_msg = await query.message.reply_text("♻️┇جاري التحميل....")
         local_video_path = None
 
         try:
