@@ -116,7 +116,7 @@ def get_youtube_info(url: str):
         'geo_bypass': True,
         'extractor_args': {
             'youtube': {
-                'player_client': ['ios', 'android'],
+                'player_client': ['android', 'mweb', 'web'],
                 'player_skip': ['webpage', 'configs'],
             }
         },
