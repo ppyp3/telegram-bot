@@ -109,13 +109,11 @@ def get_youtube_info(url: str):
             pass
 
     ydl_opts = {
-        'outtmpl': outtmpl,
         'quiet': True,
         'no_warnings': True,
-        'ignoreerrors': False,
+        'skip_download': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        'writethumbnail': True,
         'extractor_args': {
             'youtube': {
                 'player_client': ['android', 'mweb', 'web'],
@@ -164,10 +162,9 @@ def download_youtube_media(url: str, mode: str = "video"):
         'nocheckcertificate': True,
         'geo_bypass': True,
         'writethumbnail': True,
-        'proxy': 'http://PPYP3_wm2ys:07801233Ss__@unblock.oxylabs.io:60000',
         'extractor_args': {
             'youtube': {
-                'player_client': ['ios', 'android'],
+                'player_client': ['android', 'mweb', 'web'],
                 'player_skip': ['webpage', 'configs'],
             }
         },
