@@ -67,7 +67,32 @@ def request_headers():
     }
 
 def fetch_tiktok_data(url):
-    """دالة محدثة تعتمد على yt-dlp وتدعم الفيديوهات وصور تيك توك والأغاني"""
+    """دالة تتعامل مع الفيديوهات وروابط الصور لتيك توك دون أخطاء"""
+    if "/photo/" in url:
+        try:
+            headers = request_headers()
+            with requests.get(
+                "https://tikwm.com/api/",
+                params={"url": url, "music": 1},
+                headers=headers,
+                timeout=(8, 20),
+            ) as response:
+                if response.status_code == 200:
+                    alt_resp = response.json()
+                    if alt_resp.get("code") == 0:
+                        data = alt_resp.get("data", {})
+                        images = data.get("images", [])
+                        if images:
+                            return {
+                                "title": data.get("title", "محتوى تيك توك"),
+                                "author": data.get("author", {}).get("nickname", "مستخدم تيك توك"),
+                                "music": data.get("music"),
+                                "images": images,
+                                "play": None,
+                            }
+        except Exception:
+            logger.exception("Error fetching TikTok photo via alternative API")
+
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
@@ -81,28 +106,11 @@ def fetch_tiktok_data(url):
             if not info:
                 return None
             
-            images = []
-            if info.get('_type') == 'playlist' and 'entries' in info:
-                for entry in info['entries']:
-                    if 'url' in entry:
-                        images.append(entry['url'])
-            
-            title = str(info.get('title') or "محتوى تيك توك")
-            clean_title = "".join(
-                character
-                for character in title
-                if character.isalnum() or character in (" ", "_", "-", "🔥")
-            ).strip()
-
-            if not clean_title:
-                clean_title = "tiktok_audio"
-
             return {
-                "title": title,
+                "title": info.get('title') or "محتوى تيك توك",
                 "author": info.get('uploader') or "مستخدم تيك توك",
                 "music": info.get('url'),
-                "audio_title": f"{clean_title}.mp3",
-                "images": images,
+                "images": [],
                 "play": info.get('url') or info.get('webpage_url'),
             }
     except Exception:
@@ -110,7 +118,6 @@ def fetch_tiktok_data(url):
         return None
 
 def download_media(url, suffix):
-    """دالة التحميل المحدثة عبر yt-dlp و ffmpeg"""
     temp_dir = tempfile.mkdtemp()
     ydl_opts = {
         'outtmpl': os.path.join(temp_dir, '%(id)s.%(ext)s'),
@@ -267,7 +274,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     try:
                         local_audio_path = await asyncio.to_thread(
-                            download_media, url, ".mp3"
+                            download_media, audio_url, ".mp3"
                         )
 
                         await context.bot.send_chat_action(
