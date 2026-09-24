@@ -266,8 +266,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         keyboard = [
-            [InlineKeyboardButton("🎵 تحميل كملف صوتي.", callback_data="audio")],
-            [InlineKeyboardButton("📥 تحميل باعلى دقه HD.", callback_data="hd_video")],
+            [InlineKeyboardButton("🎵┇تحميل كملف صوتي", callback_data="audio")],
+            [InlineKeyboardButton("📥┇تحميل باعلى دقه HD", callback_data="hd_video")],
         ]
 
         reply_markup = InlineKeyboardMarkup(keyboard)
