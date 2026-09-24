@@ -29,17 +29,6 @@ class YoutubeFilter(filters.MessageFilter):
 
 YOUTUBE_FILTER = YoutubeFilter()
 
-def get_cookie_file_path():
-    possible_paths = [
-        Path("cookies.txt"),
-        Path(__file__).parent / "cookies.txt",
-        Path.cwd() / "cookies.txt"
-    ]
-    for path in possible_paths:
-        if path.exists() and path.stat().st_size > 0:
-            return str(path.resolve())
-    return None
-
 def format_views(views):
     if not views:
         return "0"
@@ -115,7 +104,6 @@ def get_youtube_info(url: str):
         except Exception:
             pass
 
-    cookie_file = get_cookie_file_path()
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
@@ -125,12 +113,9 @@ def get_youtube_info(url: str):
         'extractor_args': {
             'youtube': {
                 'player_client': ['android', 'web'],
-                'player_skip': ['webpage', 'configs'],
             }
         },
     }
-    if cookie_file:
-        ydl_opts['cookiefile'] = cookie_file
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -162,23 +147,23 @@ def get_youtube_info(url: str):
         }
 
 def check_media_size_before_download(url: str, mode: str = "video") -> bool:
-    cookie_file = get_cookie_file_path()
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
         'skip_download': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web'],
+            }
+        },
     }
-    
-    if cookie_file:
-        ydl_opts['cookiefile'] = cookie_file
 
     if mode in ["audio", "yt_audio", "yt_voice"]:
-        ydl_opts['format'] = 'bestaudio'
+        ydl_opts['format'] = 'bestaudio/best'
     else:
-        # صيغة مضمونة 100% بدون تعقيد
-        ydl_opts['format'] = 'best'
+        ydl_opts['format'] = 'bv*[ext=mp4][filesize<49M]/b[ext=mp4][filesize<49M]/best'
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -197,7 +182,6 @@ def download_youtube_media(url: str, mode: str = "video"):
     temp_dir = tempfile.mkdtemp()
     outtmpl = os.path.join(temp_dir, '%(title)s.%(ext)s')
 
-    cookie_file = get_cookie_file_path()
     ydl_opts = {
         'outtmpl': outtmpl,
         'quiet': False,
@@ -206,14 +190,16 @@ def download_youtube_media(url: str, mode: str = "video"):
         'nocheckcertificate': True,
         'geo_bypass': True,
         'writethumbnail': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web'],
+            }
+        },
     }
-
-    if cookie_file:
-        ydl_opts['cookiefile'] = cookie_file
 
     if mode == "yt_voice":
         ydl_opts.update({
-            'format': 'bestaudio',
+            'format': 'bestaudio/best',
             'postprocessors': [
                 {
                     'key': 'FFmpegExtractAudio',
@@ -224,7 +210,7 @@ def download_youtube_media(url: str, mode: str = "video"):
         })
     elif mode in ["audio", "yt_audio"]:
         ydl_opts.update({
-            'format': 'bestaudio',
+            'format': 'bestaudio/best',
             'postprocessors': [
                 {
                     'key': 'FFmpegExtractAudio',
@@ -238,9 +224,8 @@ def download_youtube_media(url: str, mode: str = "video"):
             ],
         })
     else:
-        # استخدام أفضل صيغة متوفرة مباشرة بدون دمج لتفادي الأخطاء نهائياً
         ydl_opts.update({
-            'format': 'best',
+            'format': 'bv*[ext=mp4][filesize<49M]/b[ext=mp4][filesize<49M]/best',
         })
 
     try:
