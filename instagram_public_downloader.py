@@ -265,7 +265,7 @@ def normalize_video_for_telegram(source_path):
         output_path.unlink(missing_ok=True)
         raise VideoProcessingError("FFmpeg output is missing its audio stream")
 
-    if output_path.stat().st_size > MAX_MEDIA_SIZE::
+    if output_path.stat().st_size > MAX_MEDIA_SIZE:
     if output_path.stat().st_size > MAX_MEDIA_SIZE:
         output_path.unlink(missing_ok=True)
         raise InstagramMediaTooLarge
