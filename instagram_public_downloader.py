@@ -58,7 +58,6 @@ class VideoProcessingError(InstagramDownloadError):
 
 
 def log_media_tools_status():
-    """Log whether FFmpeg and FFprobe are usable so deploys are diagnosable."""
     for tool in ("ffmpeg", "ffprobe"):
         executable = shutil.which(tool)
         if executable is None:
@@ -147,7 +146,6 @@ def download_file(url, output_path):
 
 
 def probe_video(file_path):
-    """Return (video_codec, audio_codec, width, height, duration) via ffprobe."""
     try:
         stat = file_path.stat()
     except OSError:
@@ -176,7 +174,6 @@ def probe_video(file_path):
         )
         data = json.loads(result.stdout or "{}")
     except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
-        logger.error("FFprobe is unavailable; falling back to stream copy", exc_info=True)
         return store_in_cache(
             PROBE_VIDEO_CACHE,
             cache_key,
@@ -184,10 +181,6 @@ def probe_video(file_path):
         )
 
     if not data.get("streams"):
-        logger.error(
-            "FFprobe reported no streams for %s; falling back to stream copy",
-            file_path.name,
-        )
         return store_in_cache(
             PROBE_VIDEO_CACHE,
             cache_key,
@@ -225,17 +218,6 @@ def run_ffmpeg(command, output_path, timeout=300):
         raise VideoProcessingError("Video processing timed out") from error
 
     if result.returncode != 0 or not output_path.is_file():
-        if result.returncode < 0:
-            logger.error(
-                "FFmpeg was killed by signal %s — the container likely ran out of memory",
-                -result.returncode,
-            )
-        logger.error(
-            "FFmpeg failed (exit %s): %s ... %s",
-            result.returncode,
-            result.stderr[:1500],
-            result.stderr[-1500:],
-        )
         output_path.unlink(missing_ok=True)
         raise VideoProcessingError(f"Video processing failed (exit {result.returncode})")
 
@@ -279,7 +261,6 @@ def normalize_video_for_telegram(source_path):
     try:
         run_ffmpeg(command, output_path, timeout=600)
     except VideoProcessingError:
-        logger.warning("فشل إعادة الترميز، سيتم استخدام الملف الأصلي كما هو لتجنب فقدان الصوت", exc_info=True)
         return source_path
 
     if output_path.stat().st_size > MAX_MEDIA_SIZE:
@@ -339,7 +320,6 @@ def normalize_media_files(media_files):
             try:
                 converted_path = normalize_video_for_telegram(file_path)
             except VideoProcessingError:
-                logger.exception("Falling back to the unprocessed video")
                 prepared_files.append(file_path)
                 continue
             if converted_path != file_path:
@@ -349,31 +329,6 @@ def normalize_media_files(media_files):
             prepared_files.append(file_path)
 
     return prepared_files
-
-
-def build_download_options(
-    output_dir, name_template, media_format, max_filesize=MAX_MEDIA_SIZE
-):
-    options = {
-        "outtmpl": str(output_dir / name_template),
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        "merge_output_format": "mp4",
-        "quiet": True,
-        "no_warnings": True,
-        "noprogress": True,
-        "writethumbnail": False,
-        "writesubtitles": False,
-        "writeautomaticsub": False,
-        "concurrent_fragment_downloads": 8,
-        "http_chunk_size": 10485760,
-        "retries": 3,
-        "fragment_retries": 3,
-        "socket_timeout": 15,
-        "noplaylist": True,
-    }
-    if max_filesize is not None:
-        options["max_filesize"] = max_filesize
-    return options
 
 
 def collect_downloaded(output_dir, prefix, suffixes):
@@ -396,21 +351,16 @@ def select_reel_media(candidates):
     return [max(chosen, key=lambda path: path.stat().st_size)]
 
 
-def run_reel_download(url, output_dir, media_format):
-    options = build_download_options(output_dir, "reel_%(id)s.%(ext)s", media_format)
-
-    with yt_dlp.YoutubeDL(options) as downloader:
-        downloader.extract_info(url, download=True)
-
-    return select_reel_media(
-        collect_downloaded(output_dir, "reel_", {".mp4", ".mkv", ".webm"})
-    )
-
-
 def download_reel_with_audio(url, output_dir):
-    options = build_download_options(
-        output_dir, "reel_%(id)s.%(ext)s", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
-    )
+    options = {
+        "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
+        "format": "best[ext=mp4]/best",
+        "quiet": True,
+        "no_warnings": True,
+        "noprogress": True,
+        "noplaylist": True,
+        "socket_timeout": 15,
+    }
 
     for stale_file in output_dir.iterdir():
         if stale_file.is_file():
@@ -420,7 +370,7 @@ def download_reel_with_audio(url, output_dir):
         with yt_dlp.YoutubeDL(options) as downloader:
             downloader.extract_info(url, download=True)
     except yt_dlp.utils.DownloadError as error:
-        logger.error("فشل تحميل الرابط من يوتيوب-دي إل بي: %s", error)
+        logger.error("فشل تحميل الرابط: %s", error)
         raise error
 
     media_files = select_reel_media(
@@ -739,4 +689,3 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
- 
