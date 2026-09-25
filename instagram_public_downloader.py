@@ -223,11 +223,7 @@ def run_ffmpeg(command, output_path, timeout=300):
 
 
 def normalize_video_for_telegram(source_path):
-    video_codec, audio_codec, _, _, _ = probe_video(source_path)
-    
-    if video_codec == "h264" and audio_codec in {"aac", "mp3"}:
-        return source_path
-
+    # إجبار إعادة معالجة وترميز الفيديو والصوت لضمان عدم وجود ملفات صامتة أو بصيغ غير متوافقة
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
     command = [
@@ -636,7 +632,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
         return
 
     status_message = await update.message.reply_text(
-        "⏰┇يرجى الانتظار، يتم قياس حجم التحميل..."
+        "⏰┇يرجى الانتظار، يتم معالجة الفيديو والصوت..."
     )
     output_dir = None
 
@@ -689,3 +685,4 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
+ 
