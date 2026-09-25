@@ -112,7 +112,6 @@ def fetch_tiktok_data(url):
             if "entries" in info:
                 images = [e.get("url") for e in info.get("entries", []) if e.get("url")]
 
-        # الطريقة الاحتياطية المضمونة لجلب الصوت والصور بدقة عالية خاصة لمنشورات الصور
         if not images or not music_url or "/photo/" in url:
             try:
                 api_res = requests.get(
@@ -390,11 +389,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             file_obj = open(img_path, "rb")
                             batch_file_objs.append(file_obj)
 
-                            if absolute_index == total_valid:
+                            # التعديل هنا: ضبط النص أسفل الألبوم بالشكل المطلوب تماماً بدون سمايلات
+                            if absolute_index == total_valid or idx == len(batch) - 1:
                                 media_group.append(
                                     InputMediaPhoto(
                                         media=file_obj,
-                                        caption=f"- @G66Gbot - ({absolute_index}/{total_valid}) 📸",
+                                        caption=f"- @G66Gbot - ({absolute_index}/{total_valid})",
                                     )
                                 )
                             else:
