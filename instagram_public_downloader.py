@@ -730,6 +730,7 @@ async def send_instagram_file(message, chat_id, context, file_path, index, total
             sent_message = await message.reply_photo(photo=media_file, caption=caption)
         return [sent_message]
 
+    # تم التصحيح هنا: استخدام UPLOAD_VIDEO بدلاً من UPLOAD_PHOTO للفيديوهات
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
     _, _, width, height, duration = await asyncio.to_thread(probe_video, file_path)
     thumbnail_path = await asyncio.to_thread(create_video_thumbnail, file_path)
@@ -949,3 +950,4 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
+ 
