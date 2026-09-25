@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 import requests
 import yt_dlp
+from PIL import Image
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -202,6 +203,20 @@ def download_media(url, suffix):
             temporary_path.unlink(missing_ok=True)
         raise
 
+def process_image_to_jpeg(input_path):
+    """تحويل الصورة إجبارياً إلى صيغة JPEG صالحة ومقبولة لدى تيليجرام لتجنب أخطاء المعالجة"""
+    try:
+        with Image.open(input_path) as img:
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+            output_fd, output_path = tempfile.mkstemp(suffix=".jpg")
+            os.close(output_fd)
+            img.save(output_path, "JPEG", quality=95)
+            return Path(output_path)
+    except Exception:
+        logger.exception("Failed to process image to JPEG")
+        return input_path
+
 def remember_session(context, message, user_id, url, title):
     sessions = context.application.bot_data.setdefault("download_sessions", {})
     now = time.monotonic()
@@ -316,12 +331,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     try:
                         for idx, img_url in enumerate(batch):
                             absolute_index = i + idx + 1
-                            # تحميل الصورة محلياً لتجنب خطأ webpage_url_failed
-                            local_img = await asyncio.to_thread(download_media, img_url, ".jpg")
-                            if local_img:
-                                temp_files.append(local_img)
-                                file_obj = open(local_img, "rb")
-                                temp_files.append(file_obj) # لحفظه وإغلاقه لاحقاً
+                            raw_img = await asyncio.to_thread(download_media, img_url, ".jpg")
+                            if raw_img:
+                                temp_files.append(raw_img)
+                                # معالجة الصورة وتحويلها لـ JPEG لضمان قبولها من تيليجرام
+                                processed_img = await asyncio.to_thread(process_image_to_jpeg, raw_img)
+                                if processed_img != raw_img:
+                                    temp_files.append(processed_img)
+
+                                file_obj = open(processed_img, "rb")
+                                temp_files.append(file_obj)
                                 
                                 if absolute_index == total_images:
                                     media_group.append(
@@ -336,7 +355,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         if media_group:
                             await update.message.reply_media_group(media=media_group)
                     finally:
-                        # تنظيف الملفات المؤقتة للصور بعد الإرسال
                         for item in temp_files:
                             if hasattr(item, "close"):
                                 try:
