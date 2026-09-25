@@ -266,7 +266,6 @@ def normalize_video_for_telegram(source_path):
         raise VideoProcessingError("FFmpeg output is missing its audio stream")
 
     if output_path.stat().st_size > MAX_MEDIA_SIZE:
-    if output_path.stat().st_size > MAX_MEDIA_SIZE:
         output_path.unlink(missing_ok=True)
         raise InstagramMediaTooLarge
 
@@ -646,8 +645,6 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
     try:
         cached_media = MEDIA_ID_CACHE.get(shortcode)
-        if cached_media is not None:
-        cached_media = MEDIA_ID_CACHE.get(shortcode)
         if cached_media is not None and get_url_kind(url) != "reel":
             await send_cached_media(update.message, context, cached_media)
             await status_message.delete()
@@ -665,7 +662,6 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             update.message, context, media_files
         )
         if get_url_kind(url) != "reel":
-        cache_sent_media(shortcode, sent_messages)
             cache_sent_media(shortcode, sent_messages)
 
         await status_message.delete()
@@ -697,6 +693,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
+
 
 
 
