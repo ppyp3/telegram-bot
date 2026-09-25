@@ -67,7 +67,7 @@ def request_headers():
     }
 
 def fetch_tiktok_data(url):
-    """جلب بيانات تيك توك دون معالجة روابط الصور عبر yt-dlp"""
+    """دالة آمنة تماماً تمنع وصول روابط الصور إلى yt-dlp"""
     if "/photo/" in url or "photo" in url:
         try:
             headers = request_headers()
@@ -84,7 +84,6 @@ def fetch_tiktok_data(url):
                         images = data.get("images", [])
                         music_url = data.get("music")
                         
-                        # إضافة النطاق الكامل لرابط الصوت إذا كان نسبياً
                         if music_url and music_url.startswith("/"):
                             music_url = f"https://tikwm.com{music_url}"
 
@@ -98,6 +97,7 @@ def fetch_tiktok_data(url):
                             }
         except Exception:
             logger.exception("Error fetching TikTok photo via alternative API")
+        
         return None
 
     ydl_opts = {
@@ -125,10 +125,8 @@ def fetch_tiktok_data(url):
         return None
 
 def download_media(url, suffix):
-    """تحميل الملفات بشكل آمن لضمان عدم تمرير روابط /photo/ إلى yt-dlp"""
     temp_dir = tempfile.mkdtemp()
     
-    # إذا كان رابط الصوت مباشر (MP3/Media URL) وليس رابط صفحة تيك توك
     if url.startswith("http") and not ("tiktok.com" in url and "/photo/" in url):
         if suffix == ".mp3" or url.endswith(".mp3") or "tikwm.com" in url:
             try:
@@ -149,7 +147,6 @@ def download_media(url, suffix):
             except Exception:
                 logger.exception("Direct audio download failed, falling back to yt-dlp")
 
-    # لاستخدام yt-dlp للتحميل التقليدي للفيديوهات
     ydl_opts = {
         'outtmpl': os.path.join(temp_dir, '%(id)s.%(ext)s'),
         'quiet': True,
@@ -304,7 +301,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     local_audio_path = None
 
                     try:
-                        # جلب ملف الصوت عبر رابط الصوت المباشر
                         local_audio_path = await asyncio.to_thread(
                             download_media, audio_url, ".mp3"
                         )
