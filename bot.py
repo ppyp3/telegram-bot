@@ -79,6 +79,17 @@ def fetch_tiktok_data(url):
         if not is_valid_tiktok_url(url):
             return None
 
+        # التعامل مع روابط الصور لتجنب خطأ yt_dlp
+        if "/photo/" in url:
+            return {
+                "title": "منشور صور تيك توك",
+                "author": "مستخدم تيك توك",
+                "music": None,
+                "audio_title": "tiktok_audio.mp3",
+                "images": [url],
+                "webpage_url": url,
+            }
+
         ydl_opts = {
             "quiet": True,
             "no_warnings": True,
@@ -103,7 +114,6 @@ def fetch_tiktok_data(url):
 
         author_name = info.get("uploader") or info.get("creator") or "مستخدم تيك توك"
         
-        # استخراج رابط الصوت إن وجد
         music_url = None
         if "requested_formats" in info:
             for f in info["requested_formats"]:
@@ -147,7 +157,6 @@ def download_tiktok_with_ytdlp(url, is_audio=False):
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
             if not os.path.exists(filename):
-                # البحث عن أي ملف تم تنزيله في المجلد المؤقت
                 files = list(Path(temp_dir).glob("*"))
                 if files:
                     filename = str(files[0])
@@ -295,29 +304,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption_text = "- @G66Gbot"
 
             if images:
-                if audio_url:
-                    local_audio_path = None
-                    try:
-                        local_audio_path = await asyncio.to_thread(
-                            download_media, audio_url, ".mp3"
-                        )
-                        await context.bot.send_chat_action(
-                            chat_id=update.effective_chat.id,
-                            action=ChatAction.UPLOAD_VOICE,
-                        )
-                        with local_audio_path.open("rb") as audio_file:
-                            await update.message.reply_audio(
-                                audio=audio_file,
-                                title=title,
-                                performer="@G66Gbot",
-                                caption="- @G66Gbot - 1/1",
-                            )
-                    except Exception:
-                        logger.exception("Audio send error")
-                    finally:
-                        if local_audio_path:
-                            local_audio_path.unlink(missing_ok=True)
-
                 await context.bot.send_chat_action(
                     chat_id=update.effective_chat.id,
                     action=ChatAction.UPLOAD_PHOTO,
@@ -567,3 +553,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+ 
