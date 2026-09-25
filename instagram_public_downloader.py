@@ -224,9 +224,9 @@ def run_ffmpeg(command, output_path, timeout=300):
 
 def normalize_video_for_telegram(source_path):
     video_codec, audio_codec, _, _, _ = probe_video(source_path)
-    if not video_codec:
+    if video_codec in {None, UNKNOWN_CODEC}:
         raise VideoProcessingError("Downloaded file has no video stream")
-    if not audio_codec:
+    if audio_codec in {None, UNKNOWN_CODEC}:
         raise VideoProcessingError("Downloaded reel has no audio stream")
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
@@ -261,7 +261,7 @@ def normalize_video_for_telegram(source_path):
 
     run_ffmpeg(command, output_path, timeout=600)
     _, output_audio_codec, _, _, _ = probe_video(output_path)
-    if not output_audio_codec:
+    if output_audio_codec in {None, UNKNOWN_CODEC}:
         output_path.unlink(missing_ok=True)
         raise VideoProcessingError("FFmpeg output is missing its audio stream")
 
@@ -319,11 +319,7 @@ def normalize_media_files(media_files):
 
     for file_path in media_files:
         if is_video_file(file_path):
-            try:
-                converted_path = normalize_video_for_telegram(file_path)
-            except VideoProcessingError:
-                prepared_files.append(file_path)
-                continue
+            converted_path = normalize_video_for_telegram(file_path)
             if converted_path != file_path:
                 file_path.unlink(missing_ok=True)
             prepared_files.append(converted_path)
@@ -345,10 +341,16 @@ def collect_downloaded(output_dir, prefix, suffixes):
 
 
 def select_reel_media(candidates):
-    videos = [path for path in candidates if probe_video(path)[0] is not None]
+    videos = [
+        path for path in candidates
+        if probe_video(path)[0] not in {None, UNKNOWN_CODEC}
+    ]
     if not videos:
         return []
-    with_audio = [path for path in videos if probe_video(path)[1]]
+    with_audio = [
+        path for path in videos
+        if probe_video(path)[1] not in {None, UNKNOWN_CODEC}
+    ]
     chosen = with_audio or videos
     return [max(chosen, key=lambda path: path.stat().st_size)]
 
@@ -693,7 +695,3 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
-
-
-
-
