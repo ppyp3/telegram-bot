@@ -67,7 +67,7 @@ def request_headers():
     }
 
 def fetch_tiktok_data(url):
-    """دالة آمنة لمعالجة روابط تيك توك وتجنب أخطاء روابط الصور"""
+    """جلب بيانات تيك توك دون معالجة روابط الصور عبر yt-dlp"""
     if "/photo/" in url or "photo" in url:
         try:
             headers = request_headers()
@@ -82,18 +82,22 @@ def fetch_tiktok_data(url):
                     if alt_resp.get("code") == 0:
                         data = alt_resp.get("data", {})
                         images = data.get("images", [])
+                        music_url = data.get("music")
+                        
+                        # إضافة النطاق الكامل لرابط الصوت إذا كان نسبياً
+                        if music_url and music_url.startswith("/"):
+                            music_url = f"https://tikwm.com{music_url}"
+
                         if images:
                             return {
                                 "title": data.get("title", "محتوى تيك توك"),
                                 "author": data.get("author", {}).get("nickname", "مستخدم تيك توك"),
-                                "music": data.get("music"),
+                                "music": music_url,
                                 "images": images,
                                 "play": None,
                             }
         except Exception:
             logger.exception("Error fetching TikTok photo via alternative API")
-
-    if "/photo/" in url:
         return None
 
     ydl_opts = {
@@ -121,7 +125,31 @@ def fetch_tiktok_data(url):
         return None
 
 def download_media(url, suffix):
+    """تحميل الملفات بشكل آمن لضمان عدم تمرير روابط /photo/ إلى yt-dlp"""
     temp_dir = tempfile.mkdtemp()
+    
+    # إذا كان رابط الصوت مباشر (MP3/Media URL) وليس رابط صفحة تيك توك
+    if url.startswith("http") and not ("tiktok.com" in url and "/photo/" in url):
+        if suffix == ".mp3" or url.endswith(".mp3") or "tikwm.com" in url:
+            try:
+                file_path = Path(temp_dir) / f"audio_{int(time.time())}.mp3"
+                response = requests.get(url, headers=request_headers(), stream=True, timeout=30)
+                if response.status_code == 200:
+                    with open(file_path, 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                    
+                    if file_path.stat().st_size > MAX_MEDIA_SIZE:
+                        file_path.unlink(missing_ok=True)
+                        raise DownloadTooLarge
+                    
+                    return file_path
+            except DownloadTooLarge:
+                raise
+            except Exception:
+                logger.exception("Direct audio download failed, falling back to yt-dlp")
+
+    # لاستخدام yt-dlp للتحميل التقليدي للفيديوهات
     ydl_opts = {
         'outtmpl': os.path.join(temp_dir, '%(id)s.%(ext)s'),
         'quiet': True,
@@ -276,6 +304,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     local_audio_path = None
 
                     try:
+                        # جلب ملف الصوت عبر رابط الصوت المباشر
                         local_audio_path = await asyncio.to_thread(
                             download_media, audio_url, ".mp3"
                         )
@@ -331,10 +360,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             elif video_url:
-                if "/photo/" in url or "photo" in url:
-                    await processing_msg.edit_text("⚠️ عذراً، لا يمكن تحميل هذا الرابط كفيديو.")
-                    return
-
                 local_video_path = await asyncio.to_thread(
                     download_media, url, ".mp4"
                 )
