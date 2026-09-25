@@ -351,18 +351,12 @@ def normalize_media_files(media_files):
     return prepared_files
 
 
-MERGED_FORMAT = "best[ext=mp4]/best"
-PREMUXED_FORMAT = "best[ext=mp4]/best"
-AUDIO_FORMAT = "ba/bestaudio"
-FALLBACK_FORMAT = "best"
-
-
 def build_download_options(
     output_dir, name_template, media_format, max_filesize=MAX_MEDIA_SIZE
 ):
     options = {
         "outtmpl": str(output_dir / name_template),
-        "format": media_format,
+        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
@@ -414,16 +408,9 @@ def run_reel_download(url, output_dir, media_format):
 
 
 def download_reel_with_audio(url, output_dir):
-    options = {
-        "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "best/bestvideo+bestaudio/best",
-        "merge_output_format": "mp4",
-        "quiet": True,
-        "no_warnings": True,
-        "noprogress": True,
-        "noplaylist": True,
-        "socket_timeout": 15,
-    }
+    options = build_download_options(
+        output_dir, "reel_%(id)s.%(ext)s", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+    )
 
     for stale_file in output_dir.iterdir():
         if stale_file.is_file():
