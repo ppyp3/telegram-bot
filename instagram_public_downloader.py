@@ -223,11 +223,10 @@ def run_ffmpeg(command, output_path, timeout=300):
 
 
 def normalize_video_for_telegram(source_path):
-    video_codec, audio_codec, _, height, _ = probe_video(source_path)
-    
+    video_codec, audio_codec, _, _, _ = probe_video(source_path)
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
-    # ضغط ذكي وسريع يقلل الحجم مع الحفاظ على دقة 1080p والصوت معاً
+    # ضغط ذكي وقوي يصغر حجم الملف لأقصى درجة مع الحفاظ على الدقة الأصلية والصوت
     command = [
         "ffmpeg",
         "-y",
@@ -238,15 +237,15 @@ def normalize_video_for_telegram(source_path):
         "-c:v",
         "libx264",
         "-preset",
-        "veryfast",
+        "fast",
         "-crf",
-        "26",  # درجة ضغط ممتازة تقلل الحجم بشكل كبير جداً مع وضوح عالي
+        "28",
         "-pix_fmt",
         "yuv420p",
         "-c:a",
         "aac",
         "-b:a",
-        "128k",  # تقليل معدل بت الصوت قليلاً لتوفير الحجم مع بقائه نقي ومسموع
+        "96k",
         "-movflags",
         "+faststart",
         str(output_path),
@@ -348,7 +347,7 @@ def select_reel_media(candidates):
 def download_reel_with_audio(url, output_dir):
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+        "format": "best[ext=mp4]/best",
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
