@@ -462,7 +462,7 @@ def media_caption(index, total):
 
 async def send_instagram_file(message, chat_id, context, file_path, index, total):
     is_video = is_video_file(file_path)
-    caption = media_caption(index, total)
+    caption = media_caption(index)
 
     if not is_video:
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
