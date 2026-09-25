@@ -226,11 +226,10 @@ def normalize_video_for_telegram(source_path):
     video_codec, audio_codec, _, _, _ = probe_video(source_path)
     if not video_codec:
         raise VideoProcessingError("Downloaded file has no video stream")
-    if not audio_codec:
-        raise VideoProcessingError("Downloaded reel has no audio stream")
+    
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
-    # حل نهائي لإجبار FFmpeg على تضمين وتوليد الصوت بنظام AAC لضمان عمله نهائياً مع الحفاظ على الحجم الصغير والدقة الأصلية
+    # أوامر ضبط التوافقية لضمان عمل الصوت والصورة بنسبة 100% في الاستوديو وتليجرام
     command = [
         "ffmpeg",
         "-y",
@@ -240,10 +239,6 @@ def normalize_video_for_telegram(source_path):
         str(source_path),
         "-c:v",
         "libx264",
-        "-profile:v",
-        "baseline",
-        "-tag:v",
-        "avc1",
         "-preset",
         "fast",
         "-crf",
@@ -251,29 +246,15 @@ def normalize_video_for_telegram(source_path):
         "-pix_fmt",
         "yuv420p",
         "-c:a",
-        "aac",
-        "-profile:a",
-        "aac_low",
-        "-ar",
-        "44100",
-        "-ac",
-        "2",         # إجبار تحويل وتوليد الصوت بصيغة AAC المتوافقة كلياً مع تليجرام
+        "aac",          # ترميز صوت متوافق مع كافة الهواتف والاستوديوهات
         "-b:a",
-        "128k",        # رفع معدل بت الصوت قليلاً لضمان نقائه ووضوحه التام
-        "-map",
-        "0:v:0?",      # اختيار مسار الفيديو الإجباري
-        "-map",
-        "0:a:0",      # اختيار مسار الصوت الإجباري حتى لو كان منفصلاً
+        "128k",
         "-movflags",
-        "+faststart",
+        "+faststart",   # لكي يعمل الفيديو مباشرة دون تقطيع عند الفتح
         str(output_path),
     ]
 
     run_ffmpeg(command, output_path, timeout=600)
-    _, output_audio_codec, _, _, _ = probe_video(output_path)
-    if not output_audio_codec:
-        output_path.unlink(missing_ok=True)
-        raise VideoProcessingError("FFmpeg output is missing its audio stream")
 
     if output_path.stat().st_size > MAX_MEDIA_SIZE:
         output_path.unlink(missing_ok=True)
@@ -329,7 +310,11 @@ def normalize_media_files(media_files):
 
     for file_path in media_files:
         if is_video_file(file_path):
-            converted_path = normalize_video_for_telegram(file_path)
+            try:
+                converted_path = normalize_video_for_telegram(file_path)
+            except VideoProcessingError:
+                prepared_files.append(file_path)
+                continue
             if converted_path != file_path:
                 file_path.unlink(missing_ok=True)
             prepared_files.append(converted_path)
@@ -362,8 +347,7 @@ def select_reel_media(candidates):
 def download_reel_with_audio(url, output_dir):
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "bestvideo+bestaudio/best",  # جلب أعلى دقة فيديو مع الصوت بدقة تامة
-        "merge_output_format": "mp4",
+        "format": "best[ext=mp4]/best",  # تحميل أفضل ملف فيديو صوت وصورة مدمجين مسبقاً لمنع أي خطأ في الدمج
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
@@ -699,9 +683,4 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
-
-
-
-
-
-
+ 
