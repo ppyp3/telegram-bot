@@ -225,13 +225,11 @@ def run_ffmpeg(command, output_path, timeout=300):
 def normalize_video_for_telegram(source_path):
     video_codec, audio_codec, _, _, _ = probe_video(source_path)
     
-    # إذا كان الفيديو يحتوي على صوت والصورة سليمة، نتركه كما هو لسرعة فائقة
     if video_codec == "h264" and audio_codec is not None:
         return source_path
 
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
-    # إذا كان الفيديو H264 لكن الصوت يحتاج توافق أو دمج
     if video_codec == "h264":
         command = [
             "ffmpeg",
@@ -249,7 +247,6 @@ def normalize_video_for_telegram(source_path):
             str(output_path),
         ]
     else:
-        # معالجة شاملة تضمن بقاء الصوت والصورة بأعلى جودة
         command = [
             "ffmpeg",
             "-y",
@@ -370,7 +367,7 @@ def select_reel_media(candidates):
 def download_reel_with_audio(url, output_dir):
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "bestvideo+bestaudio/best",  # ضمان دمج أفضل فيديو مع أفضل صوت
+        "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",  # تحديد أقصى دقة 1080 مع الصوت
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
