@@ -241,7 +241,7 @@ def run_ffmpeg(command, output_path, timeout=300):
 
 
 def build_ffmpeg_command(source_path, output_path, copy_video, copy_audio, add_silence):
-    command = ["ffmpeg", "-y", "-threads", "1", "-i", str(source_path)]
+    command = ["ffmpeg", "-y", "-threads", "2", "-i", str(source_path)]
 
     if add_silence:
         command += [
@@ -259,19 +259,16 @@ def build_ffmpeg_command(source_path, output_path, copy_video, copy_audio, add_s
     else:
         command += [
             "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-crf", "23",
-            "-profile:v", "high",
-            "-level:v", "4.1",
+            "-preset", "veryfast",
+            "-crf", "26",
             "-pix_fmt", "yuv420p",
-            "-vf", "scale=trunc(min(iw\\,720)/2)*2:-2",
-            "-x264-params", "threads=1:lookahead_threads=1:sliced-threads=0:rc-lookahead=10",
+            "-vf", "scale='min(1080,iw)':-2",
         ]
 
     if copy_audio and not add_silence:
         command += ["-c:a", "copy"]
     else:
-        command += ["-c:a", "aac", "-b:a", "128k", "-ac", "2"]
+        command += ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
 
     return command + ["-movflags", "+faststart", str(output_path)]
 
@@ -280,7 +277,7 @@ def normalize_video_for_telegram(source_path):
     video_codec, audio_codec, _, _, _ = probe_video(source_path)
     if (
         video_codec == "h264"
-        and audio_codec == "aac"
+        and audio_codec in {"aac", "mp3"}
         and is_faststart(source_path)
         and not is_fragmented_mp4(source_path)
     ):
@@ -291,8 +288,8 @@ def normalize_video_for_telegram(source_path):
         copy_video = copy_audio = True
         add_silence = False
     else:
-        copy_video = video_codec == "h264"
-        copy_audio = audio_codec == "aac"
+        copy_video = False
+        copy_audio = False
         add_silence = audio_codec is None
 
     try:
@@ -301,14 +298,14 @@ def normalize_video_for_telegram(source_path):
                 source_path, output_path, copy_video, copy_audio, add_silence
             ),
             output_path,
+            timeout=600,
         )
     except VideoProcessingError:
-        if not copy_video:
-            raise
-        logger.warning("Stream copy failed, re-encoding instead", exc_info=True)
+        logger.warning("Re-encoding failed, attempting fallback copy", exc_info=True)
         run_ffmpeg(
-            build_ffmpeg_command(source_path, output_path, False, False, add_silence),
+            build_ffmpeg_command(source_path, output_path, True, True, add_silence),
             output_path,
+            timeout=600,
         )
 
     if output_path.stat().st_size > MAX_MEDIA_SIZE:
@@ -533,7 +530,7 @@ def mux_audio_into_video(video_path, audio_path):
     if audio_codec == "aac":
         command += ["-c:a", "copy"]
     else:
-        command += ["-c:a", "aac", "-b:a", "128k", "-ac", "2"]
+        command += ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
     command += ["-shortest", "-movflags", "+faststart", str(output_path)]
 
     run_ffmpeg(command, output_path)
@@ -923,4 +920,3 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
- 
