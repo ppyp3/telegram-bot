@@ -240,136 +240,53 @@ def run_ffmpeg(command, output_path, timeout=300):
         raise VideoProcessingError(f"Video processing failed (exit {result.returncode})")
 
 
-def build_ffmpeg_command(source_path, output_path, copy_video, copy_audio, add_silence):
-    command = ["ffmpeg", "-y", "-threads", "2", "-i", str(source_path)]
-
-    if add_silence:
-        command += [
-            "-f", "lavfi",
-            "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
-            "-map", "0:v:0",
-            "-map", "1:a:0",
-            "-shortest",
-        ]
-    else:
-        command += ["-map", "0:v:0", "-map", "0:a?"]
-
-    if copy_video:
-        command += ["-c:v", "copy"]
-    else:
-        command += [
-            "-c:v", "libx264",
-            "-preset", "veryfast",
-            "-crf", "26",
-            "-pix_fmt", "yuv420p",
-            "-vf", "scale='min(1080,iw)':-2",
-        ]
-
-    command += [
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-ac", "2",
-        "-ar", "44100"
-    ]
-
-    return command + ["-movflags", "+faststart", str(output_path)]
-
-
 def normalize_video_for_telegram(source_path):
     video_codec, audio_codec, _, _, _ = probe_video(source_path)
-    if (
-        video_codec == "h264"
-        and audio_codec in {"aac", "mp3"}
-        and is_faststart(source_path)
-        and not is_fragmented_mp4(source_path)
-    ):
+    
+    if video_codec == "h264" and audio_codec in {"aac", "mp3"}:
         return source_path
 
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
-    if video_codec == UNKNOWN_CODEC:
-        copy_video = copy_audio = True
-        add_silence = False
-    else:
-        copy_video = False
-        copy_audio = False
-        add_silence = audio_codec is None
+    
+    command = [
+        "ffmpeg",
+        "-y",
+        "-threads",
+        "2",
+        "-i",
+        str(source_path),
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "26",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-ac",
+        "2",
+        "-ar",
+        "44100",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
 
     try:
-        run_ffmpeg(
-            build_ffmpeg_command(
-                source_path, output_path, copy_video, copy_audio, add_silence
-            ),
-            output_path,
-            timeout=600,
-        )
+        run_ffmpeg(command, output_path, timeout=600)
     except VideoProcessingError:
-        logger.warning("Re-encoding failed, attempting fallback copy", exc_info=True)
-        run_ffmpeg(
-            build_ffmpeg_command(source_path, output_path, True, True, add_silence),
-            output_path,
-            timeout=600,
-        )
+        logger.warning("فشل إعادة الترميز، سيتم استخدام الملف الأصلي كما هو لتجنب فقدان الصوت", exc_info=True)
+        return source_path
 
     if output_path.stat().st_size > MAX_MEDIA_SIZE:
         output_path.unlink(missing_ok=True)
         raise InstagramMediaTooLarge
 
     return output_path
-
-
-def is_faststart(file_path):
-    try:
-        file_size = file_path.stat().st_size
-        with file_path.open("rb") as media_file:
-            head = media_file.read(64 * 1024)
-            moov_position = head.find(b"moov")
-            mdat_position = head.find(b"mdat")
-            if moov_position >= 0 and mdat_position >= 0:
-                return moov_position < mdat_position
-
-            if moov_position < 0 and file_size <= 4 * 1024 * 1024:
-                media_file.seek(0)
-                contents = media_file.read()
-                return (
-                    0 <= contents.find(b"moov") < contents.find(b"mdat")
-                )
-    except OSError:
-        pass
-
-    return False
-
-
-def is_fragmented_mp4(file_path):
-    try:
-        with file_path.open("rb") as media_file:
-            position = 0
-            while True:
-                media_file.seek(position)
-                header = media_file.read(8)
-                if len(header) < 8:
-                    return False
-
-                box_size = int.from_bytes(header[:4], "big")
-                box_type = header[4:8]
-
-                if box_type in {b"moof", b"styp", b"sidx"}:
-                    return True
-                if box_type == b"mdat":
-                    return False
-
-                if box_size == 1:
-                    extended = media_file.read(8)
-                    if len(extended) < 8:
-                        return False
-                    box_size = int.from_bytes(extended, "big")
-                elif box_size == 0:
-                    return False
-                if box_size < 8:
-                    return False
-
-                position += box_size
-    except OSError:
-        return False
 
 
 def create_video_thumbnail(file_path):
@@ -434,10 +351,10 @@ def normalize_media_files(media_files):
     return prepared_files
 
 
-MERGED_FORMAT = "bv*+ba/b/best"
-PREMUXED_FORMAT = "b[ext=mp4]/b"
+MERGED_FORMAT = "best[ext=mp4]/best"
+PREMUXED_FORMAT = "best[ext=mp4]/best"
 AUDIO_FORMAT = "ba/bestaudio"
-FALLBACK_FORMAT = "bv+ba/b/best"
+FALLBACK_FORMAT = "best"
 
 
 def build_download_options(
@@ -496,157 +413,35 @@ def run_reel_download(url, output_dir, media_format):
     )
 
 
-def download_reel_audio(url, output_dir):
-    options = build_download_options(
-        output_dir, "audio_%(id)s.%(ext)s", AUDIO_FORMAT, max_filesize=None
-    )
+def download_reel_with_audio(url, output_dir):
+    options = {
+        "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
+        "format": "best/bestvideo+bestaudio/best",
+        "merge_output_format": "mp4",
+        "quiet": True,
+        "no_warnings": True,
+        "noprogress": True,
+        "noplaylist": True,
+        "socket_timeout": 15,
+    }
 
-    with yt_dlp.YoutubeDL(options) as downloader:
-        downloader.extract_info(url, download=True)
-
-    audio_files = collect_downloaded(
-        output_dir, "audio_", {".m4a", ".mp4", ".aac", ".webm", ".opus", ".mp3"}
-    )
-    return audio_files[0] if audio_files else None
-
-
-def mux_audio_into_video(video_path, audio_path):
-    output_path = video_path.with_name(f"{video_path.stem}_sound.mp4")
-    
-    command = [
-        "ffmpeg",
-        "-y",
-        "-threads",
-        "2",
-        "-i",
-        str(video_path),
-        "-i",
-        str(audio_path),
-        "-map",
-        "0:v:0",
-        "-map",
-        "1:a:0?",
-        "-c:v",
-        "copy",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "192k",
-        "-ac",
-        "2",
-        "-ar",
-        "44100",
-        "-shortest",
-        "-movflags",
-        "+faststart",
-        str(output_path),
-    ]
+    for stale_file in output_dir.iterdir():
+        if stale_file.is_file():
+            stale_file.unlink(missing_ok=True)
 
     try:
-        run_ffmpeg(command, output_path)
-    except VideoProcessingError:
-        logger.warning("فشل دمج الصوت المنفصل، جارٍ محاولة إنشاء مسار بديل متوافق...")
-        fallback_command = [
-            "ffmpeg", "-y", "-threads", "2",
-            "-i", str(video_path),
-            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
-            "-map", "0:v:0", "-map", "1:a:0",
-            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-            "-shortest", "-movflags", "+faststart",
-            str(output_path)
-        ]
-        run_ffmpeg(fallback_command, output_path)
+        with yt_dlp.YoutubeDL(options) as downloader:
+            downloader.extract_info(url, download=True)
+    except yt_dlp.utils.DownloadError as error:
+        logger.error("فشل تحميل الرابط من يوتيوب-دي إل بي: %s", error)
+        raise error
 
-    return output_path
-
-
-def attach_missing_audio(url, output_dir, media_files):
-    logger.info("جاري التحقق من مسار الصوت وإعادة مزامنته بدقة...")
-    
-    checked_files = []
-    for path in media_files:
-        _, audio_codec, _, _, _ = probe_video(path)
-        if audio_codec and audio_codec != UNKNOWN_CODEC:
-            logger.info("الفيديو يحتوي مسبقاً على مسار صوتي صالح (%s)، لن يتم تحميل صوت منفصل.", audio_codec)
-            checked_files.append(path)
-            continue
-        
-        try:
-            audio_path = download_reel_audio(url, output_dir)
-        except (yt_dlp.utils.DownloadError, OSError):
-            audio_path = None
-
-        if audio_path and audio_path.is_file() and audio_path.stat().st_size > 1000:
-            try:
-                muxed_path = mux_audio_into_video(path, audio_path)
-                path.unlink(missing_ok=True)
-                checked_files.append(muxed_path)
-            except VideoProcessingError:
-                checked_files.append(path)
-            finally:
-                audio_path.unlink(missing_ok=True)
-        else:
-            logger.warning("تعذر العثور على صوت منفصل، جارٍ إضافة مسار صوتي توافقي فارغ...")
-            fallback_output = path.name.replace(".mp4", "_silent.mp4")
-            silent_path = path.with_name(fallback_output)
-            silent_command = [
-                "ffmpeg", "-y", "-threads", "2",
-                "-i", str(path),
-                "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
-                "-map", "0:v:0", "-map", "1:a:0",
-                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-                "-shortest", "-movflags", "+faststart",
-                str(silent_path)
-            ]
-            try:
-                run_ffmpeg(silent_command, silent_path)
-                path.unlink(missing_ok=True)
-                checked_files.append(silent_path)
-            except VideoProcessingError:
-                checked_files.append(path)
-
-    return checked_files
-
-
-def download_reel_with_audio(url, output_dir):
-    media_files = []
-    last_error = None
-
-    for media_format in (PREMUXED_FORMAT, MERGED_FORMAT, FALLBACK_FORMAT):
-        for stale_file in output_dir.iterdir():
-            if stale_file.is_file():
-                stale_file.unlink(missing_ok=True)
-
-        try:
-            media_files = run_reel_download(url, output_dir, media_format)
-        except yt_dlp.utils.DownloadError as error:
-            logger.warning("Format %s unavailable: %s", media_format, error)
-            last_error = error
-            media_files = []
-            continue
-
-        if media_files:
-            chosen_codecs = probe_video(media_files[0])[:2]
-            logger.info(
-                "Reel format %s produced %s (video=%s audio=%s)",
-                media_format,
-                media_files[0].name,
-                chosen_codecs[0],
-                chosen_codecs[1],
-            )
-
-        if media_files and all(probe_video(path)[1] for path in media_files):
-            break
-
-        logger.warning("Reel has no audio track, retrying with another format")
-
-    if not media_files and last_error is not None:
-        raise last_error
+    media_files = select_reel_media(
+        collect_downloaded(output_dir, "reel_", {".mp4", ".mkv", ".webm"})
+    )
 
     if not media_files:
-        raise InstagramDownloadError("No downloadable reel media was found")
-
-    media_files = attach_missing_audio(url, output_dir, media_files)
+        raise InstagramDownloadError("لم يتم العثور على أي ملف فيديو قابل للتحميل")
 
     for path in media_files:
         if path.stat().st_size > MAX_MEDIA_SIZE:
