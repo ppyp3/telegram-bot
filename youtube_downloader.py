@@ -20,7 +20,6 @@ YOUTUBE_REGEX = re.compile(
     r'(https?://)?(www\.)?(youtube\.com|youtu\.be)/(watch\?v=|shorts/|embed/)?([a-zA-Z0-9_-]+)'
 )
 
-# تحديد مسار ملف الكوكيز (تأكد من وضع ملف cookies.txt في نفس مسار البوت أو تحديد المسار الصحيح)
 COOKIES_FILE = "cookies.txt"
 
 
@@ -123,14 +122,13 @@ def get_youtube_info(url: str):
       "geo_bypass": True,
       "extractor_args": {
           "youtube": {
-              "player_client": ["ios", "web"],
+              "player_client": ["android", "ios", "web"],
           }
       },
       "http_headers": {
           "User-Agent": (
-              "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X)"
-              " AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5"
-              " Mobile/15E148 Safari/604.1"
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+              " (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
           ),
       },
   }
@@ -179,14 +177,13 @@ def check_media_size_before_download(url: str, mode: str = "video") -> bool:
       "geo_bypass": True,
       "extractor_args": {
           "youtube": {
-              "player_client": ["ios", "web"],
+              "player_client": ["android", "ios", "web"],
           }
       },
       "http_headers": {
           "User-Agent": (
-              "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X)"
-              " AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5"
-              " Mobile/15E148 Safari/604.1"
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+              " (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
           ),
       },
   }
@@ -227,14 +224,13 @@ def download_youtube_media(url: str, mode: str = "video"):
       "writethumbnail": True,
       "extractor_args": {
           "youtube": {
-              "player_client": ["ios", "web"],
+              "player_client": ["android", "ios", "web"],
           }
       },
       "http_headers": {
           "User-Agent": (
-              "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X)"
-              " AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5"
-              " Mobile/15E148 Safari/604.1"
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+              " (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
           ),
       },
   }
@@ -451,7 +447,7 @@ async def handle_youtube_callback(query, context, session_data, mode):
 
     await status_msg.delete()
 
-  except DownloadTooLarge:
+  except DownloadTooLast if False else DownloadTooLarge:
     await status_msg.edit_text(
         "⚠️┇هذا الملف لا يمكنني تحميله، لأن حجمه يتجاوز ( 50 MB )."
     )
@@ -460,7 +456,7 @@ async def handle_youtube_callback(query, context, session_data, mode):
     await status_msg.edit_text("❌ حدث خطأ أثناء التحميل.")
   finally:
     if file_path and os.path.exists(file_path):
-      os.remove(file_path)
+      os.path.remove(file_path)
     if thumb_path and os.path.exists(thumb_path):
       os.remove(thumb_path)
  
