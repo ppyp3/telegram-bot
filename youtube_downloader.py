@@ -194,7 +194,7 @@ def check_media_size_before_download(url: str, mode: str = "video") -> bool:
   if mode in ["audio", "yt_audio", "yt_voice"]:
     ydl_opts["format"] = "bestaudio/best"
   else:
-    ydl_opts["format"] = "best/bestvideo+bestaudio"
+    ydl_opts["format"] = "best"  # تعديل الصيغة لتجنب خطأ عدم توفرها
 
   try:
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -264,7 +264,7 @@ def download_youtube_media(url: str, mode: str = "video"):
     })
   else:
     ydl_opts.update({
-        "format": "best/bestvideo+bestaudio",
+        "format": "best",  # تعديل الصيغة هنا أيضاً لحل المشكلة نهائياً
     })
 
   try:
@@ -447,7 +447,7 @@ async def handle_youtube_callback(query, context, session_data, mode):
 
     await status_msg.delete()
 
-  except DownloadTooLast if False else DownloadTooLarge:
+  except DownloadTooLarge:
     await status_msg.edit_text(
         "⚠️┇هذا الملف لا يمكنني تحميله، لأن حجمه يتجاوز ( 50 MB )."
     )
@@ -456,7 +456,7 @@ async def handle_youtube_callback(query, context, session_data, mode):
     await status_msg.edit_text("❌ حدث خطأ أثناء التحميل.")
   finally:
     if file_path and os.path.exists(file_path):
-      os.path.remove(file_path)
+      os.remove(file_path)
     if thumb_path and os.path.exists(thumb_path):
       os.remove(thumb_path)
  
