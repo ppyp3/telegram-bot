@@ -435,12 +435,10 @@ def normalize_media_files(media_files):
     return prepared_files
 
 
-MERGED_FORMAT = (
-    "bv*[vcodec^=avc1][height<=1080]+ba[acodec^=mp4a]/bv*[ext=mp4]+ba/bv*+ba"
-)
-PREMUXED_FORMAT = "b[ext=mp4][acodec!=none]/b[acodec!=none]/b"
-AUDIO_FORMAT = "ba[ext=m4a]/ba/bestaudio*"
-FALLBACK_FORMAT = "bv*+ba/b/bv*/best"
+MERGED_FORMAT = "bv*+ba/b/best"
+PREMUXED_FORMAT = "b[ext=mp4]/b"
+AUDIO_FORMAT = "ba/bestaudio"
+FALLBACK_FORMAT = "bv+ba/b/best"
 
 
 def build_download_options(
@@ -885,7 +883,6 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
         output_dir, media_files = await asyncio.to_thread(download_instagram_media, url)
         
-        # ضبط الحالة من البداية بدون تداخل (صورة أم فيديو)
         action = ChatAction.UPLOAD_VIDEO if (media_files and is_video_file(media_files[0])) else ChatAction.UPLOAD_PHOTO
 
         await context.bot.send_chat_action(
