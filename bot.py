@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
+import yt_dlp
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -56,7 +57,7 @@ def is_valid_tiktok_url(url):
     parsed = urlparse(url.strip())
     hostname = (parsed.hostname or "").lower().rstrip(".")
     return parsed.scheme == "https" and (
-        hostname == "tiktok.com" or hostname.endswith(".tiktok.com") or hostname in {"vm.tiktok.com", "vt.tiktok.com"}
+        hostname == "tiktok.com" or hostname.endswith(".tiktok.com")
     )
 
 def request_headers():
@@ -67,12 +68,10 @@ def request_headers():
 
 def fetch_tiktok_data(url):
     try:
-        headers = request_headers()
         parsed_url = urlparse(url)
-
         if parsed_url.hostname in {"vm.tiktok.com", "vt.tiktok.com"}:
             with requests.get(
-                url, allow_redirects=True, timeout=(8, 20), headers=headers
+                url, allow_redirects=True, timeout=(8, 20), headers=request_headers()
             ) as response:
                 response.raise_for_status()
                 url = response.url
@@ -80,23 +79,19 @@ def fetch_tiktok_data(url):
         if not is_valid_tiktok_url(url):
             return None
 
-        with requests.get(
-            "https://tikwm.com/api/",
-            params={"url": url, "music": 1},
-            headers=headers,
-            timeout=(8, 20),
-        ) as response:
-            response.raise_for_status()
-            alt_resp = response.json()
+        ydl_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "extract_flat": False,
+        }
 
-        if alt_resp.get("code") != 0:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+
+        if not info:
             return None
 
-        data = alt_resp.get("data")
-        if not isinstance(data, dict):
-            return None
-
-        title = str(data.get("title") or "محتوى تيك توك")
+        title = str(info.get("title") or "محتوى تيك توك")
         clean_title = "".join(
             character
             for character in title
@@ -106,29 +101,37 @@ def fetch_tiktok_data(url):
         if not clean_title:
             clean_title = "tiktok_audio"
 
-        author = data.get("author")
-        if not isinstance(author, dict):
-            author = {}
+        author_name = info.get("uploader") or info.get("creator") or "مستخدم تيك توك"
+        play_url = info.get("url")
+        
+        # استخراج رابط الصوت إن وجد
+        music_url = None
+        if "requested_formats" in info:
+            for f in info["requested_formats"]:
+                if f.get("acodec") != "none" and f.get("vcodec") == "none":
+                    music_url = f.get("url")
+                    break
+        if not music_url:
+            music_url = info.get("url") if info.get("vcodec") == "none" else play_url
 
-        images = data.get("images")
-        if not isinstance(images, list):
-            images = []
-
-        music_url = data.get("music")
-        if music_url and music_url.startswith("/"):
-            music_url = f"https://tikwm.com{music_url}"
+        images = []
+        # التعامل مع منشورات الصور (Slideshow) في تيك توك إن وجدت
+        if "formats" in info and info.get("extractor_key") == "TikTok":
+            entries = info.get("entries")
+            if entries:
+                images = [e.get("url") for e in entries if e.get("url")]
 
         return {
             "title": title,
-            "author": author.get("nickname", "مستخدم تيك توك"),
+            "author": author_name,
             "music": music_url,
             "audio_title": f"{clean_title}.mp3",
             "images": images,
-            "play": data.get("play"),
+            "play": play_url,
         }
 
-    except (requests.RequestException, ValueError, TypeError):
-        logger.exception("Error fetching TikTok data")
+    except Exception:
+        logger.exception("Error fetching TikTok data via yt-dlp")
         return None
 
 def download_media(url, suffix):
@@ -561,3 +564,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+ 
