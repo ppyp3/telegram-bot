@@ -67,13 +67,22 @@ def request_headers():
         "Accept-Language": "en-US,en;q=0.9",
     }
 
+async def keep_chat_action(bot, chat_id, action=ChatAction.UPLOAD_PHOTO, interval=4):
+    """دالة دورية لإبقاء مؤشر التحميل متفاعلاً في المحادثة طوال فترة المعالجة"""
+    try:
+        while True:
+            await bot.send_chat_action(chat_id=chat_id, action=action)
+            await asyncio.sleep(interval)
+    except asyncio.CancelledError:
+        pass
+
 def fetch_tiktok_data(url):
     """جلب بيانات تيك توك مع استخراج دقيق للملف الصوتي والصور لضمان عمل الـ Slideshow والصوت بالمقدمة"""
     try:
         parsed_url = urlparse(url)
         if parsed_url.hostname in {"vm.tiktok.com", "vt.tiktok.com"}:
             with requests.get(
-                url, allow_redirects=True, timeout=(8, 20), headers=request_headers()
+                url, allow_redirects=True, timeout=(15, 60), headers=request_headers()
             ) as response:
                 response.raise_for_status()
                 url = response.url
@@ -118,7 +127,7 @@ def fetch_tiktok_data(url):
                     "https://tikwm.com/api/",
                     params={"url": url, "music": 1},
                     headers=request_headers(),
-                    timeout=(8, 20),
+                    timeout=(15, 60),
                 ).json()
                 if api_res.get("code") == 0:
                     data = api_res.get("data", {})
@@ -182,7 +191,7 @@ def download_media(url, suffix):
     temporary_path = None
     try:
         with requests.get(
-            url, headers=request_headers(), timeout=(8, 30), stream=True
+            url, headers=request_headers(), timeout=(30, 120), stream=True
         ) as response:
             response.raise_for_status()
 
@@ -315,6 +324,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "⏰┇يرجى الانتظار، يتم قياس حجم التحميل..."
     )
 
+    action_task = asyncio.create_task(
+        keep_chat_action(context.bot, update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
+    )
+
     try:
         keyboard = [
             [InlineKeyboardButton("🎵┇تحميل كملف صوتي", callback_data="audio")],
@@ -332,16 +345,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption_text = "- @G66Gbot"
 
             if images:
-                # إرسال الملف الصوتي في المقدمة أولاً
                 if audio_url:
                     local_audio_path = None
                     try:
+                        await processing_msg.edit_text("⏰┇جاري تحميل الملف الصوتي...")
                         local_audio_path = await asyncio.to_thread(
                             download_media, audio_url, ".mp3"
-                        )
-                        await context.bot.send_chat_action(
-                            chat_id=update.effective_chat.id,
-                            action=ChatAction.UPLOAD_VOICE,
                         )
                         with local_audio_path.open("rb") as audio_file:
                             await update.message.reply_audio(
@@ -356,10 +365,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         if local_audio_path and local_audio_path.exists():
                             local_audio_path.unlink(missing_ok=True)
 
-                await context.bot.send_chat_action(
-                    chat_id=update.effective_chat.id,
-                    action=ChatAction.UPLOAD_PHOTO,
-                )
+                await processing_msg.edit_text("⏰┇جاري تحميل ألبوم الصور وإرساله...")
 
                 valid_images_data = []
                 temp_files = []
@@ -389,7 +395,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             file_obj = open(img_path, "rb")
                             batch_file_objs.append(file_obj)
 
-                            # التعديل هنا: ضبط النص أسفل الألبوم بالشكل المطلوب تماماً بدون سمايلات
                             if absolute_index == total_valid or idx == len(batch) - 1:
                                 media_group.append(
                                     InputMediaPhoto(
@@ -413,6 +418,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             else:
+                await processing_msg.edit_text("⏰┇جاري تحميل الفيديو...")
                 local_video_path = await asyncio.to_thread(
                     download_tiktok_with_ytdlp, real_url, False
                 )
@@ -421,11 +427,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     raise ValueError("Failed to download video via yt-dlp")
 
                 try:
-                    await context.bot.send_chat_action(
-                        chat_id=update.effective_chat.id,
-                        action=ChatAction.UPLOAD_VIDEO,
-                    )
-
                     with local_video_path.open("rb") as video_file:
                         sent_video = await update.message.reply_video(
                             video=video_file,
@@ -463,6 +464,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⚠️┇أعد المحاوله مع ملف اخر."
         )
         await processing_msg.edit_text(error_custom_msg)
+    finally:
+        action_task.cancel()
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -634,3 +637,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+ 
