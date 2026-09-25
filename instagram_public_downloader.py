@@ -250,7 +250,6 @@ def normalize_video_for_telegram(source_path):
         "0:v:0?",      # اختيار مسار الفيديو الإجباري
         "-map",
         "0:a:0?",      # اختيار مسار الصوت الإجباري حتى لو كان منفصلاً
-        "-shortest",
         "-movflags",
         "+faststart",
         str(output_path),
@@ -688,4 +687,3 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
- 
