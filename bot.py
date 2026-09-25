@@ -204,7 +204,6 @@ def download_media(url, suffix):
         raise
 
 def process_image_to_jpeg(input_path):
-    """تحويل الصورة إجبارياً إلى صيغة JPEG صالحة ومقبولة لدى تيليجرام لتجنب أخطاء المعالجة"""
     try:
         with Image.open(input_path) as img:
             if img.mode in ("RGBA", "P"):
@@ -327,26 +326,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for i in range(0, total_images, 10):
                     batch = images[i:i + 10]
                     media_group = []
-                    temp_files = []
+                    opened_files = [] # قائمة لحفظ الملفات المفتوحة وإغلاقها بأمان
+                    
                     try:
                         for idx, img_url in enumerate(batch):
                             absolute_index = i + idx + 1
                             raw_img = await asyncio.to_thread(download_media, img_url, ".jpg")
                             if raw_img:
-                                temp_files.append(raw_img)
-                                # معالجة الصورة وتحويلها لـ JPEG لضمان قبولها من تيليجرام
+                                opened_files.append(raw_img)
                                 processed_img = await asyncio.to_thread(process_image_to_jpeg, raw_img)
                                 if processed_img != raw_img:
-                                    temp_files.append(processed_img)
+                                    opened_files.append(processed_img)
 
                                 file_obj = open(processed_img, "rb")
-                                temp_files.append(file_obj)
+                                opened_files.append(file_obj)
                                 
+                                # وضع التعداد في آخر صورة من الألبوم بشكل أنيق
                                 if absolute_index == total_images:
                                     media_group.append(
                                         InputMediaPhoto(
                                             media=file_obj,
-                                            caption=f"- @G66Gbot - {absolute_index}/{total_images}",
+                                            caption=f"- @G66Gbot - ({absolute_index}/{total_images}) 📸",
                                         )
                                     )
                                 else:
@@ -354,14 +354,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         if media_group:
                             await update.message.reply_media_group(media=media_group)
+                            # مهلة بسيطة بين الدفعات لمنع الضغط على السيرفر وخدمة التيليجرام
+                            await asyncio.sleep(0.7)
+
                     finally:
-                        for item in temp_files:
+                        # إغلاق الملفات وحذفها من السيرفر بنجاح
+                        for item in opened_files:
                             if hasattr(item, "close"):
                                 try:
                                     item.close()
                                 except Exception:
                                     pass
-                        for path_obj in temp_files:
+                        for path_obj in opened_files:
                             if isinstance(path_obj, Path) and path_obj.exists():
                                 path_obj.unlink(missing_ok=True)
 
@@ -530,7 +534,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             audio_only_keyboard = [
                 [InlineKeyboardButton("🎵 تحميل كملف صوتي.", callback_data="audio")]
             ]
-            audio_reply_markup = InlineKeyboardMarkup(audio_only_keyboard)
+            audio_reply_markup = InlineKeyboardMarkup(audio_only_keyword)
 
             await context.bot.send_chat_action(
                 chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO
