@@ -68,7 +68,7 @@ def request_headers():
     }
 
 def fetch_tiktok_data(url):
-    """جلب بيانات تيك توك عبر مكتبة yt-dlp حصرياً"""
+    """جلب بيانات تيك توك عبر yt-dlp مع دعم الروابط وصور الـ Slideshow بشكل ذكي ومستقر"""
     try:
         parsed_url = urlparse(url)
         if parsed_url.hostname in {"vm.tiktok.com", "vt.tiktok.com"}:
@@ -87,40 +87,59 @@ def fetch_tiktok_data(url):
             "extract_flat": False,
         }
 
+        info = None
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+            try:
+                info = ydl.extract_info(url, download=False)
+            except Exception:
+                info = None
 
-        if not info:
-            return None
+        title = "محتوى تيك توك"
+        music_url = None
+        images = []
 
-        title = str(info.get("title") or "محتوى تيك توك")
+        if info:
+            title = str(info.get("title") or "محتوى تيك توك")
+            
+            if "requested_formats" in info:
+                for f in info["requested_formats"]:
+                    if f.get("acodec") != "none" and f.get("vcodec") == "none":
+                        music_url = f.get("url")
+                        break
+            if not music_url:
+                music_url = info.get("url") if info.get("vcodec") == "none" else None
+
+            if "entries" in info:
+                images = [e.get("url") for e in info.get("entries", []) if e.get("url")]
+
+        # طريقة احتياطية ذكية في حال كان الرابط لمنشور صور (Photo) ولا تدعمه yt-dlp مباشرة[span_2](start_span)[span_2](end_span)
+        if not images or "/photo/" in url:
+            try:
+                api_res = requests.get(
+                    "https://tikwm.com/api/",
+                    params={"url": url, "music": 1},
+                    headers=request_headers(),
+                    timeout=(8, 20),
+                ).json()
+                if api_res.get("code") == 0:
+                    data = api_res.get("data", {})
+                    if isinstance(data, dict):
+                        title = data.get("title", title)
+                        images = data.get("images", [])
+                        music_url = data.get("music", music_url)
+            except Exception:
+                pass
+
         clean_title = "".join(
             character
             for character in title
             if character.isalnum() or character in (" ", "_", "-", "🔥")
         ).strip()
-
         if not clean_title:
             clean_title = "tiktok_audio"
 
-        author_name = info.get("uploader") or info.get("creator") or "مستخدم تيك توك"
-        
-        music_url = None
-        if "requested_formats" in info:
-            for f in info["requested_formats"]:
-                if f.get("acodec") != "none" and f.get("vcodec") == "none":
-                    music_url = f.get("url")
-                    break
-        if not music_url:
-            music_url = info.get("url") if info.get("vcodec") == "none" else None
-
-        images = []
-        if info.get("extractor_key") == "TikTok" and "entries" in info:
-            images = [e.get("url") for e in info.get("entries", []) if e.get("url")]
-
         return {
             "title": title,
-            "author": author_name,
             "music": music_url,
             "audio_title": f"{clean_title}.mp3",
             "images": images,
@@ -128,7 +147,7 @@ def fetch_tiktok_data(url):
         }
 
     except Exception:
-        logger.exception("Error fetching TikTok data via yt-dlp")
+        logger.exception("Error fetching TikTok data")
         return None
 
 def download_tiktok_with_ytdlp(url, is_audio=False):
