@@ -509,8 +509,9 @@ def download_reel_audio(url, output_dir):
 
 
 def mux_audio_into_video(video_path, audio_path):
-    audio_codec = probe_video(audio_path)[1]
     output_path = video_path.with_name(f"{video_path.stem}_sound.mp4")
+    
+    # دمج وترميز الصوت إجبارياً بصيغة AAC ستيريو لمنع أي اختفاء للصوت
     command = [
         "ffmpeg",
         "-y",
@@ -526,44 +527,44 @@ def mux_audio_into_video(video_path, audio_path):
         "1:a:0",
         "-c:v",
         "copy",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-ac",
+        "2",
+        "-shortest",
+        "-movflags",
+        "+faststart",
+        str(output_path),
     ]
-    if audio_codec == "aac":
-        command += ["-c:a", "copy"]
-    else:
-        command += ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
-    command += ["-shortest", "-movflags", "+faststart", str(output_path)]
 
     run_ffmpeg(command, output_path)
     return output_path
 
 
 def attach_missing_audio(url, output_dir, media_files):
-    if all(probe_video(path)[1] for path in media_files):
-        return media_files
-
-    logger.info("Reel came without audio, fetching the audio stream separately")
+    logger.info("جاري التحقق من مسار الصوت وإعادة مزامنته بدقة...")
     try:
         audio_path = download_reel_audio(url, output_dir)
     except (yt_dlp.utils.DownloadError, OSError):
-        logger.warning("Could not download the reel audio stream", exc_info=True)
+        logger.warning("تعذر تحميل ملف الصوت المنفصل", exc_info=True)
         return media_files
 
-    if audio_path is None or not probe_video(audio_path)[1]:
-        logger.warning("The reel does not expose any audio stream")
+    if audio_path is None:
+        logger.warning("لا يوجد ملف صوتي مرفق لهذا الرابط")
         return media_files
 
     repaired_files = []
     for path in media_files:
-        if probe_video(path)[1]:
-            repaired_files.append(path)
-            continue
         try:
             muxed_path = mux_audio_into_video(path, audio_path)
         except VideoProcessingError:
-            logger.warning("Muxing the original audio failed", exc_info=True)
+            logger.warning("فشل دمج الصوت مع الفيديو، سيتم إبقاؤه كما هو", exc_info=True)
             repaired_files.append(path)
             continue
-        logger.info("Original audio attached to %s", muxed_path.name)
+        
+        logger.info("تم دمج الصوت بنجاح مع الملف: %s", muxed_path.name)
         path.unlink(missing_ok=True)
         repaired_files.append(muxed_path)
 
@@ -920,3 +921,4 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
+ 
