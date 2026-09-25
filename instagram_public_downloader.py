@@ -457,12 +457,12 @@ def download_instagram_media(url):
 
 
 def media_caption(index, total):
-    return f"- @G66Gbot - {index}/{total}"
+    return f"- @G66Gbot - {index}"
 
 
 async def send_instagram_file(message, chat_id, context, file_path, index, total):
     is_video = is_video_file(file_path)
-    caption = media_caption(index)
+    caption = media_caption(index, total)
 
     if not is_video:
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
