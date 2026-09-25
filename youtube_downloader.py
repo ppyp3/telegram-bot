@@ -94,9 +94,6 @@ def format_duration(seconds):
 
 
 def safe_filename(name):
-    """
-    Prevent invalid filenames and path traversal.
-    """
     if not name:
         name = "youtube"
 
@@ -378,9 +375,10 @@ async def handle_youtube_message(update, context):
         import html
         safe_title = html.escape(title)
         safe_uploader = html.escape(info["uploader"])
+        safe_url = html.escape(info["url"])
 
         caption = (
-            f'🎬 <a href="{html.escape(info["url"]}">{safe_title}</a>\n'
+            f'🎬 <a href="{safe_url}">{safe_title}</a>\n'
             f"👤 {safe_uploader}\n"
             f'⏱ {info["duration_string"]} - 👁 {info["view_count_formatted"]}'
         )
