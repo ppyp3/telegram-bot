@@ -265,10 +265,13 @@ def build_ffmpeg_command(source_path, output_path, copy_video, copy_audio, add_s
             "-vf", "scale='min(1080,iw)':-2",
         ]
 
-    if copy_audio and not add_silence:
-        command += ["-c:a", "copy"]
-    else:
-        command += ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
+    # إجبار إعادة ترميز الصوت بخصائص ثابتة تمنع أي كتم للصوت
+    command += [
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-ac", "2",
+        "-ar", "44100"
+    ]
 
     return command + ["-movflags", "+faststart", str(output_path)]
 
@@ -511,7 +514,7 @@ def download_reel_audio(url, output_dir):
 def mux_audio_into_video(video_path, audio_path):
     output_path = video_path.with_name(f"{video_path.stem}_sound.mp4")
     
-    # دمج وترميز الصوت إجبارياً بصيغة AAC ستيريو لمنع أي اختفاء للصوت
+    # دمج الصوت وترميزه إجبارياً بمواصفات قياسية متوافقة 100% مع تيليجرام
     command = [
         "ffmpeg",
         "-y",
@@ -533,6 +536,8 @@ def mux_audio_into_video(video_path, audio_path):
         "192k",
         "-ac",
         "2",
+        "-ar",
+        "44100",
         "-shortest",
         "-movflags",
         "+faststart",
