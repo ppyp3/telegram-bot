@@ -329,11 +329,7 @@ def normalize_media_files(media_files):
 
     for file_path in media_files:
         if is_video_file(file_path):
-            try:
-                converted_path = normalize_video_for_telegram(file_path)
-            except VideoProcessingError:
-                prepared_files.append(file_path)
-                continue
+            converted_path = normalize_video_for_telegram(file_path)
             if converted_path != file_path:
                 file_path.unlink(missing_ok=True)
             prepared_files.append(converted_path)
@@ -703,6 +699,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
+
 
 
 
