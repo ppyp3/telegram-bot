@@ -348,7 +348,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if audio_url:
                     local_audio_path = None
                     try:
-                        await processing_msg.edit_text("⏰┇جاري تحميل الملف الصوتي...")
                         local_audio_path = await asyncio.to_thread(
                             download_media, audio_url, ".mp3"
                         )
@@ -364,8 +363,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     finally:
                         if local_audio_path and local_audio_path.exists():
                             local_audio_path.unlink(missing_ok=True)
-
-                await processing_msg.edit_text("⏰┇جاري تحميل ألبوم الصور وإرساله...")
 
                 valid_images_data = []
                 temp_files = []
@@ -418,7 +415,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             else:
-                await processing_msg.edit_text("⏰┇جاري تحميل الفيديو...")
                 local_video_path = await asyncio.to_thread(
                     download_tiktok_with_ytdlp, real_url, False
                 )
@@ -637,4 +633,3 @@ def main():
 
 if __name__ == "__main__":
     main()
- 
