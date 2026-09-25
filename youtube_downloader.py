@@ -120,6 +120,7 @@ def get_youtube_info(url: str):
       "skip_download": True,
       "nocheckcertificate": True,
       "geo_bypass": True,
+      "socket_timeout": 30,
       "extractor_args": {
           "youtube": {
               "player_client": ["android", "ios", "web"],
@@ -175,6 +176,7 @@ def check_media_size_before_download(url: str, mode: str = "video") -> bool:
       "skip_download": True,
       "nocheckcertificate": True,
       "geo_bypass": True,
+      "socket_timeout": 30,
       "extractor_args": {
           "youtube": {
               "player_client": ["android", "ios", "web"],
@@ -221,6 +223,7 @@ def download_youtube_media(url: str, mode: str = "video"):
       "ignoreerrors": False,
       "nocheckcertificate": True,
       "geo_bypass": True,
+      "socket_timeout": 30,
       "writethumbnail": True,
       "extractor_args": {
           "youtube": {
