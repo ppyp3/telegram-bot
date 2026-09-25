@@ -457,7 +457,7 @@ def download_instagram_media(url):
 
 
 def media_caption(index, total):
-    return f"- @G66Gbot - {index}"
+    return f"- @G66Gbot - {index}/{total}"
 
 
 async def send_instagram_file(message, chat_id, context, file_path, index, total):
