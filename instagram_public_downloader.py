@@ -226,35 +226,40 @@ def normalize_video_for_telegram(source_path):
     video_codec, audio_codec, _, _, _ = probe_video(source_path)
     if not video_codec:
         raise VideoProcessingError("Downloaded file has no video stream")
-    
+    if not audio_codec:
+        raise VideoProcessingError("Downloaded reel has no audio stream")
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
-    # أوامر ضبط التوافقية لضمان عمل الصوت والصورة بنسبة 100% في الاستوديو وتليجرام
+    # التعديل النهائي المعتمد ليعمل الفيديو بكفاءة وتظهر الصورة المصغرة في الاستوديو بالصوت والصورة
     command = [
         "ffmpeg",
         "-y",
-        "-threads",
-        "4",
         "-i",
         str(source_path),
         "-c:v",
         "libx264",
         "-preset",
-        "fast",
+        "medium",
         "-crf",
-        "28",
+        "23",
         "-pix_fmt",
         "yuv420p",
+        "-vf",
+        "scale=trunc(iw/2)*2:trunc(ih/2)*2",  # تصحيح الأبعاد لتتوافق مع الاستوديو والمعارض
         "-c:a",
-        "aac",          # ترميز صوت متوافق مع كافة الهواتف والاستوديوهات
+        "aac",
         "-b:a",
         "128k",
         "-movflags",
-        "+faststart",   # لكي يعمل الفيديو مباشرة دون تقطيع عند الفتح
+        "+faststart",
         str(output_path),
     ]
 
     run_ffmpeg(command, output_path, timeout=600)
+    _, output_audio_codec, _, _, _ = probe_video(output_path)
+    if not output_audio_codec:
+        output_path.unlink(missing_ok=True)
+        raise VideoProcessingError("FFmpeg output is missing its audio stream")
 
     if output_path.stat().st_size > MAX_MEDIA_SIZE:
         output_path.unlink(missing_ok=True)
@@ -347,7 +352,8 @@ def select_reel_media(candidates):
 def download_reel_with_audio(url, output_dir):
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "best[ext=mp4]/best",  # تحميل أفضل ملف فيديو صوت وصورة مدمجين مسبقاً لمنع أي خطأ في الدمج
+        "format": "bestvideo+bestaudio/best",
+        "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
