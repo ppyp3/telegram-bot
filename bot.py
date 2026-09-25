@@ -331,6 +331,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             elif video_url:
+                if "/photo/" in url or "photo" in url:
+                    await processing_msg.edit_text("⚠️ عذراً، لا يمكن تحميل هذا الرابط كفيديو.")
+                    return
+
                 local_video_path = await asyncio.to_thread(
                     download_media, url, ".mp4"
                 )
