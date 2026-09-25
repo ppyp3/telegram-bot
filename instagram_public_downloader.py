@@ -265,7 +265,6 @@ def build_ffmpeg_command(source_path, output_path, copy_video, copy_audio, add_s
             "-vf", "scale='min(1080,iw)':-2",
         ]
 
-    # إجبار إعادة ترميز الصوت بخصائص ثابتة تمنع أي كتم للصوت
     command += [
         "-c:a", "aac",
         "-b:a", "192k",
@@ -514,7 +513,6 @@ def download_reel_audio(url, output_dir):
 def mux_audio_into_video(video_path, audio_path):
     output_path = video_path.with_name(f"{video_path.stem}_sound.mp4")
     
-    # دمج الصوت وترميزه إجبارياً بمواصفات قياسية متوافقة 100% مع تيليجرام
     command = [
         "ffmpeg",
         "-y",
@@ -527,7 +525,7 @@ def mux_audio_into_video(video_path, audio_path):
         "-map",
         "0:v:0",
         "-map",
-        "1:a:0",
+        "1:a:0?",
         "-c:v",
         "copy",
         "-c:a",
@@ -544,37 +542,70 @@ def mux_audio_into_video(video_path, audio_path):
         str(output_path),
     ]
 
-    run_ffmpeg(command, output_path)
+    try:
+        run_ffmpeg(command, output_path)
+    except VideoProcessingError:
+        logger.warning("فشل دمج الصوت المنفصل، جارٍ محاولة إنشاء مسار بديل متوافق...")
+        fallback_command = [
+            "ffmpeg", "-y", "-threads", "2",
+            "-i", str(video_path),
+            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+            "-map", "0:v:0", "-map", "1:a:0",
+            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+            "-shortest", "-movflags", "+faststart",
+            str(output_path)
+        ]
+        run_ffmpeg(fallback_command, output_path)
+
     return output_path
 
 
 def attach_missing_audio(url, output_dir, media_files):
     logger.info("جاري التحقق من مسار الصوت وإعادة مزامنته بدقة...")
-    try:
-        audio_path = download_reel_audio(url, output_dir)
-    except (yt_dlp.utils.DownloadError, OSError):
-        logger.warning("تعذر تحميل ملف الصوت المنفصل", exc_info=True)
-        return media_files
-
-    if audio_path is None:
-        logger.warning("لا يوجد ملف صوتي مرفق لهذا الرابط")
-        return media_files
-
-    repaired_files = []
+    
+    checked_files = []
     for path in media_files:
-        try:
-            muxed_path = mux_audio_into_video(path, audio_path)
-        except VideoProcessingError:
-            logger.warning("فشل دمج الصوت مع الفيديو، سيتم إبقاؤه كما هو", exc_info=True)
-            repaired_files.append(path)
+        _, audio_codec, _, _, _ = probe_video(path)
+        if audio_codec and audio_codec != UNKNOWN_CODEC:
+            logger.info("الفيديو يحتوي مسبقاً على مسار صوتي صالح (%s)، لن يتم تحميل صوت منفصل.", audio_codec)
+            checked_files.append(path)
             continue
         
-        logger.info("تم دمج الصوت بنجاح مع الملف: %s", muxed_path.name)
-        path.unlink(missing_ok=True)
-        repaired_files.append(muxed_path)
+        try:
+            audio_path = download_reel_audio(url, output_dir)
+        except (yt_dlp.utils.DownloadError, OSError):
+            audio_path = None
 
-    audio_path.unlink(missing_ok=True)
-    return repaired_files
+        if audio_path and audio_path.is_file() and audio_path.stat().st_size > 1000:
+            try:
+                muxed_path = mux_audio_into_video(path, audio_path)
+                path.unlink(missing_ok=True)
+                checked_files.append(muxed_path)
+            except VideoProcessingError:
+                checked_files.append(path)
+            finally:
+                audio_path.unlink(missing_ok=True)
+        else:
+            logger.warning("تعذر العثور على صوت منفصل، جارٍ إضافة مسار صوتي توافقي فارغ...")
+            fallback_output = path.name.replace(".mp4", "_silent.mp4")
+            silent_path = path.with_name(fallback_output)
+            silent_command = [
+                "ffmpeg", "-y", "-threads", "2",
+                "-i", str(path),
+                "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+                "-map", "0:v:0", "-map", "1:a:0",
+                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                "-shortest", "-movflags", "+faststart",
+                str(silent_path)
+            ]
+            try:
+                run_ffmpeg(silent_command, silent_path)
+                path.unlink(missing_ok=True)
+                checked_files.append(silent_path)
+            except VideoProcessingError:
+                checked_files.append(path)
+
+    return checked_files
 
 
 def download_reel_with_audio(url, output_dir):
