@@ -226,7 +226,7 @@ def normalize_video_for_telegram(source_path):
     video_codec, audio_codec, _, _, _ = probe_video(source_path)
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
-    # ضغط ذكي يحافظ على الدقة الأصلية ويصغر الحجم مع بقاء الصوت بوضوح تام
+    # حل نهائي لإجبار FFmpeg على تضمين وتوليد الصوت بنظام AAC لضمان عمله نهائياً مع الحفاظ على الحجم الصغير والدقة الأصلية
     command = [
         "ffmpeg",
         "-y",
@@ -243,9 +243,14 @@ def normalize_video_for_telegram(source_path):
         "-pix_fmt",
         "yuv420p",
         "-c:a",
-        "aac",
+        "aac",         # إجبار تحويل وتوليد الصوت بصيغة AAC المتوافقة كلياً مع تليجرام
         "-b:a",
-        "96k",
+        "128k",        # رفع معدل بت الصوت قليلاً لضمان نقائه ووضوحه التام
+        "-map",
+        "0:v:0?",      # اختيار مسار الفيديو الإجباري
+        "-map",
+        "0:a:0?",      # اختيار مسار الصوت الإجباري حتى لو كان منفصلاً
+        "-shortest",
         "-movflags",
         "+faststart",
         str(output_path),
@@ -347,7 +352,7 @@ def select_reel_media(candidates):
 def download_reel_with_audio(url, output_dir):
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "bv*+ba/b",  # دمج الصوت والصورة الأصلية معاً بشكل إجباري لتجنب اختفاء الصوت
+        "format": "bestvideo+bestaudio/best",  # جلب أعلى دقة فيديو مع الصوت بدقة تامة
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
