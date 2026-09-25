@@ -255,10 +255,7 @@ def normalize_video_for_telegram(source_path):
         str(output_path),
     ]
 
-    try:
-        run_ffmpeg(command, output_path, timeout=600)
-    except VideoProcessingError:
-        return source_path
+    run_ffmpeg(command, output_path, timeout=600)
 
     if output_path.stat().st_size > MAX_MEDIA_SIZE:
         output_path.unlink(missing_ok=True)
@@ -687,3 +684,4 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
+
