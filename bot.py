@@ -68,6 +68,7 @@ def request_headers():
     }
 
 def fetch_tiktok_data(url):
+    """جلب بيانات تيك توك عبر مكتبة yt-dlp حصرياً"""
     try:
         parsed_url = urlparse(url)
         if parsed_url.hostname in {"vm.tiktok.com", "vt.tiktok.com"}:
@@ -79,16 +80,6 @@ def fetch_tiktok_data(url):
 
         if not is_valid_tiktok_url(url):
             return None
-
-        if "/photo/" in url:
-            return {
-                "title": "منشور صور تيك توك",
-                "author": "مستخدم تيك توك",
-                "music": None,
-                "audio_title": "tiktok_audio.mp3",
-                "images": [url],
-                "webpage_url": url,
-            }
 
         ydl_opts = {
             "quiet": True,
@@ -204,17 +195,21 @@ def download_media(url, suffix):
         raise
 
 def process_image_to_jpeg(input_path):
+    """التحقق من سلامة الصورة وتحويلها إلى JPEG صالحة 100% عبر مكتبة Pillow"""
     try:
         with Image.open(input_path) as img:
-            if img.mode in ("RGBA", "P"):
+            img.verify()
+
+        with Image.open(input_path) as img:
+            if img.mode in ("RGBA", "P", "LA"):
                 img = img.convert("RGB")
             output_fd, output_path = tempfile.mkstemp(suffix=".jpg")
             os.close(output_fd)
             img.save(output_path, "JPEG", quality=95)
             return Path(output_path)
     except Exception:
-        logger.exception("Failed to process image to JPEG")
-        return input_path
+        logger.exception("Invalid or corrupted image file")
+        return None
 
 def remember_session(context, message, user_id, url, title):
     sessions = context.application.bot_data.setdefault("download_sessions", {})
@@ -312,7 +307,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if tiktok_data:
             title = tiktok_data["title"]
             images = tiktok_data["images"]
-            audio_url = tiktok_data["music"]
             real_url = tiktok_data["webpage_url"]
             caption_text = "- @G66Gbot"
 
@@ -322,52 +316,52 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     action=ChatAction.UPLOAD_PHOTO,
                 )
 
-                total_images = len(images)
-                for i in range(0, total_images, 10):
-                    batch = images[i:i + 10]
-                    media_group = []
-                    opened_files = [] # قائمة لحفظ الملفات المفتوحة وإغلاقها بأمان
-                    
-                    try:
-                        for idx, img_url in enumerate(batch):
-                            absolute_index = i + idx + 1
-                            raw_img = await asyncio.to_thread(download_media, img_url, ".jpg")
-                            if raw_img:
-                                opened_files.append(raw_img)
-                                processed_img = await asyncio.to_thread(process_image_to_jpeg, raw_img)
-                                if processed_img != raw_img:
-                                    opened_files.append(processed_img)
+                valid_images_data = []
+                temp_files = []
 
-                                file_obj = open(processed_img, "rb")
-                                opened_files.append(file_obj)
-                                
-                                # وضع التعداد في آخر صورة من الألبوم بشكل أنيق
-                                if absolute_index == total_images:
-                                    media_group.append(
-                                        InputMediaPhoto(
-                                            media=file_obj,
-                                            caption=f"- @G66Gbot - ({absolute_index}/{total_images}) 📸",
-                                        )
+                try:
+                    for img_url in images:
+                        raw_img = await asyncio.to_thread(download_media, img_url, ".jpg")
+                        if raw_img:
+                            temp_files.append(raw_img)
+                            processed_img = await asyncio.to_thread(process_image_to_jpeg, raw_img)
+                            if processed_img:
+                                if processed_img != raw_img:
+                                    temp_files.append(processed_img)
+                                valid_images_data.append(processed_img)
+
+                    total_valid = len(valid_images_data)
+                    if total_valid == 0:
+                        raise ValueError("No valid images found.")
+
+                    for i in range(0, total_valid, 10):
+                        batch = valid_images_data[i:i + 10]
+                        media_group = []
+                        batch_file_objs = []
+
+                        for idx, img_path in enumerate(batch):
+                            absolute_index = i + idx + 1
+                            file_obj = open(img_path, "rb")
+                            batch_file_objs.append(file_obj)
+
+                            if absolute_index == total_valid:
+                                media_group.append(
+                                    InputMediaPhoto(
+                                        media=file_obj,
+                                        caption=f"- @G66Gbot - ({absolute_index}/{total_valid}) 📸",
                                     )
-                                else:
-                                    media_group.append(InputMediaPhoto(media=file_obj))
+                                )
+                            else:
+                                media_group.append(InputMediaPhoto(media=file_obj))
 
                         if media_group:
                             await update.message.reply_media_group(media=media_group)
-                            # مهلة بسيطة بين الدفعات لمنع الضغط على السيرفر وخدمة التيليجرام
                             await asyncio.sleep(0.7)
 
-                    finally:
-                        # إغلاق الملفات وحذفها من السيرفر بنجاح
-                        for item in opened_files:
-                            if hasattr(item, "close"):
-                                try:
-                                    item.close()
-                                except Exception:
-                                    pass
-                        for path_obj in opened_files:
-                            if isinstance(path_obj, Path) and path_obj.exists():
-                                path_obj.unlink(missing_ok=True)
+                finally:
+                    for path_obj in temp_files:
+                        if isinstance(path_obj, Path) and path_obj.exists():
+                            path_obj.unlink(missing_ok=True)
 
                 await processing_msg.delete()
                 return
@@ -534,7 +528,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             audio_only_keyboard = [
                 [InlineKeyboardButton("🎵 تحميل كملف صوتي.", callback_data="audio")]
             ]
-            audio_reply_markup = InlineKeyboardMarkup(audio_only_keyword)
+            audio_reply_markup = InlineKeyboardMarkup(audio_only_keyboard)
 
             await context.bot.send_chat_action(
                 chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO
