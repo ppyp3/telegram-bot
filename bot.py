@@ -312,21 +312,40 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for i in range(0, total_images, 10):
                     batch = images[i:i + 10]
                     media_group = []
-                    for idx, img_url in enumerate(batch):
-                        absolute_index = i + idx + 1
-                        if absolute_index == total_images:
-                            media_group.append(
-                                InputMediaPhoto(
-                                    media=img_url,
-                                    caption=f"- @G66Gbot - {absolute_index}/{total_images}",
-                                )
-                            )
-                        else:
-                            media_group.append(InputMediaPhoto(media=img_url))
+                    temp_files = []
+                    try:
+                        for idx, img_url in enumerate(batch):
+                            absolute_index = i + idx + 1
+                            # تحميل الصورة محلياً لتجنب خطأ webpage_url_failed
+                            local_img = await asyncio.to_thread(download_media, img_url, ".jpg")
+                            if local_img:
+                                temp_files.append(local_img)
+                                file_obj = open(local_img, "rb")
+                                temp_files.append(file_obj) # لحفظه وإغلاقه لاحقاً
+                                
+                                if absolute_index == total_images:
+                                    media_group.append(
+                                        InputMediaPhoto(
+                                            media=file_obj,
+                                            caption=f"- @G66Gbot - {absolute_index}/{total_images}",
+                                        )
+                                    )
+                                else:
+                                    media_group.append(InputMediaPhoto(media=file_obj))
 
-                    if media_group:
-                        # تم إزالة الخطأ هنا عبر حذف disable_web_page_preview
-                        await update.message.reply_media_group(media=media_group)
+                        if media_group:
+                            await update.message.reply_media_group(media=media_group)
+                    finally:
+                        # تنظيف الملفات المؤقتة للصور بعد الإرسال
+                        for item in temp_files:
+                            if hasattr(item, "close"):
+                                try:
+                                    item.close()
+                                except Exception:
+                                    pass
+                        for path_obj in temp_files:
+                            if isinstance(path_obj, Path) and path_obj.exists():
+                                path_obj.unlink(missing_ok=True)
 
                 await processing_msg.delete()
                 return
