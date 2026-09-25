@@ -68,7 +68,7 @@ def request_headers():
     }
 
 def fetch_tiktok_data(url):
-    """جلب بيانات تيك توك عبر yt-dlp مع دعم الروابط وصور الـ Slideshow والاحتياطي الذكي"""
+    """جلب بيانات تيك توك مع استخراج دقيق للملف الصوتي والصور لضمان عمل الـ Slideshow والصوت بالمقدمة"""
     try:
         parsed_url = urlparse(url)
         if parsed_url.hostname in {"vm.tiktok.com", "vt.tiktok.com"}:
@@ -112,8 +112,8 @@ def fetch_tiktok_data(url):
             if "entries" in info:
                 images = [e.get("url") for e in info.get("entries", []) if e.get("url")]
 
-        # الطريقة الاحتياطية المضمونة في حال كانت صور فردية أو لم تستخرجها yt-dlp
-        if not images or "/photo/" in url:
+        # الطريقة الاحتياطية المضمونة لجلب الصوت والصور بدقة عالية خاصة لمنشورات الصور
+        if not images or not music_url or "/photo/" in url:
             try:
                 api_res = requests.get(
                     "https://tikwm.com/api/",
@@ -125,8 +125,10 @@ def fetch_tiktok_data(url):
                     data = api_res.get("data", {})
                     if isinstance(data, dict):
                         title = data.get("title", title)
-                        images = data.get("images", [])
-                        music_url = data.get("music", music_url)
+                        if not images:
+                            images = data.get("images", [])
+                        if not music_url:
+                            music_url = data.get("music")
             except Exception:
                 pass
 
@@ -331,7 +333,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption_text = "- @G66Gbot"
 
             if images:
-                # إرسال الملف الصوتي في المقدمة أولاً كما طلبته
+                # إرسال الملف الصوتي في المقدمة أولاً
                 if audio_url:
                     local_audio_path = None
                     try:
