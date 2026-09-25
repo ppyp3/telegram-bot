@@ -230,7 +230,6 @@ def normalize_video_for_telegram(source_path):
         raise VideoProcessingError("Downloaded reel has no audio stream")
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
-    # حل نهائي لإجبار FFmpeg على تضمين وتوليد الصوت بنظام AAC لضمان عمله نهائياً مع الحفاظ على الحجم الصغير والدقة الأصلية
     command = [
         "ffmpeg",
         "-y",
@@ -247,13 +246,13 @@ def normalize_video_for_telegram(source_path):
         "-pix_fmt",
         "yuv420p",
         "-c:a",
-        "aac",         # إجبار تحويل وتوليد الصوت بصيغة AAC المتوافقة كلياً مع تليجرام
+        "aac",
         "-b:a",
-        "128k",        # رفع معدل بت الصوت قليلاً لضمان نقائه ووضوحه التام
+        "128k",
         "-map",
-        "0:v:0?",      # اختيار مسار الفيديو الإجباري
+        "0:v:0?",
         "-map",
-        "0:a:0",      # اختيار مسار الصوت الإجباري حتى لو كان منفصلاً
+        "0:a:0",
         "-movflags",
         "+faststart",
         str(output_path),
@@ -356,7 +355,7 @@ def select_reel_media(candidates):
 def download_reel_with_audio(url, output_dir):
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "bestvideo+bestaudio/best",  # جلب أعلى دقة فيديو مع الصوت بدقة تامة
+        "format": "bestvideo+bestaudio/best",
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
@@ -456,13 +455,15 @@ def download_instagram_media(url):
         raise
 
 
-def media_caption(index, total):
+def media_caption(index, total, is_reel=False):
+    if is_reel:
+        return "- @G66Gbot"
     return f"- @G66Gbot - {index}/{total}"
 
 
-async def send_instagram_file(message, chat_id, context, file_path, index, total):
+async def send_instagram_file(message, chat_id, context, file_path, index, total, is_reel=False):
     is_video = is_video_file(file_path)
-    caption = media_caption(index, total)
+    caption = media_caption(index, total, is_reel=is_reel)
 
     if not is_video:
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
@@ -494,7 +495,7 @@ async def send_instagram_file(message, chat_id, context, file_path, index, total
     return [sent_message]
 
 
-async def send_instagram_album(message, context, media_files):
+async def send_instagram_album(message, context, media_files, is_reel=False):
     total_files = len(media_files)
     sent_messages = []
 
@@ -510,6 +511,7 @@ async def send_instagram_album(message, context, media_files):
                     batch[0],
                     start + 1,
                     total_files,
+                    is_reel=is_reel,
                 )
             )
             continue
@@ -523,7 +525,7 @@ async def send_instagram_album(message, context, media_files):
                 absolute_index = start + offset
                 is_video = is_video_file(file_path)
                 caption = (
-                    media_caption(absolute_index, total_files)
+                    media_caption(absolute_index, total_files, is_reel=is_reel)
                     if absolute_index == total_files
                     else None
                 )
@@ -597,7 +599,7 @@ async def send_cached_media(message, context, media_ids):
         batch = media_ids[start : start + 10]
         if len(batch) == 1:
             kind, file_id = batch[0]
-            caption = media_caption(start + 1, total_files)
+            caption = media_caption(start + 1, total_files, is_reel=False)
             if kind == "photo":
                 await message.reply_photo(photo=file_id, caption=caption)
             else:
@@ -612,7 +614,7 @@ async def send_cached_media(message, context, media_ids):
         for offset, (kind, file_id) in enumerate(batch, start=1):
             absolute_index = start + offset
             caption = (
-                media_caption(absolute_index, total_files)
+                media_caption(absolute_index, total_files, is_reel=False)
                 if absolute_index == total_files
                 else None
             )
@@ -652,6 +654,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
         output_dir, media_files = await asyncio.to_thread(download_instagram_media, url)
         
+        is_reel = (get_url_kind(url) == "reel") or (len(media_files) == 1 and is_video_file(media_files[0]))
         action = ChatAction.UPLOAD_VIDEO if (media_files and is_video_file(media_files[0])) else ChatAction.UPLOAD_PHOTO
 
         await context.bot.send_chat_action(
@@ -659,7 +662,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             action=action,
         )
         sent_messages = await send_instagram_album(
-            update.message, context, media_files
+            update.message, context, media_files, is_reel=is_reel
         )
         if get_url_kind(url) != "reel":
             cache_sent_media(shortcode, sent_messages)
@@ -693,3 +696,4 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
+ 
