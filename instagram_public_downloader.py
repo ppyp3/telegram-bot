@@ -225,8 +225,6 @@ def run_ffmpeg(command, output_path, timeout=300):
         raise VideoProcessingError("Video processing timed out") from error
 
     if result.returncode != 0 or not output_path.is_file():
-        # A negative return code means the process was killed, usually by the
-        # container's out-of-memory killer.
         if result.returncode < 0:
             logger.error(
                 "FFmpeg was killed by signal %s — the container likely ran out of memory",
@@ -243,8 +241,6 @@ def run_ffmpeg(command, output_path, timeout=300):
 
 
 def build_ffmpeg_command(source_path, output_path, copy_video, copy_audio, add_silence):
-    # Limit threads: x264 defaults to one thread per CPU core, which can exhaust
-    # a small container's memory and get the process killed.
     command = ["ffmpeg", "-y", "-threads", "1", "-i", str(source_path)]
 
     if add_silence:
@@ -281,14 +277,6 @@ def build_ffmpeg_command(source_path, output_path, copy_video, copy_audio, add_s
 
 
 def normalize_video_for_telegram(source_path):
-    """Make the file an Android-friendly H.264/AAC MP4 with a moov atom up front.
-
-    Instagram already serves H.264/AAC, so the streams are normally copied and
-    only the container is rebuilt; re-encoding is the last resort because it is
-    the step heavy enough to be killed on a small container. A silent audio
-    track is added when the source has none, because Telegram turns a soundless
-    MP4 into a GIF-like animation instead of a video.
-    """
     video_codec, audio_codec, _, _, _ = probe_video(source_path)
     if (
         video_codec == "h264"
@@ -300,8 +288,6 @@ def normalize_video_for_telegram(source_path):
 
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     if video_codec == UNKNOWN_CODEC:
-        # Without ffprobe we cannot know the codecs, and re-encoding blindly is
-        # what gets killed on small containers, so only the container is rebuilt.
         copy_video = copy_audio = True
         add_silence = False
     else:
@@ -355,7 +341,6 @@ def is_faststart(file_path):
 
 
 def is_fragmented_mp4(file_path):
-    """Detect DASH-style fragmented MP4 files, which Android often rejects."""
     try:
         with file_path.open("rb") as media_file:
             position = 0
@@ -389,7 +374,6 @@ def is_fragmented_mp4(file_path):
 
 
 def create_video_thumbnail(file_path):
-    """Telegram shows a film icon when no thumbnail is attached; build one."""
     try:
         stat = file_path.stat()
     except OSError:
@@ -439,7 +423,6 @@ def normalize_media_files(media_files):
             try:
                 converted_path = normalize_video_for_telegram(file_path)
             except VideoProcessingError:
-                # Better to send the original file than to fail the request.
                 logger.exception("Falling back to the unprocessed video")
                 prepared_files.append(file_path)
                 continue
@@ -455,12 +438,8 @@ def normalize_media_files(media_files):
 MERGED_FORMAT = (
     "bv*[vcodec^=avc1][height<=1080]+ba[acodec^=mp4a]/bv*[ext=mp4]+ba/bv*+ba"
 )
-# A single progressive file already carries its audio, so FFmpeg never has to
-# merge anything.
 PREMUXED_FORMAT = "b[ext=mp4][acodec!=none]/b[acodec!=none]/b"
 AUDIO_FORMAT = "ba[ext=m4a]/ba/bestaudio*"
-# Some reels are published without any audio stream at all, so the last
-# selector must accept a video-only format instead of failing.
 FALLBACK_FORMAT = "bv*+ba/b/bv*/best"
 
 
@@ -501,7 +480,6 @@ def collect_downloaded(output_dir, prefix, suffixes):
 
 
 def select_reel_media(candidates):
-    """Keep real video files and prefer the one that already has audio."""
     videos = [path for path in candidates if probe_video(path)[0] is not None]
     if not videos:
         return []
@@ -522,7 +500,6 @@ def run_reel_download(url, output_dir, media_format):
 
 
 def download_reel_audio(url, output_dir):
-    """Fetch the reel's own audio stream on its own, without any video."""
     options = build_download_options(
         output_dir, "audio_%(id)s.%(ext)s", AUDIO_FORMAT, max_filesize=None
     )
@@ -537,7 +514,6 @@ def download_reel_audio(url, output_dir):
 
 
 def mux_audio_into_video(video_path, audio_path):
-    """Attach the original audio without touching the video stream."""
     audio_codec = probe_video(audio_path)[1]
     output_path = video_path.with_name(f"{video_path.stem}_sound.mp4")
     command = [
@@ -567,7 +543,6 @@ def mux_audio_into_video(video_path, audio_path):
 
 
 def attach_missing_audio(url, output_dir, media_files):
-    """Add the reel's original audio to files that were downloaded video-only."""
     if all(probe_video(path)[1] for path in media_files):
         return media_files
 
@@ -602,7 +577,6 @@ def attach_missing_audio(url, output_dir, media_files):
 
 
 def download_reel_with_audio(url, output_dir):
-    """Download a reel, falling back until one selector yields audio."""
     media_files = []
     last_error = None
 
@@ -614,7 +588,6 @@ def download_reel_with_audio(url, output_dir):
         try:
             media_files = run_reel_download(url, output_dir, media_format)
         except yt_dlp.utils.DownloadError as error:
-            # Some posts expose only a subset of formats; try the next selector.
             logger.warning("Format %s unavailable: %s", media_format, error)
             last_error = error
             media_files = []
@@ -730,7 +703,6 @@ async def send_instagram_file(message, chat_id, context, file_path, index, total
             sent_message = await message.reply_photo(photo=media_file, caption=caption)
         return [sent_message]
 
-    # تم التصحيح هنا: استخدام UPLOAD_VIDEO بدلاً من UPLOAD_PHOTO للفيديوهات
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
     _, _, width, height, duration = await asyncio.to_thread(probe_video, file_path)
     thumbnail_path = await asyncio.to_thread(create_video_thumbnail, file_path)
@@ -912,9 +884,13 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             return
 
         output_dir, media_files = await asyncio.to_thread(download_instagram_media, url)
+        
+        # ضبط الحالة من البداية بدون تداخل (صورة أم فيديو)
+        action = ChatAction.UPLOAD_VIDEO if (media_files and is_video_file(media_files[0])) else ChatAction.UPLOAD_PHOTO
+
         await context.bot.send_chat_action(
             chat_id=update.effective_chat.id,
-            action=ChatAction.UPLOAD_PHOTO,
+            action=action,
         )
         sent_messages = await send_instagram_album(
             update.message, context, media_files
