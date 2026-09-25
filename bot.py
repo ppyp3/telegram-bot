@@ -326,7 +326,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             media_group.append(InputMediaPhoto(media=img_url))
 
                     if media_group:
-                        await update.message.reply_media_group(media=media_group)
+                        # إرسال ألبوم الصور مع تعطيل معاينة الروابط لمنع أخطاء الـ Webpage URL
+                        await update.message.reply_media_group(
+                            media=media_group,
+                            disable_web_page_preview=True
+                        )
 
                 await processing_msg.delete()
                 return
