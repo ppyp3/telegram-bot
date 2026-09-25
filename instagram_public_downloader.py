@@ -226,7 +226,7 @@ def normalize_video_for_telegram(source_path):
     video_codec, audio_codec, _, _, _ = probe_video(source_path)
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
-    # ضغط ذكي وقوي يصغر حجم الملف لأقصى درجة مع الحفاظ على الدقة الأصلية والصوت
+    # ضغط ذكي يحافظ على الدقة الأصلية ويصغر الحجم مع بقاء الصوت بوضوح تام
     command = [
         "ffmpeg",
         "-y",
@@ -347,7 +347,7 @@ def select_reel_media(candidates):
 def download_reel_with_audio(url, output_dir):
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "best[ext=mp4]/best",
+        "format": "bv*+ba/b",  # دمج الصوت والصورة الأصلية معاً بشكل إجباري لتجنب اختفاء الصوت
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
