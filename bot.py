@@ -79,7 +79,6 @@ def fetch_tiktok_data(url):
         if not is_valid_tiktok_url(url):
             return None
 
-        # التعامل مع روابط الصور لتجنب خطأ yt_dlp
         if "/photo/" in url:
             return {
                 "title": "منشور صور تيك توك",
@@ -326,11 +325,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             media_group.append(InputMediaPhoto(media=img_url))
 
                     if media_group:
-                        # إرسال ألبوم الصور مع تعطيل معاينة الروابط لمنع أخطاء الـ Webpage URL
-                        await update.message.reply_media_group(
-                            media=media_group,
-                            disable_web_page_preview=True
-                        )
+                        # تم إزالة الخطأ هنا عبر حذف disable_web_page_preview
+                        await update.message.reply_media_group(media=media_group)
 
                 await processing_msg.delete()
                 return
