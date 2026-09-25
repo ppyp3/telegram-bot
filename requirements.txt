@@ -6,3 +6,4 @@ requests
 ffmpeg-python
 playwright
 beautifulsoup4
+Pillow
