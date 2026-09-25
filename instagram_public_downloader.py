@@ -223,36 +223,56 @@ def run_ffmpeg(command, output_path, timeout=300):
 
 
 def normalize_video_for_telegram(source_path):
-    # إجبار إعادة معالجة وترميز الفيديو والصوت لضمان عدم وجود ملفات صامتة أو بصيغ غير متوافقة
+    video_codec, audio_codec, _, _, _ = probe_video(source_path)
+    
+    # إذا كان الفيديو H264 والصوت AAC مسبقاً، نتركه كما هو بدون أي معالجة لسرعة فائقة ودقة كاملة
+    if video_codec == "h264" and audio_codec == "aac":
+        return source_path
+
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
-    command = [
-        "ffmpeg",
-        "-y",
-        "-threads",
-        "2",
-        "-i",
-        str(source_path),
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "26",
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "192k",
-        "-ac",
-        "2",
-        "-ar",
-        "44100",
-        "-movflags",
-        "+faststart",
-        str(output_path),
-    ]
+    # إذا كان الفيديو H264 لكن الصوت بحاجة لتوافق، نقوم بنسخ الفيديو بدون ضغط ونحول الصوت فقط
+    if video_codec == "h264":
+        command = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(source_path),
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ]
+    else:
+        # ترميز عالي الجودة وسريع جداً في حال احتياج الفيديو لضغط
+        command = [
+            "ffmpeg",
+            "-y",
+            "-threads",
+            "4",
+            "-i",
+            str(source_path),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "20",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ]
 
     try:
         run_ffmpeg(command, output_path, timeout=600)
@@ -632,7 +652,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
         return
 
     status_message = await update.message.reply_text(
-        "⏰┇يرجى الانتظار، يتم معالجة الفيديو والصوت..."
+        "⏰┇يرجى الانتظار، يتم قياس حجم التحميل..."
     )
     output_dir = None
 
