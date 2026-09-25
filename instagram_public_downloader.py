@@ -225,13 +225,13 @@ def run_ffmpeg(command, output_path, timeout=300):
 def normalize_video_for_telegram(source_path):
     video_codec, audio_codec, _, _, _ = probe_video(source_path)
     
-    # إذا كان الفيديو H264 والصوت AAC مسبقاً، نتركه كما هو بدون أي معالجة لسرعة فائقة ودقة كاملة
-    if video_codec == "h264" and audio_codec == "aac":
+    # إذا كان الفيديو يحتوي على صوت والصورة سليمة، نتركه كما هو لسرعة فائقة
+    if video_codec == "h264" and audio_codec is not None:
         return source_path
 
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
-    # إذا كان الفيديو H264 لكن الصوت بحاجة لتوافق، نقوم بنسخ الفيديو بدون ضغط ونحول الصوت فقط
+    # إذا كان الفيديو H264 لكن الصوت يحتاج توافق أو دمج
     if video_codec == "h264":
         command = [
             "ffmpeg",
@@ -249,7 +249,7 @@ def normalize_video_for_telegram(source_path):
             str(output_path),
         ]
     else:
-        # ترميز عالي الجودة وسريع جداً في حال احتياج الفيديو لضغط
+        # معالجة شاملة تضمن بقاء الصوت والصورة بأعلى جودة
         command = [
             "ffmpeg",
             "-y",
@@ -370,7 +370,8 @@ def select_reel_media(candidates):
 def download_reel_with_audio(url, output_dir):
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "best[ext=mp4]/best",
+        "format": "bestvideo+bestaudio/best",  # ضمان دمج أفضل فيديو مع أفضل صوت
+        "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
@@ -471,6 +472,7 @@ def download_instagram_media(url):
 
 def media_caption(index, total):
     return f"- @G66Gbot - {index}/{total}"
+
 
 async def send_instagram_file(message, chat_id, context, file_path, index, total):
     is_video = is_video_file(file_path)
@@ -651,7 +653,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
         return
 
     status_message = await update.message.reply_text(
-        "⏰┇يرجى الانتظار، يتم قياس حجم التحميل..."
+        "⏰┇يرجى الانتظار، يتم التحميل بأعلى دقة..."
     )
     output_dir = None
 
