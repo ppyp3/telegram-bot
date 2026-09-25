@@ -68,7 +68,7 @@ def request_headers():
     }
 
 def fetch_tiktok_data(url):
-    """جلب بيانات تيك توك عبر yt-dlp مع دعم الروابط وصور الـ Slideshow بشكل ذكي ومستقر"""
+    """جلب بيانات تيك توك عبر yt-dlp مع دعم الروابط وصور الـ Slideshow والاحتياطي الذكي"""
     try:
         parsed_url = urlparse(url)
         if parsed_url.hostname in {"vm.tiktok.com", "vt.tiktok.com"}:
@@ -112,7 +112,7 @@ def fetch_tiktok_data(url):
             if "entries" in info:
                 images = [e.get("url") for e in info.get("entries", []) if e.get("url")]
 
-        # طريقة احتياطية ذكية في حال كان الرابط لمنشور صور (Photo) ولا تدعمه yt-dlp مباشرة[span_2](start_span)[span_2](end_span)
+        # الطريقة الاحتياطية المضمونة في حال كانت صور فردية أو لم تستخرجها yt-dlp
         if not images or "/photo/" in url:
             try:
                 api_res = requests.get(
@@ -326,10 +326,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if tiktok_data:
             title = tiktok_data["title"]
             images = tiktok_data["images"]
+            audio_url = tiktok_data["music"]
             real_url = tiktok_data["webpage_url"]
             caption_text = "- @G66Gbot"
 
             if images:
+                # إرسال الملف الصوتي في المقدمة أولاً كما طلبته
+                if audio_url:
+                    local_audio_path = None
+                    try:
+                        local_audio_path = await asyncio.to_thread(
+                            download_media, audio_url, ".mp3"
+                        )
+                        await context.bot.send_chat_action(
+                            chat_id=update.effective_chat.id,
+                            action=ChatAction.UPLOAD_VOICE,
+                        )
+                        with local_audio_path.open("rb") as audio_file:
+                            await update.message.reply_audio(
+                                audio=audio_file,
+                                title=title,
+                                performer="@G66Gbot",
+                                caption="- @G66Gbot - 1/1",
+                            )
+                    except Exception:
+                        logger.exception("Audio send error")
+                    finally:
+                        if local_audio_path and local_audio_path.exists():
+                            local_audio_path.unlink(missing_ok=True)
+
                 await context.bot.send_chat_action(
                     chat_id=update.effective_chat.id,
                     action=ChatAction.UPLOAD_PHOTO,
@@ -607,4 +632,3 @@ def main():
 
 if __name__ == "__main__":
     main()
- 
