@@ -478,6 +478,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         session = yt_sessions.get(session_key)
 
         if not session:
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except TelegramError:
+                pass
             await query.message.reply_text("❌ انتهت صلاحية الجلسة، أرسل الرابط مرة أخرى.")
             return
 
@@ -491,12 +495,20 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not session or time.monotonic() - session["created_at"] > SESSION_TTL_SECONDS:
         sessions.pop(session_key, None)
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except TelegramError:
+            pass
         await query.message.reply_text(
             "❌ انتهت صلاحية الجلسة، أرسل الرابط مرة أخرى."
         )
         return
 
     if query.from_user.id != session["user_id"]:
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except TelegramError:
+            pass
         await query.message.reply_text(
             "❌ انتهت صلاحية الجلسة، أرسل الرابط مرة أخرى."
         )
@@ -629,8 +641,9 @@ def main():
     )
     app.add_handler(CallbackQueryHandler(button_callback))
 
-    print("بوت التحميل يعمل الآن بكفاءة...")
+    print("بوت التح يعمل الآن بكفاءة...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
+ 
