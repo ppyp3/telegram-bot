@@ -228,38 +228,26 @@ def normalize_video_for_telegram(source_path):
         raise VideoProcessingError("Downloaded file has no video stream")
     if not audio_codec:
         raise VideoProcessingError("Downloaded reel has no audio stream")
+
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
-    
-    # حل نهائي لإجبار FFmpeg على تضمين وتوليد الصوت بنظام AAC لضمان عمله نهائياً مع الحفاظ على الحجم الصغير والدقة الأصلية
     command = [
         "ffmpeg",
         "-y",
-        "-threads",
-        "4",
-        "-i",
-        str(source_path),
-        "-c:v",
-        "libx264",
-        "-preset",
-        "fast",
-        "-crf",
-        "28",
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",         # إجبار تحويل وتوليد الصوت بصيغة AAC المتوافقة كلياً مع تليجرام
-        "-b:a",
-        "128k",        # رفع معدل بت الصوت قليلاً لضمان نقائه ووضوحه التام
-        "-map",
-        "0:v:0?",      # اختيار مسار الفيديو الإجباري
-        "-map",
-        "0:a:0",      # اختيار مسار الصوت الإجباري حتى لو كان منفصلاً
-        "-movflags",
-        "+faststart",
+        "-threads", "4",
+        "-i", str(source_path),
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-crf", "28",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-map", "0:v:0?",
+        "-map", "0:a:0",
+        "-movflags", "+faststart",
         str(output_path),
     ]
 
-        run_ffmpeg(command, output_path, timeout=600)
+    run_ffmpeg(command, output_path, timeout=600)
     _, output_audio_codec, _, _, _ = probe_video(output_path)
 
     if not output_audio_codec:
@@ -271,7 +259,6 @@ def normalize_video_for_telegram(source_path):
         raise InstagramMediaTooLarge
 
     return output_path
-
 
 def create_video_thumbnail(file_path):
     try:
