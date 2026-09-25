@@ -224,6 +224,10 @@ def run_ffmpeg(command, output_path, timeout=300):
 
 def normalize_video_for_telegram(source_path):
     video_codec, audio_codec, _, _, _ = probe_video(source_path)
+    if not video_codec:
+        raise VideoProcessingError("Downloaded file has no video stream")
+    if not audio_codec:
+        raise VideoProcessingError("Downloaded reel has no audio stream")
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
     # حل نهائي لإجبار FFmpeg على تضمين وتوليد الصوت بنظام AAC لضمان عمله نهائياً مع الحفاظ على الحجم الصغير والدقة الأصلية
@@ -249,15 +253,19 @@ def normalize_video_for_telegram(source_path):
         "-map",
         "0:v:0?",      # اختيار مسار الفيديو الإجباري
         "-map",
-        "0:a:0?",      # اختيار مسار الصوت الإجباري حتى لو كان منفصلاً
+        "0:a:0",      # اختيار مسار الصوت الإجباري حتى لو كان منفصلاً
         "-movflags",
         "+faststart",
         str(output_path),
     ]
 
     run_ffmpeg(command, output_path, timeout=600)
+    _, output_audio_codec, _, _, _ = probe_video(output_path)
+    if not output_audio_codec:
+        output_path.unlink(missing_ok=True)
+        raise VideoProcessingError("FFmpeg output is missing its audio stream")
 
-    if output_path.stat().st_size > MAX_MEDIA_SIZE:
+    if output_path.stat().st_size > MAX_MEDIA_SIZE::
         output_path.unlink(missing_ok=True)
         raise InstagramMediaTooLarge
 
@@ -684,4 +692,5 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
+
 
