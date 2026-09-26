@@ -110,7 +110,7 @@ async def handle_pinterest_message(update: Update, context):
             try:
                 await context.bot.send_chat_action(chat_id=message.chat_id, action=ChatAction.UPLOAD_VIDEO)
                 with open(local_path, "rb") as vid_file:
-                    await message.reply_video(video=vid_file, caption="- @G66Gbot")
+                    await message.reply_video(video=vid_file, caption="- @G66GBOT")
                 await processing_msg.delete()
             finally:
                 if local_path:
@@ -122,7 +122,7 @@ async def handle_pinterest_message(update: Update, context):
                 await context.bot.send_chat_action(chat_id=message.chat_id, action=ChatAction.UPLOAD_PHOTO)
                 with open(local_path, "rb") as img_file:
                     # استخدام reply_photo يرسل الصورة كاملة وصافية (وليس كملف مضغوط أو مصغر)
-                    await message.reply_photo(photo=img_file, caption="- @G66Gbot")
+                    await message.reply_photo(photo=img_file, caption="- @G66GBOT")
                 await processing_msg.delete()
             finally:
                 if local_path:
