@@ -229,7 +229,6 @@ def normalize_video_for_telegram(source_path):
     
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
-    # دالة معالجة سريعة للغاية مع ضغط ذكي وتصغير الأبعاد لمنع أي تعليق أو تجاوز للحجم
     command = [
         "ffmpeg",
         "-y",
@@ -244,7 +243,7 @@ def normalize_video_for_telegram(source_path):
         "-crf",
         "30",
         "-vf",
-        "scale='min(1280,iw)':'min(720,ih)':force_original_aspect_ratio=decrease,format=yuv420p",
+        "scale='min(1280,iw)':'min(720,ih}':force_original_aspect_ratio=decrease,format=yuv420p",
         "-c:a",
         "aac",
         "-b:a",
@@ -347,7 +346,7 @@ def select_reel_media(candidates):
 def download_reel_with_audio(url, output_dir):
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "bestvideo+bestaudio/best",
+        "format": "bestvideo[height<=720]+bestaudio/best[height<=720]/best",
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
@@ -373,10 +372,6 @@ def download_reel_with_audio(url, output_dir):
 
     if not media_files:
         raise InstagramDownloadError("لم يتم العثور على أي ملف فيديو قابل للتحميل")
-
-    for path in media_files:
-        if path.stat().st_size > MAX_MEDIA_SIZE:
-            raise InstagramMediaTooLarge
 
     return media_files
 
@@ -688,4 +683,3 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
- 
