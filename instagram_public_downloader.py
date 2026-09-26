@@ -229,6 +229,7 @@ def normalize_video_for_telegram(source_path):
     
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
+    # تم تعديل إعدادات FFmpeg للحفاظ على الدقة الأصلية (بدون تصغير لـ 720) وبجودة عالية جداً CRF 23
     command = [
         "ffmpeg",
         "-y",
@@ -239,15 +240,15 @@ def normalize_video_for_telegram(source_path):
         "-c:v",
         "libx264",
         "-preset",
-        "ultrafast",
+        "veryfast",
         "-crf",
-        "30",
-        "-vf",
-        "scale='min(1280,iw)':'min(720,ih}':force_original_aspect_ratio=decrease,format=yuv420p",
+        "23",  # جودة عالية وواضحة جداً مطابقة للمصادر الأصلية
+        "-pix_fmt",
+        "yuv420p",
         "-c:a",
         "aac",
         "-b:a",
-        "96k",
+        "128k",
         "-movflags",
         "+faststart",
         str(output_path),
@@ -346,7 +347,8 @@ def select_reel_media(candidates):
 def download_reel_with_audio(url, output_dir):
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "bestvideo[height<=720]+bestaudio/best[height<=720]/best",
+        # السماح بأعلى دقة متوفرة (مثل 1080p الأصلية) بدون قيود
+        "format": "bestvideo+bestaudio/best",
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
@@ -683,3 +685,4 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
+ 
