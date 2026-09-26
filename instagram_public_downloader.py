@@ -226,11 +226,10 @@ def normalize_video_for_telegram(source_path):
     video_codec, audio_codec, _, _, _ = probe_video(source_path)
     if not video_codec:
         raise VideoProcessingError("Downloaded file has no video stream")
-    if not audio_codec:
-        raise VideoProcessingError("Downloaded reel has no audio stream")
+    
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
-    # تم تعديل المعاملات هنا لتكون السرعة فائقة والضغط ممتاز
+    # دالة معالجة سريعة للغاية مع ضغط ذكي وتصغير الأبعاد لمنع أي تعليق أو تجاوز للحجم
     command = [
         "ffmpeg",
         "-y",
@@ -241,30 +240,22 @@ def normalize_video_for_telegram(source_path):
         "-c:v",
         "libx264",
         "-preset",
-        "ultrafast",  # سرعة فائقة جداً في المعالجة واستخراج الفيديو
+        "ultrafast",
         "-crf",
-        "28",          # ضغط قوي لتقليل الحجم
-        "-pix_fmt",
-        "yuv420p",
+        "30",
+        "-vf",
+        "scale='min(1280,iw)':'min(720,ih)':force_original_aspect_ratio=decrease,format=yuv420p",
         "-c:a",
         "aac",
         "-b:a",
-        "128k",
-        "-map",
-        "0:v:0?",
-        "-map",
-        "0:a:0",
+        "96k",
         "-movflags",
         "+faststart",
         str(output_path),
     ]
 
     run_ffmpeg(command, output_path, timeout=600)
-    _, output_audio_codec, _, _, _ = probe_video(output_path)
-    if not output_audio_codec:
-        output_path.unlink(missing_ok=True)
-        raise VideoProcessingError("FFmpeg output is missing its audio stream")
-
+    
     if output_path.stat().st_size > MAX_MEDIA_SIZE:
         output_path.unlink(missing_ok=True)
         raise InstagramMediaTooLarge
