@@ -308,7 +308,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not is_valid_tiktok_url(url):
-        await update.message.reply_text("❌ أرسل رابط تيك توك أو بينترست صحيحاً من فضلك.")
+        await update.message.reply_text("❌ أرسل رابطاً صحيحاً من فضلك.")
         return
 
     processing_msg = await update.message.reply_text(
@@ -329,7 +329,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             images = tiktok_data["images"]
             audio_url = tiktok_data["music"]
             real_url = tiktok_data["webpage_url"]
-            caption_text = "- @G66Gbot"
+            caption_text = "- @G66GBOT"
 
             if images:
                 # إرسال الملف الصوتي في المقدمة أولاً
@@ -347,8 +347,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             await update.message.reply_audio(
                                 audio=audio_file,
                                 title=title,
-                                performer="@G66Gbot",
-                                caption="- @G66Gbot - 1/1",
+                                performer="@G66GBOT",
+                                caption="- @G66GBOT - 1/1",
                             )
                     except Exception:
                         logger.exception("Audio send error")
@@ -394,7 +394,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 media_group.append(
                                     InputMediaPhoto(
                                         media=file_obj,
-                                        caption=f"- @G66Gbot - ({absolute_index}/{total_valid})",
+                                        caption=f"- @G66GBOT - ({absolute_index}/{total_valid})",
                                     )
                                 )
                             else:
