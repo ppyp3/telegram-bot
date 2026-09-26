@@ -21,9 +21,12 @@ MAX_MEDIA_SIZE = 49 * 1024 * 1024
 
 COOKIES_FILE = "cookies.txt"
 
+# ضع مفتاح YouTube Data API v3 الخاص بك هنا
+YOUTUBE_API_KEY = "YOUR_GOOGLE_YOUTUBE_API_KEY"
+
 YOUTUBE_REGEX = re.compile(
     r"https?://(?:www\.)?(?:youtube\.com/watch\?v=|youtube\.com/shorts/|"
-    r"youtube\.com/embed/|youtu\.be/)[A-Za-z0-9_-]+",
+    r"youtube\.com/embed/|youtu\.be/)([A-Za-z0-9_-]+)",
     re.IGNORECASE,
 )
 
@@ -57,6 +60,13 @@ def extract_youtube_url(text: str):
     return match.group(0)
 
 
+def extract_video_id(url: str):
+    match = YOUTUBE_REGEX.search(url)
+    if match:
+        return match.group(1)
+    return None
+
+
 def format_views(views):
     if not views:
         return "0"
@@ -75,6 +85,17 @@ def format_views(views):
     return str(views)
 
 
+def parse_iso8601_duration(duration_str):
+    """تحويل مدة يوتيوب من صيغة ISO 8601 إلى ثوانٍ"""
+    match = re.match(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?', duration_str)
+    if not match:
+        return 0
+    hours = int(match.group(1)) if match.group(1) else 0
+    minutes = int(match.group(2)) if match.group(2) else 0
+    seconds = int(match.group(3)) if match.group(3) else 0
+    return hours * 3600 + minutes * 60 + seconds
+
+
 def format_duration(seconds):
     if not seconds:
         return "00:00"
@@ -91,19 +112,6 @@ def format_duration(seconds):
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
     return f"{minutes:02d}:{seconds:02d}"
-
-
-def safe_filename(name):
-    if not name:
-        name = "youtube"
-
-    name = re.sub(r'[<>:"/\\|?*\x00-\x1F]', "_", name)
-    name = name.strip(". ")
-
-    if not name:
-        name = "youtube"
-
-    return name[:150]
 
 
 def get_common_ydl_opts():
@@ -132,42 +140,53 @@ def get_common_ydl_opts():
 
 
 # ---------------------------------------------------------
-# YouTube information
+# YouTube information via Google API v3
 # ---------------------------------------------------------
 
 def get_youtube_info(url: str):
-    ydl_opts = get_common_ydl_opts()
-    ydl_opts.update({
-        "skip_download": True,
-        "extract_flat": False,
-    })
+    video_id = extract_video_id(url)
+    if not video_id:
+        raise ValueError("Invalid YouTube URL")
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+    api_url = f"https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id={video_id}&key={YOUTUBE_API_KEY}"
+    
+    response = requests.get(api_url, timeout=10)
+    data = response.json()
 
-            if not info:
-                raise ValueError("yt-dlp returned empty information")
+    if "items" not in data or not data["items"]:
+        raise ValueError("لم يتم العثور على معلومات الفيديو عبر Google API.")
 
-            return {
-                "title": info.get("title") or "فيديو يوتيوب",
-                "uploader": (
-                    info.get("uploader")
-                    or info.get("channel")
-                    or "غير معروف"
-                ),
-                "duration": int(info.get("duration") or 0),
-                "duration_string": format_duration(info.get("duration")),
-                "view_count_formatted": format_views(
-                    info.get("view_count")
-                ),
-                "thumbnail": info.get("thumbnail"),
-                "url": url,
-            }
+    item = data["items"][0]
+    snippet = item.get("snippet", {})
+    content_details = item.get("contentDetails", {})
+    statistics = item.get("statistics", {})
 
-    except Exception:
-        logger.exception("YouTube information extraction failed")
-        raise
+    title = snippet.get("title", "فيديو يوتيوب")
+    uploader = snippet.get("channelTitle", "غير معروف")
+    
+    duration_iso = content_details.get("duration", "PT0S")
+    duration_seconds = parse_iso8601_duration(duration_iso)
+    
+    view_count = statistics.get("viewCount", "0")
+    
+    # اختيار أعلى جودة متوفرة للصورة المصغرة
+    thumbnails = snippet.get("thumbnails", {})
+    thumb_url = (
+        thumbnails.get("maxres", {}).get("url")
+        or thumbnails.get("high", {}).get("url")
+        or thumbnails.get("medium", {}).get("url")
+        or thumbnails.get("default", {}).get("url")
+    )
+
+    return {
+        "title": title,
+        "uploader": uploader,
+        "duration": duration_seconds,
+        "duration_string": format_duration(duration_seconds),
+        "view_count_formatted": format_views(view_count),
+        "thumbnail": thumb_url,
+        "url": url,
+    }
 
 
 # ---------------------------------------------------------
