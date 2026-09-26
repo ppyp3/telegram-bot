@@ -1,4 +1,4 @@
-import asyncio
+Import asyncio
 import json
 import logging
 import mimetypes
@@ -226,10 +226,10 @@ def normalize_video_for_telegram(source_path):
     video_codec, audio_codec, _, _, _ = probe_video(source_path)
     if not video_codec:
         raise VideoProcessingError("Downloaded file has no video stream")
-    
+    if not audio_codec:
+        raise VideoProcessingError("Downloaded reel has no audio stream")
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
-    # ضمان دمج وتثبيت الصوت والصورة بأعلى جودة وتوافق مع تيليجرام
     command = [
         "ffmpeg",
         "-y",
@@ -240,22 +240,30 @@ def normalize_video_for_telegram(source_path):
         "-c:v",
         "libx264",
         "-preset",
-        "veryfast",
+        "fast",
         "-crf",
-        "23",
+        "28",
         "-pix_fmt",
         "yuv420p",
         "-c:a",
         "aac",
         "-b:a",
         "128k",
+        "-map",
+        "0:v:0?",
+        "-map",
+        "0:a:0",
         "-movflags",
         "+faststart",
         str(output_path),
     ]
 
     run_ffmpeg(command, output_path, timeout=600)
-    
+    _, output_audio_codec, _, _, _ = probe_video(output_path)
+    if not output_audio_codec:
+        output_path.unlink(missing_ok=True)
+        raise VideoProcessingError("FFmpeg output is missing its audio stream")
+
     if output_path.stat().st_size > MAX_MEDIA_SIZE:
         output_path.unlink(missing_ok=True)
         raise InstagramMediaTooLarge
@@ -353,7 +361,7 @@ def download_reel_with_audio(url, output_dir):
         "no_warnings": True,
         "noprogress": True,
         "noplaylist": True,
-        "socket_timeout": 20,
+        "socket_timeout": 15,
     }
 
     for stale_file in output_dir.iterdir():
@@ -364,7 +372,7 @@ def download_reel_with_audio(url, output_dir):
         with yt_dlp.YoutubeDL(options) as downloader:
             downloader.extract_info(url, download=True)
     except yt_dlp.utils.DownloadError as error:
-        logger.error("فشل تحميل الرابط عبر yt-dlp: %s", error)
+        logger.error("فشل تحميل الرابط: %s", error)
         raise error
 
     media_files = select_reel_media(
@@ -373,6 +381,10 @@ def download_reel_with_audio(url, output_dir):
 
     if not media_files:
         raise InstagramDownloadError("لم يتم العثور على أي ملف فيديو قابل للتحميل")
+
+    for path in media_files:
+        if path.stat().st_size > MAX_MEDIA_SIZE:
+            raise InstagramMediaTooLarge
 
     return media_files
 
@@ -386,12 +398,12 @@ def download_instagram_media(url):
 
     try:
         url_kind = get_url_kind(url)
-        # محاولة التحميل الأساسية عبر yt-dlp لكونها الأضمن للريلز والصوت
-        try:
-            reel_files = download_reel_with_audio(url, output_dir)
-            return output_dir, normalize_media_files(reel_files)
-        except Exception:
-            logger.warning("فشل التحميل الأساسي، جاري المحاولة عبر Instaloader", exc_info=True)
+        if url_kind == "reel":
+            try:
+                reel_files = download_reel_with_audio(url, output_dir)
+                return output_dir, normalize_media_files(reel_files)
+            except yt_dlp.utils.DownloadError:
+                logger.warning("Falling back to direct Instagram reel URL", exc_info=True)
 
         loader = instaloader.Instaloader(
             download_pictures=False,
@@ -402,6 +414,17 @@ def download_instagram_media(url):
             post_metadata_txt_pattern="",
         )
         post = instaloader.Post.from_shortcode(loader.context, shortcode)
+
+        if (
+            url_kind == "post"
+            and post.is_video
+            and post.typename != "GraphSidecar"
+        ):
+            try:
+                reel_files = download_reel_with_audio(url, output_dir)
+                return output_dir, normalize_media_files(reel_files)
+            except yt_dlp.utils.DownloadError:
+                logger.warning("Falling back to direct Instagram reel URL", exc_info=True)
 
         if post.typename == "GraphSidecar":
             media_items = [
@@ -618,7 +641,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
         return
 
     status_message = await update.message.reply_text(
-        "⏰┇يرجى الانتظار، يتم التحميل بأعلى دقة مع الصوت..."
+        "⏰┇يرجى الانتظار، يتم التحميل بأعلى دقة..."
     )
     output_dir = None
 
@@ -672,5 +695,4 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             await asyncio.to_thread(shutil.rmtree, output_dir, True)
 
 
-log_media_tools_status()
- 
+log_media_tools_status() 
