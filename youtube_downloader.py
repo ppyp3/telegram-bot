@@ -118,6 +118,11 @@ def get_common_ydl_opts():
         "file_access_retries": 3,
         "concurrent_fragment_downloads": 4,
         "noprogress": True,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["web_embedded", "web", "-tv_downgraded"]
+            }
+        },
     }
 
     if os.path.exists(COOKIES_FILE):
