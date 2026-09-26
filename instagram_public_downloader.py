@@ -230,6 +230,7 @@ def normalize_video_for_telegram(source_path):
         raise VideoProcessingError("Downloaded reel has no audio stream")
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
+    # تم تعديل المعاملات هنا لتكون السرعة فائقة والضغط ممتاز
     command = [
         "ffmpeg",
         "-y",
@@ -240,9 +241,9 @@ def normalize_video_for_telegram(source_path):
         "-c:v",
         "libx264",
         "-preset",
-        "fast",
+        "ultrafast",  # سرعة فائقة جداً في المعالجة واستخراج الفيديو
         "-crf",
-        "28",
+        "28",          # ضغط قوي لتقليل الحجم
         "-pix_fmt",
         "yuv420p",
         "-c:a",
