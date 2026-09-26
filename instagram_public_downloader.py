@@ -229,7 +229,7 @@ def normalize_video_for_telegram(source_path):
     
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
-    # تم تعديل إعدادات FFmpeg للحفاظ على الدقة الأصلية (بدون تصغير لـ 720) وبجودة عالية جداً CRF 23
+    # ضمان دمج وتثبيت الصوت والصورة بأعلى جودة وتوافق مع تيليجرام
     command = [
         "ffmpeg",
         "-y",
@@ -242,7 +242,7 @@ def normalize_video_for_telegram(source_path):
         "-preset",
         "veryfast",
         "-crf",
-        "23",  # جودة عالية وواضحة جداً مطابقة للمصادر الأصلية
+        "23",
         "-pix_fmt",
         "yuv420p",
         "-c:a",
@@ -347,14 +347,13 @@ def select_reel_media(candidates):
 def download_reel_with_audio(url, output_dir):
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        # السماح بأعلى دقة متوفرة (مثل 1080p الأصلية) بدون قيود
         "format": "bestvideo+bestaudio/best",
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
         "noplaylist": True,
-        "socket_timeout": 15,
+        "socket_timeout": 20,
     }
 
     for stale_file in output_dir.iterdir():
@@ -365,7 +364,7 @@ def download_reel_with_audio(url, output_dir):
         with yt_dlp.YoutubeDL(options) as downloader:
             downloader.extract_info(url, download=True)
     except yt_dlp.utils.DownloadError as error:
-        logger.error("فشل تحميل الرابط: %s", error)
+        logger.error("فشل تحميل الرابط عبر yt-dlp: %s", error)
         raise error
 
     media_files = select_reel_media(
@@ -387,12 +386,12 @@ def download_instagram_media(url):
 
     try:
         url_kind = get_url_kind(url)
-        if url_kind == "reel":
-            try:
-                reel_files = download_reel_with_audio(url, output_dir)
-                return output_dir, normalize_media_files(reel_files)
-            except yt_dlp.utils.DownloadError:
-                logger.warning("Falling back to direct Instagram reel URL", exc_info=True)
+        # محاولة التحميل الأساسية عبر yt-dlp لكونها الأضمن للريلز والصوت
+        try:
+            reel_files = download_reel_with_audio(url, output_dir)
+            return output_dir, normalize_media_files(reel_files)
+        except Exception:
+            logger.warning("فشل التحميل الأساسي، جاري المحاولة عبر Instaloader", exc_info=True)
 
         loader = instaloader.Instaloader(
             download_pictures=False,
@@ -403,17 +402,6 @@ def download_instagram_media(url):
             post_metadata_txt_pattern="",
         )
         post = instaloader.Post.from_shortcode(loader.context, shortcode)
-
-        if (
-            url_kind == "post"
-            and post.is_video
-            and post.typename != "GraphSidecar"
-        ):
-            try:
-                reel_files = download_reel_with_audio(url, output_dir)
-                return output_dir, normalize_media_files(reel_files)
-            except yt_dlp.utils.DownloadError:
-                logger.warning("Falling back to direct Instagram reel URL", exc_info=True)
 
         if post.typename == "GraphSidecar":
             media_items = [
@@ -630,7 +618,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
         return
 
     status_message = await update.message.reply_text(
-        "⏰┇يرجى الانتظار، يتم التحميل بأعلى دقة..."
+        "⏰┇يرجى الانتظار، يتم التحميل بأعلى دقة مع الصوت..."
     )
     output_dir = None
 
