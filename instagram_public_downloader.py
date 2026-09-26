@@ -1,4 +1,4 @@
-Import asyncio
+import asyncio
 import json
 import logging
 import mimetypes
@@ -641,7 +641,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
         return
 
     status_message = await update.message.reply_text(
-        "⏰┇يرجى الانتظار، يتم التحميل بأعلى دقة..."
+        "♻️┇جاري التحميل..."
     )
     output_dir = None
 
