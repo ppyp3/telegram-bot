@@ -226,43 +226,25 @@ def normalize_video_for_telegram(source_path):
     video_codec, audio_codec, _, _, _ = probe_video(source_path)
     if not video_codec:
         raise VideoProcessingError("Downloaded file has no video stream")
-    if not audio_codec:
-        raise VideoProcessingError("Downloaded reel has no audio stream")
+    
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
-    command = [
-        "ffmpeg",
-        "-y",
-        "-threads",
-        "4",
-        "-i",
-        str(source_path),
-        "-c:v",
-        "libx264",
-        "-preset",
-        "fast",
-        "-crf",
-        "28",
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "128k",
-        "-map",
-        "0:v:0?",
-        "-map",
-        "0:a:0",
-        "-movflags",
-        "+faststart",
-        str(output_path),
-    ]
+    # تعديل أمر ffmpeg ليضمن معالجة ودمج أي مسار صوتي متاح بشكل صحيح وتجنب كتم الصوت
+    if audio_codec and audio_codec != UNKNOWN_CODEC:
+        command = [
+            "ffmpeg", "-y", "-threads", "4", "-i", str(source_path),
+            "-c:v", "libx264", "-preset", "fast", "-crf", "28", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(output_path),
+        ]
+    else:
+        # إذا كان الملف صامتاً تماماً يتم تجنب فرض مسار صوتي فارغ يسبب خطأ
+        command = [
+            "ffmpeg", "-y", "-threads", "4", "-i", str(source_path),
+            "-c:v", "libx264", "-preset", "fast", "-crf", "28", "-pix_fmt", "yuv420p",
+            "-an", "-movflags", "+faststart", str(output_path),
+        ]
 
     run_ffmpeg(command, output_path, timeout=600)
-    _, output_audio_codec, _, _, _ = probe_video(output_path)
-    if not output_audio_codec:
-        output_path.unlink(missing_ok=True)
-        raise VideoProcessingError("FFmpeg output is missing its audio stream")
 
     if output_path.stat().st_size > MAX_MEDIA_SIZE:
         output_path.unlink(missing_ok=True)
@@ -355,7 +337,7 @@ def select_reel_media(candidates):
 def download_reel_with_audio(url, output_dir):
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "bestvideo+bestaudio/best",
+        "format": "bestvideo+bestaudio/best/best",
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
@@ -398,7 +380,6 @@ def download_instagram_media(url):
     post_caption = ""
 
     try:
-        # استخراج وصف المنشور الأصلي باستخدام instaloader
         try:
             loader = instaloader.Instaloader(
                 download_pictures=False,
@@ -410,7 +391,6 @@ def download_instagram_media(url):
             )
             post = instaloader.Post.from_shortcode(loader.context, shortcode)
             if post.caption:
-                # نأخذ أول سطر من الوصف أو أول 50 حرف كعنوان للملف الصوتي
                 post_caption = post.caption.strip().split("\n")[0][:60]
         except Exception:
             pass
@@ -698,7 +678,6 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             update.message, context, media_files, is_reel=is_reel, reply_markup=reply_markup
         )
 
-        # تخزين وصف المنشور (Caption) في الجلسة ليظهر كعنوان عند تحويله لصوت
         if is_reel and sent_messages:
             user_id = update.effective_user.id
             title = post_caption if post_caption else "محتوى انستغرام"
@@ -743,3 +722,4 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
+ 
