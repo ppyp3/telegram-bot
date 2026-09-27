@@ -357,6 +357,7 @@ def download_reel_with_audio(url, output_dir):
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
         "format": "bestvideo+bestaudio/best",
         "merge_output_format": "mp4",
+        "postprocessors": [{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}],
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
@@ -672,7 +673,6 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             await status_message.delete()
             return
 
-        # استخدام دالة التحميل الحقيقية مع دمج الصوت (yt-dlp المتكامل) لضمان عدم ضياع الصوت أبداً
         output_dir, media_files, post_caption = await asyncio.to_thread(download_instagram_media, url)
         
         is_reel = (get_url_kind(url) == "reel") or (len(media_files) == 1 and is_video_file(media_files[0]))
