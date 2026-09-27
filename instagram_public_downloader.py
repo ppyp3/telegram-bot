@@ -272,8 +272,9 @@ def collect_downloaded(output_dir, prefix, suffixes):
 def download_reel_as_instagram(url, output_dir):
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "bv*+ba/b",  # دمج أفضل فيديو مع أفضل صوت لضمان عدم فقدان الصوت
+        "format": "bv*+ba/b",  # دمج الصوت مع الفيديو بدقة عالية
         "merge_output_format": "mp4",
+        "concurrent_fragment_downloads": 4,  # تسريع التحميل عبر تقسيم وتحميل الأجزاء بالتوازي
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
