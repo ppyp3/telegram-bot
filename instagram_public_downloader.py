@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 import instaloader
 import requests
 import yt_dlp
-from telegram import InputMediaPhoto, InputMediaVideo, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, Update
 from telegram.constants import ChatAction
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes, filters
@@ -461,14 +461,14 @@ def media_caption(index, total, is_reel=False):
     return f"- @G66GBOT - {index}/{total}"
 
 
-async def send_instagram_file(message, chat_id, context, file_path, index, total, is_reel=False):
+async def send_instagram_file(message, chat_id, context, file_path, index, total, is_reel=False, reply_markup=None):
     is_video = is_video_file(file_path)
     caption = media_caption(index, total, is_reel=is_reel)
 
     if not is_video:
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
         with file_path.open("rb") as media_file:
-            sent_message = await message.reply_photo(photo=media_file, caption=caption)
+            sent_message = await message.reply_photo(photo=media_file, caption=caption, reply_markup=reply_markup)
         return [sent_message]
 
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
@@ -481,6 +481,7 @@ async def send_instagram_file(message, chat_id, context, file_path, index, total
         "width": width,
         "height": height,
         "duration": duration,
+        "reply_markup": reply_markup,
     }
 
     thumbnail_file = thumbnail_path.open("rb") if thumbnail_path else None
@@ -495,7 +496,7 @@ async def send_instagram_file(message, chat_id, context, file_path, index, total
     return [sent_message]
 
 
-async def send_instagram_album(message, context, media_files, is_reel=False):
+async def send_instagram_album(message, context, media_files, is_reel=False, reply_markup=None):
     total_files = len(media_files)
     sent_messages = []
 
@@ -512,6 +513,7 @@ async def send_instagram_album(message, context, media_files, is_reel=False):
                     start + 1,
                     total_files,
                     is_reel=is_reel,
+                    reply_markup=reply_markup,
                 )
             )
             continue
@@ -554,7 +556,8 @@ async def send_instagram_album(message, context, media_files, is_reel=False):
                     )
                 )
 
-            sent_messages.extend(await message.reply_media_group(media=media_group))
+            sent_msg_group = await message.reply_media_group(media=media_group)
+            sent_messages.extend(sent_msg_group)
         finally:
             for media_file in open_files:
                 media_file.close()
@@ -661,9 +664,34 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             chat_id=update.effective_chat.id,
             action=action,
         )
+
+        # إضافة أزرار التفاعل للفيديوهات الأحادية (الريلز) مثل تيك توك
+        reply_markup = None
+        if is_reel and len(media_files) == 1 and is_video_file(media_files[0]):
+            keyboard = [
+                [InlineKeyboardButton("🎵┇تحميل كملف صوتي", callback_data="audio")],
+                [InlineKeyboardButton("📥┇تحميل باعلى دقه HD", callback_data="hd_video")],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
         sent_messages = await send_instagram_album(
-            update.message, context, media_files, is_reel=is_reel
+            update.message, context, media_files, is_reel=is_reel, reply_markup=reply_markup
         )
+
+        # حفظ الجلسة في حال أراد المستخدم النقر على أزرار الصوت أو الفيديو
+        if is_reel and sent_messages:
+            user_id = update.effective_user.id
+            title = "محتوى انستغرام"
+            sessions = context.application.bot_data.setdefault("download_sessions", {})
+            # نربط الجلسة بأول رسالة تم إرسالها لتتوافق مع معالج الأزرار الحالي لديك
+            first_sent = sent_messages[0]
+            sessions[(first_sent.chat_id, first_sent.message_id)] = {
+                "user_id": user_id,
+                "url": url,
+                "title": title,
+                "created_at": asyncio.get_event_loop().time() if hasattr(asyncio, 'get_event_loop') else 0,
+            }
+
         if get_url_kind(url) != "reel":
             cache_sent_media(shortcode, sent_messages)
 
@@ -695,4 +723,5 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             await asyncio.to_thread(shutil.rmtree, output_dir, True)
 
 
-log_media_tools_status() 
+log_media_tools_status()
+ 
