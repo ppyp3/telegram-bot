@@ -229,15 +229,23 @@ def normalize_video_for_telegram(source_path):
     
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
-    # فرض إعادة ترميز الصوت بنظام AAC وقناتين لضمان عمل الصوت داخل مشغل التيليجرام حصرياً
+    # حل جذري: فصل الصوت وإعادة ترميزه بصيغة AAC واضحة مع إجبار الخريطة لضمان عدم ضياعه
     command = [
-        "ffmpeg", "-y", "-threads", "4", "-i", str(source_path),
-        "-c:v", "libx264", "-preset", "fast", "-crf", "28", "-pix_fmt", "yuv420p",
+        "ffmpeg", "-y", "-i", str(source_path),
+        "-c:v", "libx264", "-preset", "medium", "-crf", "23", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
-        "-movflags", "+faststart", str(output_path),
+        "-map", "0:v:0", "-map", "0:a:?",
+        "-shortest", "-movflags", "+faststart", str(output_path),
     ]
 
-    run_ffmpeg(command, output_path, timeout=600)
+    try:
+        run_ffmpeg(command, output_path, timeout=600)
+    except VideoProcessingError:
+        fallback_command = [
+            "ffmpeg", "-y", "-i", str(source_path),
+            "-c:v", "copy", "-c:a", "aac", str(output_path)
+        ]
+        run_ffmpeg(fallback_command, output_path, timeout=300)
 
     if output_path.stat().st_size > MAX_MEDIA_SIZE:
         output_path.unlink(missing_ok=True)
@@ -385,7 +393,6 @@ def download_instagram_media(url):
         except Exception:
             post = None
 
-        # محاولة التحميل الحصري عبر yt_dlp لضمان دمج الصوت والصورة تلقائياً لأي رابط
         try:
             media_files = download_with_ytdlp(url, output_dir, prefix="vid_")
             return output_dir, normalize_media_files(media_files), post_caption
