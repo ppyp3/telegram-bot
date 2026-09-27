@@ -410,8 +410,7 @@ def download_instagram_media(url):
             )
             post = instaloader.Post.from_shortcode(loader.context, shortcode)
             if post.caption:
-                # نأخذ أول سطر من الوصف أو أول 50 حرف كعنوان للملف الصوتي
-                post_caption = post.caption.strip().split("\n")[0][:60]
+                post_caption = post.caption.strip()
         except Exception:
             pass
 
@@ -434,7 +433,7 @@ def download_instagram_media(url):
             )
             post = instaloader.Post.from_shortcode(loader.context, shortcode)
             if post.caption and not post_caption:
-                post_caption = post.caption.strip().split("\n")[0][:60]
+                post_caption = post.caption.strip()
 
         if (
             url_kind == "post"
@@ -476,15 +475,18 @@ def download_instagram_media(url):
         raise
 
 
-def media_caption(index, total, is_reel=False):
-    if is_reel:
-        return "- @G66GBOT"
-    return f"- @G66GBOT - {index}/{total}"
+def build_media_caption(index, total, is_reel=False, post_caption=""):
+    # دمج وصف المنشور الأصلي (إن وجد) مع التوقيع الخاص بالبوت
+    bot_signature = "- @G66GBOT" if is_reel else f"- @G66GBOT - {index}/{total}"
+    
+    if post_caption:
+        return f"{post_caption}\n\n{bot_signature}"
+    return bot_signature
 
 
-async def send_instagram_file(message, chat_id, context, file_path, index, total, is_reel=False, reply_markup=None):
+async def send_instagram_file(message, chat_id, context, file_path, index, total, is_reel=False, post_caption="", reply_markup=None):
     is_video = is_video_file(file_path)
-    caption = media_caption(index, total, is_reel=is_reel)
+    caption = build_media_caption(index, total, is_reel=is_reel, post_caption=post_caption)
 
     if not is_video:
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
@@ -517,7 +519,7 @@ async def send_instagram_file(message, chat_id, context, file_path, index, total
     return [sent_message]
 
 
-async def send_instagram_album(message, context, media_files, is_reel=False, reply_markup=None):
+async def send_instagram_album(message, context, media_files, is_reel=False, post_caption="", reply_markup=None):
     total_files = len(media_files)
     sent_messages = []
 
@@ -534,6 +536,7 @@ async def send_instagram_album(message, context, media_files, is_reel=False, rep
                     start + 1,
                     total_files,
                     is_reel=is_reel,
+                    post_caption=post_caption,
                     reply_markup=reply_markup,
                 )
             )
@@ -547,14 +550,16 @@ async def send_instagram_album(message, context, media_files, is_reel=False, rep
                 open_files.append(media_file)
                 absolute_index = start + offset
                 is_video = is_video_file(file_path)
-                caption = (
-                    media_caption(absolute_index, total_files, is_reel=is_reel)
+                
+                # وضع الكابشن فقط في آخر صورة/فيديو من الألبوم أو في العنصر الأول لكي يظهر للمستخدم
+                current_caption = (
+                    build_media_caption(absolute_index, total_files, is_reel=is_reel, post_caption=post_caption)
                     if absolute_index == total_files
                     else None
                 )
 
                 if not is_video:
-                    media_group.append(InputMediaPhoto(media=media_file, caption=caption))
+                    media_group.append(InputMediaPhoto(media=media_file, caption=current_caption))
                     continue
 
                 _, _, width, height, duration = await asyncio.to_thread(
@@ -568,7 +573,7 @@ async def send_instagram_album(message, context, media_files, is_reel=False, rep
                 media_group.append(
                     InputMediaVideo(
                         media=media_file,
-                        caption=caption,
+                        caption=current_caption,
                         supports_streaming=True,
                         width=width,
                         height=height,
@@ -623,7 +628,7 @@ async def send_cached_media(message, context, media_ids):
         batch = media_ids[start : start + 10]
         if len(batch) == 1:
             kind, file_id = batch[0]
-            caption = media_caption(start + 1, total_files, is_reel=False)
+            caption = build_media_caption(start + 1, total_files, is_reel=False)
             if kind == "photo":
                 await message.reply_photo(photo=file_id, caption=caption)
             else:
@@ -638,7 +643,7 @@ async def send_cached_media(message, context, media_ids):
         for offset, (kind, file_id) in enumerate(batch, start=1):
             absolute_index = start + offset
             caption = (
-                media_caption(absolute_index, total_files, is_reel=False)
+                build_media_caption(absolute_index, total_files, is_reel=False)
                 if absolute_index == total_files
                 else None
             )
@@ -695,13 +700,13 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             reply_markup = InlineKeyboardMarkup(keyboard)
 
         sent_messages = await send_instagram_album(
-            update.message, context, media_files, is_reel=is_reel, reply_markup=reply_markup
+            update.message, context, media_files, is_reel=is_reel, post_caption=post_caption, reply_markup=reply_markup
         )
 
-        # تخزين وصف المنشور (Caption) في الجلسة ليظهر كعنوان عند تحويله لصوت
-        if is_reel and sent_messages:
+        # حفظ الجلسة للنصوص والعناوين (للصوت أو غيره)
+        if sent_messages:
             user_id = update.effective_user.id
-            title = post_caption if post_caption else "محتوى انستغرام"
+            title = post_caption.split("\n")[0][:60] if post_caption else "محتوى انستغرام"
             sessions = context.application.bot_data.setdefault("download_sessions", {})
             first_sent = sent_messages[0]
             sessions[(first_sent.chat_id, first_sent.message_id)] = {
