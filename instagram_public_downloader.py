@@ -25,8 +25,7 @@ PROBE_VIDEO_CACHE = {}
 VIDEO_THUMBNAIL_CACHE = {}
 MAX_CACHE_ENTRIES = 500
 DOWNLOAD_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 300.0.0.0.0 (iPhone14,2; iOS 16_6; ar_SA; ar; Scale=3.00; 1170x2532)",
     "Referer": "https://www.instagram.com/",
 }
 
@@ -222,27 +221,23 @@ def run_ffmpeg(command, output_path, timeout=300):
         raise VideoProcessingError(f"Video processing failed (exit {result.returncode})")
 
 
-def normalize_video_for_telegram(source_path):
-    # نتحقق من وجود الصوت والفيديو بدقة بدون أي تعديل أو ضغط لحجم الملف
+def normalize_video_to_mp4(source_path):
     video_codec, audio_codec, _, _, _ = probe_video(source_path)
     if not video_codec:
         raise VideoProcessingError("Downloaded file has no video stream")
     
-    # إذا كان الفيديو يحتوي على صوت مدمج وجاهز، نرجعه مباشرة ليحفظ حجمه الخفيف جداً
-    if audio_codec:
-        if source_path.stat().st_size > MAX_MEDIA_SIZE:
-            raise InstagramMediaTooLarge
-        return source_path
-
-    # إذا افتقر الملف للصوت الصافي، نقوم بعملية ربط سريعة جداً للملف بدون ضغط
-    output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
+    output_path = source_path.with_name(f"{source_path.stem}_output.mp4")
+    
+    # تحويل أو دمج سريع لصيغة MP4 بدون إعادة ضغط ثقيلة للحفاظ على الحجم الخفيف جداً
     command = [
         "ffmpeg",
         "-y",
         "-i",
         str(source_path),
-        "-c",
+        "-c:v",
         "copy",
+        "-c:a",
+        "aac",
         "-movflags",
         "+faststart",
         str(output_path),
@@ -307,10 +302,12 @@ def normalize_media_files(media_files):
     for file_path in media_files:
         if is_video_file(file_path):
             try:
-                converted_path = normalize_video_for_telegram(file_path)
+                converted_path = normalize_video_to_mp4(file_path)
             except VideoProcessingError:
                 prepared_files.append(file_path)
                 continue
+            if converted_path != file_path and converted_path.exists():
+                file_path.unlink(missing_ok=True)
             prepared_files.append(converted_path)
         else:
             prepared_files.append(file_path)
@@ -328,11 +325,11 @@ def collect_downloaded(output_dir, prefix, suffixes):
     )
 
 
-def download_reel_direct(url, output_dir):
-    # استخدام تنسيق يطلب دمج الصوت والصورة بذكاء وبدون إعادة ترميز ثقيلة للحفاظ على الحجم الأصلي الصغير
+def download_reel_as_instagram(url, output_dir):
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
         "format": "best[ext=mp4]/best",
+        "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
@@ -348,12 +345,12 @@ def download_reel_direct(url, output_dir):
         with yt_dlp.YoutubeDL(options) as downloader:
             downloader.extract_info(url, download=True)
     except yt_dlp.utils.DownloadError as error:
-        logger.error("فشل التحميل المباشر: %s", error)
+        logger.error("فشل السحب المباشر: %s", error)
         raise error
 
     media_files = collect_downloaded(output_dir, "reel_", {".mp4", ".mkv", ".webm"})
     if not media_files:
-        raise InstagramDownloadError("لم يتم العثور على ملفات فيديو")
+        raise InstagramDownloadError("لم يتم العثور على ملفات فيديو مطابقة")
 
     chosen = max(media_files, key=lambda p: p.stat().st_size)
     if chosen.stat().st_size > MAX_MEDIA_SIZE:
@@ -373,11 +370,8 @@ def download_instagram_media(url):
     try:
         url_kind = get_url_kind(url)
         
-        # محاولة التحميل السريع المباشر للريلز أو الفيديوهات الفردية بنفس طريقة البوتات الخدمية
         try:
-            reel_files = download_reel_direct(url, output_dir)
-            
-            # محاولة جلب الوصف عبر Instaloader بشكل سريع وخفيف
+            reel_files = download_reel_as_instagram(url, output_dir)
             try:
                 loader = instaloader.Instaloader(
                     download_pictures=False, download_videos=False, save_metadata=False
@@ -390,9 +384,8 @@ def download_instagram_media(url):
 
             return output_dir, normalize_media_files(reel_files), post_caption
         except Exception:
-            logger.warning("Direct download failed, falling back to Instaloader", exc_info=True)
+            logger.warning("Instagram app-style stream failed, falling back to API", exc_info=True)
 
-        # الطريقة الاحتياطية عبر Instaloader في حال فشل الرابط المباشر
         loader = instaloader.Instaloader(
             download_pictures=False,
             download_videos=False,
@@ -690,6 +683,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             "❌ تعذر تحميل هذا الرابط. تأكد أن الحساب والمنشور عام ثم أعد المحاولة."
         )
     except Exception:
+        logger.exception("Unexpected Instagram handler error")
         logger.exception("Unexpected Instagram handler error")
         await status_message.edit_text("❌ حدث خطأ أثناء تحميل محتوى الإنستغرام.")
     finally:
