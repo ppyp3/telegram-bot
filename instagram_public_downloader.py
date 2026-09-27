@@ -398,7 +398,6 @@ def download_instagram_media(url):
     post_caption = ""
 
     try:
-        # استخراج وصف المنشور الأصلي باستخدام instaloader
         try:
             loader = instaloader.Instaloader(
                 download_pictures=False,
@@ -410,7 +409,6 @@ def download_instagram_media(url):
             )
             post = instaloader.Post.from_shortcode(loader.context, shortcode)
             if post.caption:
-                # نأخذ أول سطر من الوصف أو أول 50 حرف كعنوان للملف الصوتي
                 post_caption = post.caption.strip().split("\n")[0][:60]
         except Exception:
             pass
@@ -664,82 +662,71 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
     if not shortcode:
         return
 
-    status_message = await update.message.reply_text(
-        "♻️┇جاري التحميل..."
-    )
-    output_dir = None
+    status_message = await update.message.reply_text("♻️┇جاري التحميل...")
 
     try:
-        cached_media = MEDIA_ID_CACHE.get(shortcode)
-        if cached_media is not None and get_url_kind(url) != "reel":
-            await send_cached_media(update.message, context, cached_media)
-            await status_message.delete()
-            return
-
-        output_dir, media_files, post_caption = await asyncio.to_thread(download_instagram_media, url)
+        # إعدادات جلب الرابط المباشر السريع لتشغيل الفيديو فوراً وبدون تحميل ثقيل
+        ydl_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "format": "best",
+        }
         
-        is_reel = (get_url_kind(url) == "reel") or (len(media_files) == 1 and is_video_file(media_files[0]))
-        action = ChatAction.UPLOAD_VIDEO if (media_files and is_video_file(media_files[0])) else ChatAction.UPLOAD_PHOTO
+        video_url = None
+        post_caption = "- @G66GBOT"
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = await asyncio.to_thread(ydl.extract_info, url, False)
+            if "url" in info:
+                video_url = info["url"]
+            elif "entries" in info and info["entries"]:
+                video_url = info["entries"][0].get("url")
+            
+            if info.get("description"):
+                desc = info.get("description").strip().split("\n")[0][:50]
+                post_caption = f"{desc}\n- @G66GBOT"
+
+        if not video_url:
+            raise Exception("تعذر جلب رابط الفيديو المباشر")
 
         await context.bot.send_chat_action(
             chat_id=update.effective_chat.id,
-            action=action,
+            action=ChatAction.UPLOAD_VIDEO,
         )
 
-        reply_markup = None
-        if is_reel and len(media_files) == 1 and is_video_file(media_files[0]):
-            keyboard = [
-                [InlineKeyboardButton("🎵┇تحميل كملف صوتي", callback_data="audio")],
-                [InlineKeyboardButton("📥┇تحميل باعلى دقه HD", callback_data="hd_video")],
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+        keyboard = [
+            [InlineKeyboardButton("🎵┇تحميل كملف صوتي", callback_data="audio")],
+            [InlineKeyboardButton("📥┇تحميل باعلى دقه HD", callback_data="hd_video")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
-        sent_messages = await send_instagram_album(
-            update.message, context, media_files, is_reel=is_reel, reply_markup=reply_markup
+        # إرسال الفيديو برابطه المباشر ليكون بالحجم الخفيف والسرعة العالية
+        sent_msg = await update.message.reply_video(
+            video=video_url,
+            caption=post_caption,
+            supports_streaming=True,
+            reply_markup=reply_markup,
         )
 
-        # تخزين وصف المنشور (Caption) في الجلسة ليظهر كعنوان عند تحويله لصوت
-        if is_reel and sent_messages:
-            user_id = update.effective_user.id
-            title = post_caption if post_caption else "محتوى انستغرام"
-            sessions = context.application.bot_data.setdefault("download_sessions", {})
-            first_sent = sent_messages[0]
-            sessions[(first_sent.chat_id, first_sent.message_id)] = {
-                "user_id": user_id,
-                "url": url,
-                "title": title,
-                "created_at": asyncio.get_event_loop().time() if hasattr(asyncio, 'get_event_loop') else 0,
-            }
-
-        if get_url_kind(url) != "reel":
-            cache_sent_media(shortcode, sent_messages)
+        # تخزين الجلسة لأزرار التحميل الإضافية
+        user_id = update.effective_user.id
+        sessions = context.application.bot_data.setdefault("download_sessions", {})
+        sessions[(sent_msg.chat_id, sent_msg.message_id)] = {
+            "user_id": user_id,
+            "url": url,
+            "title": post_caption,
+            "created_at": asyncio.get_event_loop().time() if hasattr(asyncio, 'get_event_loop') else 0,
+        }
 
         await status_message.delete()
-    except InstagramMediaTooLarge:
-        await status_message.edit_text(
-            "⚠️┇هذا الملف لا يمكنني تحميله،\n"
-            "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
-            "⚠️┇أعد المحاوله مع ملف اخر."
-        )
-    except VideoProcessingError:
-        await status_message.edit_text("❌ تعذر تجهيز الفيديو. حاول مرة أخرى.")
-    except (
-        InstagramDownloadError,
-        instaloader.exceptions.InstaloaderException,
-        requests.RequestException,
-        yt_dlp.utils.DownloadError,
-        TelegramError,
-    ):
-        logger.exception("Instagram download failed")
+
+    except Exception:
+        logger.exception("Instagram direct stream failed")
         await status_message.edit_text(
             "❌ تعذر تحميل هذا الرابط. تأكد أن الحساب والمنشور عام ثم أعد المحاولة."
         )
-    except Exception:
-        logger.exception("Unexpected Instagram handler error")
-        await status_message.edit_text("❌ حدث خطأ أثناء تحميل محتوى الإنستغرام.")
-    finally:
-        if output_dir:
-            await asyncio.to_thread(shutil.rmtree, output_dir, True)
 
 
 log_media_tools_status()
+ 
