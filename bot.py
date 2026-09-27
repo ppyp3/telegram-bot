@@ -253,14 +253,21 @@ def remember_session(context, message, user_id, url, title):
     }
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_name = update.effective_user.first_name
+    user = update.effective_user
+    # استخدام اسم المستخدم كـ رابط أو نص مع تنسيق HTML
+    user_name = f'<a href="tg://user?id={user.id}">{user.first_name}</a>'
+    
     welcome_msg = (
-        f"✦ أهلاً بك ⦗ {user_name} ⦘ 🖤\n\n"
-        f"▫︎ بوت التحميل السريع 📥\n"
-        f"▫︎ يوتيوب • تيك توك • إنستغرام • بينترست\n\n"
-        f"⚡ أرسل الرابط الآن للبدء 🔻"
+        f"♦️ أهلاً بك ( {user_name} ) 🖤\n\n"
+        f"▫️ بوت التحميل السريع 🍰\n"
+        f"▫️ يوتيوب • تيك توك • إنستگرام • بينترست •\n"
+        f"⚡️ أرسل الرابط الآن للبدء 🔻"
     )
-    await update.message.reply_text(welcome_msg)
+    
+    await update.message.reply_text(
+        welcome_msg, 
+        parse_mode='HTML' # ضروري جداً لتفعيل كود الـ HTML
+    )
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
