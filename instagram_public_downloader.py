@@ -228,7 +228,6 @@ def normalize_video_to_mp4(source_path):
     
     output_path = source_path.with_name(f"{source_path.stem}_output.mp4")
     
-    # إعدادات متوسطة ومتوازنة (CRF 21 مع preset fast للمعالجة السريعة)
     command = [
         "ffmpeg",
         "-y",
@@ -237,9 +236,9 @@ def normalize_video_to_mp4(source_path):
         "-c:v",
         "libx264",
         "-preset",
-        "fast",
+        "veryfast",
         "-crf",
-        "21",
+        "23",
         "-pix_fmt",
         "yuv420p",
         "-c:a",
@@ -336,7 +335,7 @@ def collect_downloaded(output_dir, prefix, suffixes):
 def download_reel_as_instagram(url, output_dir):
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "format": "best[ext=mp4]/best",
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
@@ -699,4 +698,3 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
- 
