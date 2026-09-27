@@ -229,15 +229,15 @@ def normalize_video_for_telegram(source_path):
     
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
-    # تعديل أمر ffmpeg ليضمن معالجة ودمج أي مسار صوتي متاح بشكل صحيح وتجنب كتم الصوت
+    # تم ضبط الأوامر هنا لضمان تمرير مسار الصوت الافتراضي والـ Audio Stream الموجود في الفيديو بدقة لكي لا ينزل صامتاً
     if audio_codec and audio_codec != UNKNOWN_CODEC:
         command = [
             "ffmpeg", "-y", "-threads", "4", "-i", str(source_path),
             "-c:v", "libx264", "-preset", "fast", "-crf", "28", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(output_path),
+            "-c:a", "aac", "-b:a", "128k", "-map", "0:v:0", "-map", "0:a:0?",
+            "-movflags", "+faststart", str(output_path),
         ]
     else:
-        # إذا كان الملف صامتاً تماماً يتم تجنب فرض مسار صوتي فارغ يسبب خطأ
         command = [
             "ffmpeg", "-y", "-threads", "4", "-i", str(source_path),
             "-c:v", "libx264", "-preset", "fast", "-crf", "28", "-pix_fmt", "yuv420p",
@@ -245,6 +245,16 @@ def normalize_video_for_telegram(source_path):
         ]
 
     run_ffmpeg(command, output_path, timeout=600)
+
+    # التحقق من أن الملف الناتج يحتوي على صوت، وإذا وجدنا أن الصوت فقد ولم يعد موجوداً، نعيد المحاولة بدون استثناء صارم أو نمرره بصيغته الأصلية المدمجة
+    _, out_audio_codec, _, _, _ = probe_video(output_path)
+    if not out_audio_codec and audio_codec and audio_codec != UNKNOWN_CODEC:
+        # محاولة بديلة مباشرة في حال فشل التعيين المخصص
+        fallback_command = [
+            "ffmpeg", "-y", "-i", str(source_path),
+            "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", str(output_path)
+        ]
+        run_ffmpeg(fallback_command, output_path, timeout=300)
 
     if output_path.stat().st_size > MAX_MEDIA_SIZE:
         output_path.unlink(missing_ok=True)
@@ -416,16 +426,13 @@ def download_instagram_media(url):
             if post.caption and not post_caption:
                 post_caption = post.caption.strip().split("\n")[0][:60]
 
-        if (
-            url_kind == "post"
-            and post.is_video
-            and post.typename != "GraphSidecar"
-        ):
+        # إذا كان المنشور عبارة عن فيديو مفرد (حتى لو كان رابط p/) نقوم بـ سحبه عبر yt_dlp لضمان جلب الصوت بدقة
+        if post.is_video and post.typename != "GraphSidecar":
             try:
                 reel_files = download_reel_with_audio(url, output_dir)
                 return output_dir, normalize_media_files(reel_files), post_caption
             except yt_dlp.utils.DownloadError:
-                logger.warning("Falling back to direct Instagram reel URL", exc_info=True)
+                logger.warning("Falling back to direct Instagram video download", exc_info=True)
 
         if post.typename == "GraphSidecar":
             media_items = [
