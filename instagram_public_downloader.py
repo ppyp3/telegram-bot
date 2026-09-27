@@ -235,22 +235,14 @@ def normalize_video_to_mp4(source_path):
         str(source_path),
         "-c:v",
         "libx264",
-        "-profile:v",
-        "main",
-        "-level",
-        "3.1",
-        "-preset",
-        "medium",
         "-crf",
-        "24",
+        "23",
         "-pix_fmt",
         "yuv420p",
         "-c:a",
         "aac",
         "-b:a",
         "128k",
-        "-ar",
-        "44100",
         "-movflags",
         "+faststart",
         str(output_path),
@@ -704,4 +696,3 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
- 
