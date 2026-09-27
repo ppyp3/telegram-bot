@@ -228,30 +228,27 @@ def normalize_video_to_mp4(source_path):
     
     output_path = source_path.with_name(f"{source_path.stem}_output.mp4")
     
+    # تحسين ذكي: نسخ الفيديو الأصلي كما هو بدون إعادة ضغط لتوفير الحجم والحفاظ على الجودة الخارقة HD، مع ضبط الصوت والتوافق مع تيليجرام
     command = [
         "ffmpeg",
         "-y",
         "-i",
         str(source_path),
         "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "23",
-        "-pix_fmt",
-        "yuv420p",
+        "copy",
         "-c:a",
         "aac",
         "-b:a",
         "128k",
+        "-pix_fmt",
+        "yuv420p",
         "-movflags",
         "+faststart",
         str(output_path),
     ]
 
     try:
-        run_ffmpeg(command, output_path, timeout=180)
+        run_ffmpeg(command, output_path, timeout=120)
     except VideoProcessingError:
         return source_path
 
@@ -335,7 +332,7 @@ def collect_downloaded(output_dir, prefix, suffixes):
 def download_reel_as_instagram(url, output_dir):
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "best[ext=mp4]/best",
+        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
