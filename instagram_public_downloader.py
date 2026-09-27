@@ -205,63 +205,6 @@ def probe_video(file_path):
     )
 
 
-def run_ffmpeg(command, output_path, timeout=300):
-    try:
-        result = subprocess.run(
-            command, capture_output=True, text=True, timeout=timeout, check=False
-        )
-    except FileNotFoundError as error:
-        raise VideoProcessingError("FFmpeg is not installed") from error
-    except subprocess.TimeoutExpired as error:
-        output_path.unlink(missing_ok=True)
-        raise VideoProcessingError("Video processing timed out") from error
-
-    if result.returncode != 0 or not output_path.is_file():
-        output_path.unlink(missing_ok=True)
-        raise VideoProcessingError(f"Video processing failed (exit {result.returncode})")
-
-
-def normalize_video_to_mp4(source_path):
-    video_codec, audio_codec, _, _, _ = probe_video(source_path)
-    if not video_codec:
-        raise VideoProcessingError("Downloaded file has no video stream")
-    
-    output_path = source_path.with_name(f"{source_path.stem}_output.mp4")
-    
-    command = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        str(source_path),
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "23",
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "128k",
-        "-movflags",
-        "+faststart",
-        str(output_path),
-    ]
-
-    try:
-        run_ffmpeg(command, output_path, timeout=180)
-    except VideoProcessingError:
-        return source_path
-
-    if output_path.stat().st_size > MAX_MEDIA_SIZE:
-        output_path.unlink(missing_ok=True)
-        raise InstagramMediaTooLarge
-
-    return output_path
-
-
 def create_video_thumbnail(file_path):
     try:
         stat = file_path.stat()
@@ -292,11 +235,13 @@ def create_video_thumbnail(file_path):
         str(thumbnail_path),
     ]
     try:
-        run_ffmpeg(command, thumbnail_path, timeout=60)
-    except VideoProcessingError:
+        subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
+    except Exception:
         return store_in_cache(VIDEO_THUMBNAIL_CACHE, cache_key, None)
 
-    return store_in_cache(VIDEO_THUMBNAIL_CACHE, cache_key, thumbnail_path)
+    if thumbnail_path.exists():
+        return store_in_cache(VIDEO_THUMBNAIL_CACHE, cache_key, thumbnail_path)
+    return store_in_cache(VIDEO_THUMBNAIL_CACHE, cache_key, None)
 
 
 def is_video_file(file_path):
@@ -305,20 +250,13 @@ def is_video_file(file_path):
 
 
 def normalize_media_files(media_files):
-    prepared_files = []
+    # مطابقة البوتات الأخرى: إرجاع الملفات كما تم تحميلها دون أي تعديل أو إعادة تشفير
+    checked_files = []
     for file_path in media_files:
-        if is_video_file(file_path):
-            try:
-                converted_path = normalize_video_to_mp4(file_path)
-            except VideoProcessingError:
-                prepared_files.append(file_path)
-                continue
-            if converted_path != file_path and converted_path.exists():
-                file_path.unlink(missing_ok=True)
-            prepared_files.append(converted_path)
-        else:
-            prepared_files.append(file_path)
-    return prepared_files
+        if file_path.stat().st_size > MAX_MEDIA_SIZE:
+            raise InstagramMediaTooLarge
+        checked_files.append(file_path)
+    return checked_files
 
 
 def collect_downloaded(output_dir, prefix, suffixes):
@@ -698,3 +636,4 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
+ 
