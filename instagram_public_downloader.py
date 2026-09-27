@@ -229,11 +229,12 @@ def normalize_video_for_telegram(source_path):
     
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
+    # استخدام خريطة صريحة لضمان بقاء الصوت والفيديو معاً بدون كتم
     if audio_codec and audio_codec != UNKNOWN_CODEC:
         command = [
             "ffmpeg", "-y", "-threads", "4", "-i", str(source_path),
             "-c:v", "libx264", "-preset", "fast", "-crf", "28", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "128k", "-map", "0:v:0", "-map", "0:a:0?",
+            "-c:a", "aac", "-b:a", "128k", "-map", "0:v:0", "-map", "0:a:0",
             "-movflags", "+faststart", str(output_path),
         ]
     else:
@@ -243,10 +244,10 @@ def normalize_video_for_telegram(source_path):
             "-an", "-movflags", "+faststart", str(output_path),
         ]
 
-    run_ffmpeg(command, output_path, timeout=600)
-
-    _, out_audio_codec, _, _, _ = probe_video(output_path)
-    if not out_audio_codec and audio_codec and audio_codec != UNKNOWN_CODEC:
+    try:
+        run_ffmpeg(command, output_path, timeout=600)
+    except VideoProcessingError:
+        # محاولة أخيرة بديلة دون فرض خرائط معقدة في حال فشل الأمر الأول
         fallback_command = [
             "ffmpeg", "-y", "-i", str(source_path),
             "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", str(output_path)
@@ -341,9 +342,9 @@ def select_reel_media(candidates):
     return [max(chosen, key=lambda path: path.stat().st_size)]
 
 
-def download_media_with_yt_dlp(url, output_dir):
+def download_with_ytdlp(url, output_dir, prefix="media_"):
     options = {
-        "outtmpl": str(output_dir / "media_%(id)s.%(ext)s"),
+        "outtmpl": str(output_dir / f"{prefix}%(id)s.%(ext)s"),
         "format": "bestvideo+bestaudio/best/best",
         "merge_output_format": "mp4",
         "quiet": True,
@@ -353,19 +354,15 @@ def download_media_with_yt_dlp(url, output_dir):
         "socket_timeout": 15,
     }
 
-    for stale_file in output_dir.iterdir():
-        if stale_file.is_file():
-            stale_file.unlink(missing_ok=True)
-
     try:
         with yt_dlp.YoutubeDL(options) as downloader:
             downloader.extract_info(url, download=True)
     except yt_dlp.utils.DownloadError as error:
-        logger.error("فشل تحميل الرابط عبر yt_dlp: %s", error)
+        logger.error("فشل التحميل عبر yt_dlp: %s", error)
         raise error
 
     media_files = select_reel_media(
-        collect_downloaded(output_dir, "media_", {".mp4", ".mkv", ".webm"})
+        collect_downloaded(output_dir, prefix, {".mp4", ".mkv", ".webm"})
     )
 
     if not media_files:
@@ -402,13 +399,15 @@ def download_instagram_media(url):
         except Exception:
             post = None
 
-        # إذا كان المنشور يحتوي على فيديو مفرد (سواء كان بوب أو ريلز) أو ليس ألبوم صور متعدد، نقوم بسحبه مباشرة عبر yt_dlp لضمان جلب الصوت والصورة معاً بشكل صحيح وبأعلى دقة
-        if post is None or post.typename != "GraphSidecar":
+        url_kind = get_url_kind(url)
+
+        # محاولة التحميل باستخدام yt_dlp مباشرة أولاً لأنه يضمن دمج الصوت والصورة لأي فيديو (سواء منشور عادي p/ أو ريلز)
+        if url_kind in {"reel", "reels"} or (post is not None and post.is_video and post.typename != "GraphSidecar"):
             try:
-                media_files = download_media_with_yt_dlp(url, output_dir)
+                media_files = download_with_ytdlp(url, output_dir, prefix="vid_")
                 return output_dir, normalize_media_files(media_files), post_caption
             except Exception:
-                logger.warning("Falling back to instaloader for single post", exc_info=True)
+                logger.warning("yt_dlp failed, falling back to direct extraction", exc_info=True)
 
         if post is None:
             loader = instaloader.Instaloader(
@@ -423,42 +422,51 @@ def download_instagram_media(url):
             if post.caption and not post_caption:
                 post_caption = post.caption.strip().split("\n")[0][:60]
 
-        # معالجة الألبومات المتعددة (GraphSidecar)
+        # معالجة ألبومات المنشورات (GraphSidecar)
         if post.typename == "GraphSidecar":
             media_files = []
             for index, node in enumerate(post.get_sidecar_nodes(), start=1):
-                node_url = node.video_url if node.is_video else node.display_url
-                if not node_url:
-                    continue
                 suffix = ".mp4" if node.is_video else ".jpg"
                 output_path = output_dir / f"{index:03d}{suffix}"
                 
-                # إذا كان أحد عناصر الألبوم فيديو، نسحبه عبر yt_dlp أو ندعمه بصوت سليم، وإذا كان صورة نحملها كملف عادي
-                if node.is_video:
+                if node.is_video and hasattr(node, "video_url") and node.video_url:
                     try:
-                        sub_dir = Path(tempfile.mkdtemp(prefix="sub_media_"))
-                        sub_files = download_media_with_yt_dlp(node.video_url if hasattr(node, 'video_url') else node_url, sub_dir)
+                        sub_files = download_with_ytdlp(node.video_url, output_dir, prefix=f"side_{index}_")
                         if sub_files:
-                            shutil.move(str(sub_files[0]), str(output_path))
-                        shutil.rmtree(sub_dir, ignore_errors=True)
+                            if sub_files[0] != output_path:
+                                if output_path.exists():
+                                    output_path.unlink()
+                                sub_files[0].rename(output_path)
+                        else:
+                            download_file(node.video_url, output_path)
                     except Exception:
-                        download_file(node_url, output_path)
+                        download_file(node.video_url, output_path)
                 else:
-                    download_file(node_url, output_path)
+                    media_url = node.display_url
+                    if media_url:
+                        download_file(media_url, output_path)
                 
-                media_files.append(output_path)
+                if output_path.exists():
+                    media_files.append(output_path)
         else:
-            media_items = [
-                (post.video_url if post.is_video else post.url, post.is_video)
-            ]
-            media_files = []
-            for index, (media_url, is_video) in enumerate(media_items, start=1):
-                if not media_url:
-                    continue
-                suffix = ".mp4" if is_video else ".jpg"
-                output_path = output_dir / f"{index:03d}{suffix}"
-                download_file(media_url, output_path)
-                media_files.append(output_path)
+            media_url = post.video_url if post.is_video else post.url
+            if media_url:
+                suffix = ".mp4" if post.is_video else ".jpg"
+                output_path = output_dir / f"001{suffix}"
+                if post.is_video:
+                    try:
+                        sub_files = download_with_ytdlp(url, output_dir, prefix="single_")
+                        if sub_files:
+                            media_files = sub_files
+                        else:
+                            download_file(media_url, output_path)
+                            media_files = [output_path]
+                    except Exception:
+                        download_file(media_url, output_path)
+                        media_files = [output_path]
+                else:
+                    download_file(media_url, output_path)
+                    media_files = [output_path]
 
         if not media_files:
             raise InstagramDownloadError("No downloadable Instagram media was found")
