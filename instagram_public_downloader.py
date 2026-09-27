@@ -30,15 +30,10 @@ DOWNLOAD_HEADERS = {
     "Referer": "https://www.instagram.com/",
 }
 
-INSTAGRAM_FILTER = filters.TEXT & filters.Regex(
-    r"(?i)^https?://(?:www\.)?instagram\.com/(?:p|reel|reels)/"
-)
-
 
 def store_in_cache(cache, key, value):
     if key is None:
         return value
-
     cache[key] = value
     while len(cache) > MAX_CACHE_ENTRIES:
         cache.pop(next(iter(cache)))
@@ -61,36 +56,20 @@ def log_media_tools_status():
     for tool in ("ffmpeg", "ffprobe"):
         executable = shutil.which(tool)
         if executable is None:
-            logger.error("%s is NOT installed; videos cannot be prepared", tool)
+            logger.error("%s is NOT installed", tool)
             continue
         try:
-            result = subprocess.run(
-                [executable, "-version"],
-                capture_output=True,
-                text=True,
-                timeout=15,
-                check=False,
-            )
+            subprocess.run([executable, "-version"], capture_output=True, text=True, timeout=15, check=False)
         except (OSError, subprocess.TimeoutExpired):
-            logger.error("%s is installed but failed to run", tool, exc_info=True)
             continue
-        first_line = (result.stdout or result.stderr or "").splitlines()
-        logger.info("%s available: %s", tool, first_line[0] if first_line else "unknown")
 
 
 def _get_instagram_url_parts(url):
     parsed = urlparse(url.strip())
     hostname = (parsed.hostname or "").lower().rstrip(".")
     parts = [part for part in parsed.path.split("/") if part]
-
-    if (
-        parsed.scheme not in {"http", "https"}
-        or hostname not in {"instagram.com", "www.instagram.com"}
-        or len(parts) < 2
-        or parts[0] not in {"p", "reel", "reels"}
-    ):
+    if parsed.scheme not in {"http", "https"} or hostname not in {"instagram.com", "www.instagram.com"} or len(parts) < 2 or parts[0] not in {"p", "reel", "reels"}:
         return None
-
     return parsed, parts
 
 
@@ -98,7 +77,6 @@ def get_shortcode(url):
     parsed_parts = _get_instagram_url_parts(url)
     if not parsed_parts:
         return None
-
     _, parts = parsed_parts
     return parts[1]
 
@@ -107,205 +85,42 @@ def get_url_kind(url):
     parsed_parts = _get_instagram_url_parts(url)
     if not parsed_parts:
         return None
-
     _, parts = parsed_parts
     return "reel" if parts[0] in {"reel", "reels"} else "post"
 
 
 def download_file(url, output_path):
-    response = None
+    response = requests.get(url, headers=DOWNLOAD_HEADERS, timeout=(10, 45), stream=True)
     try:
-        response = requests.get(
-            url,
-            headers=DOWNLOAD_HEADERS,
-            timeout=(10, 45),
-            stream=True,
-        )
         response.raise_for_status()
-
-        content_length = response.headers.get("Content-Length")
-        if content_length:
-            try:
-                if int(content_length) > MAX_MEDIA_SIZE:
-                    raise InstagramMediaTooLarge
-            except ValueError:
-                pass
-
-        downloaded = 0
         with output_path.open("wb") as output_file:
             for chunk in response.iter_content(chunk_size=128 * 1024):
-                if not chunk:
-                    continue
-                downloaded += len(chunk)
-                if downloaded > MAX_MEDIA_SIZE:
-                    raise InstagramMediaTooLarge
-                output_file.write(chunk)
+                if chunk:
+                    output_file.write(chunk)
     finally:
-        if response is not None:
-            response.close()
+        response.close()
 
 
 def probe_video(file_path):
+    command = ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name,width,height:format=duration", "-of", "json", str(file_path)]
     try:
-        stat = file_path.stat()
-    except OSError:
-        stat = None
-    cache_key = (
-        (file_path, stat.st_mtime, stat.st_size)
-        if stat is not None
-        else None
-    )
-    if cache_key in PROBE_VIDEO_CACHE:
-        return PROBE_VIDEO_CACHE[cache_key]
-
-    command = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-show_entries",
-        "stream=codec_type,codec_name,width,height:format=duration",
-        "-of",
-        "json",
-        str(file_path),
-    ]
-    try:
-        result = subprocess.run(
-            command, capture_output=True, text=True, timeout=60, check=False
-        )
+        result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
         data = json.loads(result.stdout or "{}")
-    except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
-        return store_in_cache(
-            PROBE_VIDEO_CACHE,
-            cache_key,
-            (UNKNOWN_CODEC, UNKNOWN_CODEC, None, None, None),
-        )
-
-    if not data.get("streams"):
-        return store_in_cache(
-            PROBE_VIDEO_CACHE,
-            cache_key,
-            (UNKNOWN_CODEC, UNKNOWN_CODEC, None, None, None),
-        )
+    except Exception:
+        return UNKNOWN_CODEC, UNKNOWN_CODEC, None, None, None
 
     video_codec = audio_codec = width = height = None
     for stream in data.get("streams", []):
         if stream.get("codec_type") == "video" and video_codec is None:
-            video_codec = stream.get("codec_name")
-            width = stream.get("width")
-            height = stream.get("height")
+            video_codec, width, height = stream.get("codec_name"), stream.get("width"), stream.get("height")
         elif stream.get("codec_type") == "audio" and audio_codec is None:
             audio_codec = stream.get("codec_name")
-
+    
     try:
         duration = int(float(data.get("format", {}).get("duration", 0))) or None
-    except (TypeError, ValueError):
+    except Exception:
         duration = None
-
-    return store_in_cache(
-        PROBE_VIDEO_CACHE, cache_key, (video_codec, audio_codec, width, height, duration)
-    )
-
-
-def run_ffmpeg(command, output_path, timeout=300):
-    try:
-        result = subprocess.run(
-            command, capture_output=True, text=True, timeout=timeout, check=False
-        )
-    except FileNotFoundError as error:
-        raise VideoProcessingError("FFmpeg is not installed") from error
-    except subprocess.TimeoutExpired as error:
-        output_path.unlink(missing_ok=True)
-        raise VideoProcessingError("Video processing timed out") from error
-
-    if result.returncode != 0 or not output_path.is_file():
-        output_path.unlink(missing_ok=True)
-        raise VideoProcessingError(f"Video processing failed (exit {result.returncode})")
-
-
-def normalize_video_for_telegram(source_path):
-    video_codec, audio_codec, _, _, _ = probe_video(source_path)
-    if not video_codec:
-        raise VideoProcessingError("Downloaded file has no video stream")
-    if not audio_codec:
-        raise VideoProcessingError("Downloaded reel has no audio stream")
-    output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
-    
-    command = [
-        "ffmpeg",
-        "-y",
-        "-threads",
-        "4",
-        "-i",
-        str(source_path),
-        "-c:v",
-        "libx264",
-        "-preset",
-        "fast",
-        "-crf",
-        "28",
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "128k",
-        "-map",
-        "0:v:0?",
-        "-map",
-        "0:a:0",
-        "-movflags",
-        "+faststart",
-        str(output_path),
-    ]
-
-    run_ffmpeg(command, output_path, timeout=600)
-    _, output_audio_codec, _, _, _ = probe_video(output_path)
-    if not output_audio_codec:
-        output_path.unlink(missing_ok=True)
-        raise VideoProcessingError("FFmpeg output is missing its audio stream")
-
-    if output_path.stat().st_size > MAX_MEDIA_SIZE:
-        output_path.unlink(missing_ok=True)
-        raise InstagramMediaTooLarge
-
-    return output_path
-
-
-def create_video_thumbnail(file_path):
-    try:
-        stat = file_path.stat()
-    except OSError:
-        stat = None
-    cache_key = (
-        (file_path, stat.st_mtime, stat.st_size)
-        if stat is not None
-        else None
-    )
-    if cache_key in VIDEO_THUMBNAIL_CACHE:
-        return VIDEO_THUMBNAIL_CACHE[cache_key]
-
-    thumbnail_path = file_path.with_name(f"{file_path.stem}_thumb.jpg")
-    command = [
-        "ffmpeg",
-        "-y",
-        "-ss",
-        "0.5",
-        "-i",
-        str(file_path),
-        "-frames:v",
-        "1",
-        "-vf",
-        "scale=320:-2",
-        "-q:v",
-        "4",
-        str(thumbnail_path),
-    ]
-    try:
-        run_ffmpeg(command, thumbnail_path, timeout=60)
-    except VideoProcessingError:
-        return store_in_cache(VIDEO_THUMBNAIL_CACHE, cache_key, None)
-
-    return store_in_cache(VIDEO_THUMBNAIL_CACHE, cache_key, thumbnail_path)
+    return video_codec, audio_codec, width, height, duration
 
 
 def is_video_file(file_path):
@@ -313,351 +128,85 @@ def is_video_file(file_path):
     return bool(mime_type and mime_type.startswith("video/"))
 
 
-def normalize_media_files(media_files):
-    prepared_files = []
+def download_instagram_media_with_audio(url, output_dir):
+    shortcode = get_shortcode(url)
+    post_caption = ""
+    audio_file_path = None
 
-    for file_path in media_files:
-        if is_video_file(file_path):
-            try:
-                converted_path = normalize_video_for_telegram(file_path)
-            except VideoProcessingError:
-                prepared_files.append(file_path)
-                continue
-            if converted_path != file_path:
-                file_path.unlink(missing_ok=True)
-            prepared_files.append(converted_path)
-        else:
-            prepared_files.append(file_path)
-
-    return prepared_files
-
-
-def collect_downloaded(output_dir, prefix, suffixes):
-    return sorted(
-        path
-        for path in output_dir.iterdir()
-        if path.is_file()
-        and path.name.startswith(prefix)
-        and not path.name.endswith((".part", ".ytdl"))
-        and path.suffix.lower() in suffixes
-    )
-
-
-def select_reel_media(candidates):
-    videos = [path for path in candidates if probe_video(path)[0] is not None]
-    if not videos:
-        return []
-    with_audio = [path for path in videos if probe_video(path)[1]]
-    chosen = with_audio or videos
-    return [max(chosen, key=lambda path: path.stat().st_size)]
-
-
-def download_reel_with_audio(url, output_dir):
+    # استخدام yt_dlp لسحب الوسائط والأغنية المرفقة إن وجدت
     options = {
-        "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "bestvideo+bestaudio/best",
+        "outtmpl": str(output_dir / "media_%(id)s_%(autonumber)s.%(ext)s"),
+        "format": "bestvideo+bestaudio/best/best",
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
-        "noprogress": True,
         "noplaylist": True,
         "socket_timeout": 15,
     }
 
-    for stale_file in output_dir.iterdir():
-        if stale_file.is_file():
-            stale_file.unlink(missing_ok=True)
-
     try:
         with yt_dlp.YoutubeDL(options) as downloader:
-            downloader.extract_info(url, download=True)
-    except yt_dlp.utils.DownloadError as error:
-        logger.error("فشل تحميل الرابط: %s", error)
-        raise error
-
-    media_files = select_reel_media(
-        collect_downloaded(output_dir, "reel_", {".mp4", ".mkv", ".webm"})
-    )
-
-    if not media_files:
-        raise InstagramDownloadError("لم يتم العثور على أي ملف فيديو قابل للتحميل")
-
-    for path in media_files:
-        if path.stat().st_size > MAX_MEDIA_SIZE:
-            raise InstagramMediaTooLarge
-
-    return media_files
-
-
-def download_instagram_media(url):
-    shortcode = get_shortcode(url)
-    if not shortcode:
-        raise InstagramDownloadError("Invalid Instagram URL")
-
-    output_dir = Path(tempfile.mkdtemp(prefix="instagram_media_"))
-    post_caption = ""
-
-    try:
-        # استخراج وصف المنشور الأصلي باستخدام instaloader
-        try:
-            loader = instaloader.Instaloader(
-                download_pictures=False,
-                download_videos=False,
-                download_video_thumbnails=False,
-                save_metadata=False,
-                compress_json=False,
-                post_metadata_txt_pattern="",
-            )
-            post = instaloader.Post.from_shortcode(loader.context, shortcode)
-            if post.caption:
-                post_caption = post.caption.strip()
-        except Exception:
-            pass
-
-        url_kind = get_url_kind(url)
-        if url_kind == "reel":
-            try:
-                reel_files = download_reel_with_audio(url, output_dir)
-                return output_dir, normalize_media_files(reel_files), post_caption
-            except yt_dlp.utils.DownloadError:
-                logger.warning("Falling back to direct Instagram reel URL", exc_info=True)
-
-        if 'post' not in locals() or post is None:
-            loader = instaloader.Instaloader(
-                download_pictures=False,
-                download_videos=False,
-                download_video_thumbnails=False,
-                save_metadata=False,
-                compress_json=False,
-                post_metadata_txt_pattern="",
-            )
-            post = instaloader.Post.from_shortcode(loader.context, shortcode)
-            if post.caption and not post_caption:
-                post_caption = post.caption.strip()
-
-        if (
-            url_kind == "post"
-            and post.is_video
-            and post.typename != "GraphSidecar"
-        ):
-            try:
-                reel_files = download_reel_with_audio(url, output_dir)
-                return output_dir, normalize_media_files(reel_files), post_caption
-            except yt_dlp.utils.DownloadError:
-                logger.warning("Falling back to direct Instagram reel URL", exc_info=True)
-
-        if post.typename == "GraphSidecar":
-            media_items = [
-                (node.video_url if node.is_video else node.display_url, node.is_video)
-                for node in post.get_sidecar_nodes()
-            ]
-        else:
-            media_items = [
-                (post.video_url if post.is_video else post.url, post.is_video)
-            ]
-
-        media_files = []
-        for index, (media_url, is_video) in enumerate(media_items, start=1):
-            if not media_url:
-                continue
-            suffix = ".mp4" if is_video else ".jpg"
-            output_path = output_dir / f"{index:03d}{suffix}"
-            download_file(media_url, output_path)
-            media_files.append(output_path)
-
-        if not media_files:
-            raise InstagramDownloadError("No downloadable Instagram media was found")
-
-        return output_dir, normalize_media_files(media_files), post_caption
-
+            info = downloader.extract_info(url, download=True)
+            if info:
+                post_caption = (info.get("description") or info.get("title") or "").strip()
     except Exception:
-        shutil.rmtree(output_dir, ignore_errors=True)
-        raise
+        pass
 
-
-def build_media_caption(index, total, is_reel=False, post_caption=""):
-    # دمج وصف المنشور الأصلي (إن وجد) مع التوقيع الخاص بالبوت
-    bot_signature = "- @G66GBOT" if is_reel else f"- @G66GBOT - {index}/{total}"
-    
-    if post_caption:
-        return f"{post_caption}\n\n{bot_signature}"
-    return bot_signature
-
-
-async def send_instagram_file(message, chat_id, context, file_path, index, total, is_reel=False, post_caption="", reply_markup=None):
-    is_video = is_video_file(file_path)
-    caption = build_media_caption(index, total, is_reel=is_reel, post_caption=post_caption)
-
-    if not is_video:
-        await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
-        with file_path.open("rb") as media_file:
-            sent_message = await message.reply_photo(photo=media_file, caption=caption, reply_markup=reply_markup)
-        return [sent_message]
-
-    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
-    _, _, width, height, duration = await asyncio.to_thread(probe_video, file_path)
-    thumbnail_path = await asyncio.to_thread(create_video_thumbnail, file_path)
-
-    video_arguments = {
-        "caption": caption,
-        "supports_streaming": True,
-        "width": width,
-        "height": height,
-        "duration": duration,
-        "reply_markup": reply_markup,
-    }
-
-    thumbnail_file = thumbnail_path.open("rb") if thumbnail_path else None
+    # استخدام instaloader كبديل لاستخراج الصور والوصف بدقة إذا لم يقم yt_dlp بتحميلها كلها
     try:
-        if thumbnail_file:
-            video_arguments["thumbnail"] = thumbnail_file
-        with file_path.open("rb") as media_file:
-            sent_message = await message.reply_video(video=media_file, **video_arguments)
-    finally:
-        if thumbnail_file:
-            thumbnail_file.close()
-    return [sent_message]
+        loader = instaloader.Instaloader(download_pictures=True, download_videos=True, download_video_thumbnails=False, save_metadata=False, compress_json=False)
+        post = instaloader.Post.from_shortcode(loader.context, shortcode)
+        if post.caption and not post_caption:
+            post_caption = post.caption.strip()
 
+        # إذا كان المنشور ألبوم صور (GraphSidecar)
+        if post.typename == "GraphSidecar":
+            for index, node in enumerate(post.get_sidecar_nodes(), start=1):
+                media_url = node.video_url if node.is_video else node.display_url
+                if media_url:
+                    suffix = ".mp4" if node.is_video else ".jpg"
+                    out_path = output_dir / f"sidecar_{index:03d}{suffix}"
+                    if not out_path.exists():
+                        download_file(media_url, out_path)
+        else:
+            media_url = post.video_url if post.is_video else post.url
+            if media_url:
+                suffix = ".mp4" if post.is_video else ".jpg"
+                out_path = output_dir / f"single_001{suffix}"
+                if not out_path.exists():
+                    download_file(media_url, out_path)
+    except Exception:
+        pass
 
-async def send_instagram_album(message, context, media_files, is_reel=False, post_caption="", reply_markup=None):
-    total_files = len(media_files)
-    sent_messages = []
+    # جمع الملفات وتنظيمها
+    all_files = sorted([p for p in output_dir.iterdir() if p.is_file() and p.suffix.lower() in {".mp4", ".jpg", ".jpeg", ".png", ".webm", ".m4a", ".mp3"}] )
+    
+    media_files = []
+    for path in all_files:
+        # إذا كان الملف عبارة عن صوت أو يحتوي على مسار صوتي منفصل للأغنية
+        _, a_codec, _, _, duration = probe_video(path)
+        if path.suffix.lower() in {".m4a", ".mp3"} or (a_codec and not is_video_file(path) and duration and duration < 120):
+            audio_file_path = path
+        else:
+            media_files.append(path)
 
-    for start in range(0, total_files, 10):
-        batch = media_files[start : start + 10]
+    # إذا لم يُعثر على ملف صوتي منفصل، ولكن يوجد فيديو يحتوي على أغنية، نستخرج الصوت منه ليكون مثل تيك توك
+    if not audio_file_path:
+        for path in media_files:
+            if is_video_file(path):
+                v_codec, a_codec, _, _, duration = probe_video(path)
+                if a_codec and a_codec != UNKNOWN_CODEC:
+                    extracted_audio = output_dir / f"{path.stem}_audio.m4a"
+                    cmd = ["ffmpeg", "-y", "-i", str(path), "-vn", "-acodec", "copy", str(extracted_audio)]
+                    try:
+                        subprocess.run(cmd, capture_output=True, timeout=30, check=True)
+                        if extracted_audio.exists():
+                            audio_file_path = extracted_audio
+                            break
+                    except Exception:
+                        pass
 
-        if len(batch) == 1:
-            sent_messages.extend(
-                await send_instagram_file(
-                    message,
-                    message.chat_id,
-                    context,
-                    batch[0],
-                    start + 1,
-                    total_files,
-                    is_reel=is_reel,
-                    post_caption=post_caption,
-                    reply_markup=reply_markup,
-                )
-            )
-            continue
-
-        open_files = []
-        media_group = []
-        try:
-            for offset, file_path in enumerate(batch, start=1):
-                media_file = file_path.open("rb")
-                open_files.append(media_file)
-                absolute_index = start + offset
-                is_video = is_video_file(file_path)
-                
-                # وضع الكابشن فقط في آخر صورة/فيديو من الألبوم أو في العنصر الأول لكي يظهر للمستخدم
-                current_caption = (
-                    build_media_caption(absolute_index, total_files, is_reel=is_reel, post_caption=post_caption)
-                    if absolute_index == total_files
-                    else None
-                )
-
-                if not is_video:
-                    media_group.append(InputMediaPhoto(media=media_file, caption=current_caption))
-                    continue
-
-                _, _, width, height, duration = await asyncio.to_thread(
-                    probe_video, file_path
-                )
-                thumbnail_path = await asyncio.to_thread(create_video_thumbnail, file_path)
-                thumbnail_file = thumbnail_path.open("rb") if thumbnail_path else None
-                if thumbnail_file:
-                    open_files.append(thumbnail_file)
-
-                media_group.append(
-                    InputMediaVideo(
-                        media=media_file,
-                        caption=current_caption,
-                        supports_streaming=True,
-                        width=width,
-                        height=height,
-                        duration=duration,
-                        thumbnail=thumbnail_file,
-                    )
-                )
-
-            sent_msg_group = await message.reply_media_group(media=media_group)
-            sent_messages.extend(sent_msg_group)
-        finally:
-            for media_file in open_files:
-                media_file.close()
-
-    return sent_messages
-
-
-def get_sent_media_id(message):
-    video = getattr(message, "video", None)
-    if video is not None and getattr(video, "file_id", None):
-        return "video", video.file_id
-
-    photos = getattr(message, "photo", None)
-    if photos:
-        file_id = getattr(photos[-1], "file_id", None)
-        if file_id:
-            return "photo", file_id
-
-    return None
-
-
-def cache_sent_media(shortcode, sent_messages):
-    media_ids = [
-        media_id
-        for sent_message in sent_messages
-        if (media_id := get_sent_media_id(sent_message)) is not None
-    ]
-    if len(media_ids) != len(sent_messages):
-        return
-
-    store_in_cache(MEDIA_ID_CACHE, shortcode, media_ids)
-
-
-async def send_cached_media(message, context, media_ids):
-    total_files = len(media_ids)
-    await context.bot.send_chat_action(
-        chat_id=message.chat_id,
-        action=ChatAction.UPLOAD_PHOTO,
-    )
-
-    for start in range(0, total_files, 10):
-        batch = media_ids[start : start + 10]
-        if len(batch) == 1:
-            kind, file_id = batch[0]
-            caption = build_media_caption(start + 1, total_files, is_reel=False)
-            if kind == "photo":
-                await message.reply_photo(photo=file_id, caption=caption)
-            else:
-                await message.reply_video(
-                    video=file_id,
-                    caption=caption,
-                    supports_streaming=True,
-                )
-            continue
-
-        media_group = []
-        for offset, (kind, file_id) in enumerate(batch, start=1):
-            absolute_index = start + offset
-            caption = (
-                build_media_caption(absolute_index, total_files, is_reel=False)
-                if absolute_index == total_files
-                else None
-            )
-            if kind == "photo":
-                media_group.append(InputMediaPhoto(media=file_id, caption=caption))
-            else:
-                media_group.append(
-                    InputMediaVideo(
-                        media=file_id,
-                        caption=caption,
-                        supports_streaming=True,
-                    )
-                )
-        await message.reply_media_group(media=media_group)
+    return media_files, audio_file_path, post_caption
 
 
 async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -669,83 +218,68 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
     if not shortcode:
         return
 
-    status_message = await update.message.reply_text(
-        "♻️┇جاري التحميل..."
-    )
-    output_dir = None
+    status_message = await update.message.reply_text("♻️┇جاري التحميل...")
+    output_dir = Path(tempfile.mkdtemp(prefix="insta_"))
 
     try:
-        cached_media = MEDIA_ID_CACHE.get(shortcode)
-        if cached_media is not None and get_url_kind(url) != "reel":
-            await send_cached_media(update.message, context, cached_media)
-            await status_message.delete()
+        media_files, audio_file_path, post_caption = await asyncio.to_thread(
+            download_instagram_media_with_audio, url, output_dir
+        )
+
+        if not media_files:
+            await status_message.edit_text("❌ لم يتم العثور على وسائط قابلة للتحميل.")
             return
 
-        output_dir, media_files, post_caption = await asyncio.to_thread(download_instagram_media, url)
+        title_text = post_caption.split("\n")[0][:60] if post_caption else "محتوى انستغرام"
+        bot_signature = "- @G66GBOT"
+
+        # 1. إذا توفرت أغنية أو صوت للمنشور، يتم إرساله أولاً كملف صوتي بالبداية تماماً مثل تيك توك
+        if audio_file_path and audio_file_path.exists():
+            await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_VOICE)
+            with audio_file_path.open("rb") as audio_f:
+                await update.message.reply_audio(
+                    audio=audio_f,
+                    title=title_text,
+                    caption=f"{post_caption}\n\n{bot_signature}" if post_caption else bot_signature
+                )
         
-        is_reel = (get_url_kind(url) == "reel") or (len(media_files) == 1 and is_video_file(media_files[0]))
-        action = ChatAction.UPLOAD_VIDEO if (media_files and is_video_file(media_files[0])) else ChatAction.UPLOAD_PHOTO
-
-        await context.bot.send_chat_action(
-            chat_id=update.effective_chat.id,
-            action=action,
-        )
-
-        reply_markup = None
-        if is_reel and len(media_files) == 1 and is_video_file(media_files[0]):
-            keyboard = [
-                [InlineKeyboardButton("🎵┇تحميل كملف صوتي", callback_data="audio")],
-                [InlineKeyboardButton("📥┇تحميل باعلى دقه HD", callback_data="hd_video")],
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-
-        sent_messages = await send_instagram_album(
-            update.message, context, media_files, is_reel=is_reel, post_caption=post_caption, reply_markup=reply_markup
-        )
-
-        # حفظ الجلسة للنصوص والعناوين (للصوت أو غيره)
-        if sent_messages:
-            user_id = update.effective_user.id
-            title = post_caption.split("\n")[0][:60] if post_caption else "محتوى انستغرام"
-            sessions = context.application.bot_data.setdefault("download_sessions", {})
-            first_sent = sent_messages[0]
-            sessions[(first_sent.chat_id, first_sent.message_id)] = {
-                "user_id": user_id,
-                "url": url,
-                "title": title,
-                "created_at": asyncio.get_event_loop().time() if hasattr(asyncio, 'get_event_loop') else 0,
-            }
-
-        if get_url_kind(url) != "reel":
-            cache_sent_media(shortcode, sent_messages)
+        # 2. إرسال الألبوم أو الصور بعدها بشكل طبيعي وبدون أزرار
+        total = len(media_files)
+        for start in range(0, total, 10):
+            batch = media_files[start : start + 10]
+            if len(batch) == 1:
+                file_path = batch[0]
+                caption = f"{post_caption}\n\n{bot_signature} - 1/1" if post_caption else f"{bot_signature} - 1/1"
+                if is_video_file(file_path):
+                    with file_path.open("rb") as vf:
+                        await update.message.reply_video(video=vf, caption=caption, supports_streaming=True)
+                else:
+                    with file_path.open("rb") as pf:
+                        await update.message.reply_photo(photo=pf, caption=caption)
+            else:
+                media_group = []
+                open_files = []
+                try:
+                    for offset, file_path in enumerate(batch, start=1):
+                        f_open = file_path.open("rb")
+                        open_files.append(f_open)
+                        abs_idx = start + offset
+                        cap = f"{post_caption}\n\n{bot_signature} - {abs_idx}/{total}" if (abs_idx == total and post_caption) else None
+                        
+                        if is_video_file(file_path):
+                            media_group.append(InputMediaVideo(media=f_open, caption=cap, supports_streaming=True))
+                        else:
+                            media_group.append(InputMediaPhoto(media=f_open, caption=cap))
+                    
+                    await update.message.reply_media_group(media=media_group)
+                finally:
+                    for f in open_files:
+                        f.close()
 
         await status_message.delete()
-    except InstagramMediaTooLarge:
-        await status_message.edit_text(
-            "⚠️┇هذا الملف لا يمكنني تحميله،\n"
-            "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
-            "⚠️┇أعد المحاوله مع ملف اخر."
-        )
-    except VideoProcessingError:
-        await status_message.edit_text("❌ تعذر تجهيز الفيديو. حاول مرة أخرى.")
-    except (
-        InstagramDownloadError,
-        instaloader.exceptions.InstaloaderException,
-        requests.RequestException,
-        yt_dlp.utils.DownloadError,
-        TelegramError,
-    ):
-        logger.exception("Instagram download failed")
-        await status_message.edit_text(
-            "❌ تعذر تحميل هذا الرابط. تأكد أن الحساب والمنشور عام ثم أعد المحاولة."
-        )
     except Exception:
-        logger.exception("Unexpected Instagram handler error")
-        await status_message.edit_text("❌ حدث خطأ أثناء تحميل محتوى الإنستغرام.")
+        logger.exception("Error handling instagram media with audio")
+        await status_message.edit_text("❌ حدث خطأ أثناء تحميل المنشور.")
     finally:
-        if output_dir:
-            await asyncio.to_thread(shutil.rmtree, output_dir, True)
-
-
-log_media_tools_status()
+        shutil.rmtree(output_dir, ignore_errors=True)
  
