@@ -368,12 +368,9 @@ def download_reel_with_audio(url, output_dir):
         if stale_file.is_file():
             stale_file.unlink(missing_ok=True)
 
-    extracted_info = {}
     try:
         with yt_dlp.YoutubeDL(options) as downloader:
-            info = downloader.extract_info(url, download=True)
-            if info:
-                extracted_info = info
+            downloader.extract_info(url, download=True)
     except yt_dlp.utils.DownloadError as error:
         logger.error("فشل تحميل الرابط: %s", error)
         raise error
@@ -389,7 +386,7 @@ def download_reel_with_audio(url, output_dir):
         if path.stat().st_size > MAX_MEDIA_SIZE:
             raise InstagramMediaTooLarge
 
-    return media_files, extracted_info
+    return media_files
 
 
 def download_instagram_media(url):
@@ -398,36 +395,46 @@ def download_instagram_media(url):
         raise InstagramDownloadError("Invalid Instagram URL")
 
     output_dir = Path(tempfile.mkdtemp(prefix="instagram_media_"))
-    audio_title = ""
+    post_caption = ""
 
     try:
+        # استخراج وصف المنشور الأصلي باستخدام instaloader
+        try:
+            loader = instaloader.Instaloader(
+                download_pictures=False,
+                download_videos=False,
+                download_video_thumbnails=False,
+                save_metadata=False,
+                compress_json=False,
+                post_metadata_txt_pattern="",
+            )
+            post = instaloader.Post.from_shortcode(loader.context, shortcode)
+            if post.caption:
+                # نأخذ أول سطر من الوصف أو أول 50 حرف كعنوان للملف الصوتي
+                post_caption = post.caption.strip().split("\n")[0][:60]
+        except Exception:
+            pass
+
         url_kind = get_url_kind(url)
         if url_kind == "reel":
             try:
-                reel_files, info = download_reel_with_audio(url, output_dir)
-                # محاولة استخراج اسم الأغنية أو العنوان من معلومات yt_dlp
-                if info:
-                    audio_title = info.get("track") or info.get("title") or ""
-                return output_dir, normalize_media_files(reel_files), audio_title
+                reel_files = download_reel_with_audio(url, output_dir)
+                return output_dir, normalize_media_files(reel_files), post_caption
             except yt_dlp.utils.DownloadError:
                 logger.warning("Falling back to direct Instagram reel URL", exc_info=True)
 
-        loader = instaloader.Instaloader(
-            download_pictures=False,
-            download_videos=False,
-            download_video_thumbnails=False,
-            save_metadata=False,
-            compress_json=False,
-            post_metadata_txt_pattern="",
-        )
-        post = instaloader.Post.from_shortcode(loader.context, shortcode)
-
-        # استخراج عنوان الصوت إن وجد عبر instaloader
-        try:
-            if hasattr(post, 'music_info') and post.music_info:
-                audio_title = post.music_info.get('title', '')
-        except Exception:
-            pass
+        if 'post' not in locals() or post is None:
+            loader = instaloader.Instaloader(
+                download_pictures=False,
+                download_videos=False,
+                download_video_thumbnails=False,
+                save_metadata=False,
+                compress_json=False,
+                post_metadata_txt_pattern="",
+            )
+            post = instaloader.Post.from_shortcode(loader.context, shortcode)
+            if post.caption and not post_caption:
+                post_caption = post.caption.strip().split("\n")[0][:60]
 
         if (
             url_kind == "post"
@@ -435,10 +442,8 @@ def download_instagram_media(url):
             and post.typename != "GraphSidecar"
         ):
             try:
-                reel_files, info = download_reel_with_audio(url, output_dir)
-                if info and not audio_title:
-                    audio_title = info.get("track") or info.get("title") or ""
-                return output_dir, normalize_media_files(reel_files), audio_title
+                reel_files = download_reel_with_audio(url, output_dir)
+                return output_dir, normalize_media_files(reel_files), post_caption
             except yt_dlp.utils.DownloadError:
                 logger.warning("Falling back to direct Instagram reel URL", exc_info=True)
 
@@ -464,7 +469,7 @@ def download_instagram_media(url):
         if not media_files:
             raise InstagramDownloadError("No downloadable Instagram media was found")
 
-        return output_dir, normalize_media_files(media_files), audio_title
+        return output_dir, normalize_media_files(media_files), post_caption
 
     except Exception:
         shutil.rmtree(output_dir, ignore_errors=True)
@@ -671,7 +676,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             await status_message.delete()
             return
 
-        output_dir, media_files, audio_title = await asyncio.to_thread(download_instagram_media, url)
+        output_dir, media_files, post_caption = await asyncio.to_thread(download_instagram_media, url)
         
         is_reel = (get_url_kind(url) == "reel") or (len(media_files) == 1 and is_video_file(media_files[0]))
         action = ChatAction.UPLOAD_VIDEO if (media_files and is_video_file(media_files[0])) else ChatAction.UPLOAD_PHOTO
@@ -693,10 +698,10 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             update.message, context, media_files, is_reel=is_reel, reply_markup=reply_markup
         )
 
-        # حفظ الجلسة مع اسم الأغنية لكي يظهر عند تحويل المقطع لصوت
+        # تخزين وصف المنشور (Caption) في الجلسة ليظهر كعنوان عند تحويله لصوت
         if is_reel and sent_messages:
             user_id = update.effective_user.id
-            title = audio_title if audio_title else "محتوى انستغرام"
+            title = post_caption if post_caption else "محتوى انستغرام"
             sessions = context.application.bot_data.setdefault("download_sessions", {})
             first_sent = sent_messages[0]
             sessions[(first_sent.chat_id, first_sent.message_id)] = {
