@@ -228,23 +228,30 @@ def normalize_video_to_mp4(source_path):
     
     output_path = source_path.with_name(f"{source_path.stem}_output.mp4")
     
-    # تحويل أو دمج سريع لصيغة MP4 بدون إعادة ضغط ثقيلة للحفاظ على الحجم الخفيف جداً
     command = [
         "ffmpeg",
         "-y",
         "-i",
         str(source_path),
         "-c:v",
-        "copy",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "23",
+        "-pix_fmt",
+        "yuv420p",
         "-c:a",
         "aac",
+        "-b:a",
+        "128k",
         "-movflags",
         "+faststart",
         str(output_path),
     ]
 
     try:
-        run_ffmpeg(command, output_path, timeout=120)
+        run_ffmpeg(command, output_path, timeout=180)
     except VideoProcessingError:
         return source_path
 
@@ -684,7 +691,6 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
         )
     except Exception:
         logger.exception("Unexpected Instagram handler error")
-        logger.exception("Unexpected Instagram handler error")
         await status_message.edit_text("❌ حدث خطأ أثناء تحميل محتوى الإنستغرام.")
     finally:
         if output_dir:
@@ -692,3 +698,4 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
+ 
