@@ -368,9 +368,12 @@ def download_reel_with_audio(url, output_dir):
         if stale_file.is_file():
             stale_file.unlink(missing_ok=True)
 
+    extracted_info = {}
     try:
         with yt_dlp.YoutubeDL(options) as downloader:
-            downloader.extract_info(url, download=True)
+            info = downloader.extract_info(url, download=True)
+            if info:
+                extracted_info = info
     except yt_dlp.utils.DownloadError as error:
         logger.error("فشل تحميل الرابط: %s", error)
         raise error
@@ -386,7 +389,7 @@ def download_reel_with_audio(url, output_dir):
         if path.stat().st_size > MAX_MEDIA_SIZE:
             raise InstagramMediaTooLarge
 
-    return media_files
+    return media_files, extracted_info
 
 
 def download_instagram_media(url):
@@ -395,13 +398,17 @@ def download_instagram_media(url):
         raise InstagramDownloadError("Invalid Instagram URL")
 
     output_dir = Path(tempfile.mkdtemp(prefix="instagram_media_"))
+    audio_title = ""
 
     try:
         url_kind = get_url_kind(url)
         if url_kind == "reel":
             try:
-                reel_files = download_reel_with_audio(url, output_dir)
-                return output_dir, normalize_media_files(reel_files)
+                reel_files, info = download_reel_with_audio(url, output_dir)
+                # محاولة استخراج اسم الأغنية أو العنوان من معلومات yt_dlp
+                if info:
+                    audio_title = info.get("track") or info.get("title") or ""
+                return output_dir, normalize_media_files(reel_files), audio_title
             except yt_dlp.utils.DownloadError:
                 logger.warning("Falling back to direct Instagram reel URL", exc_info=True)
 
@@ -415,14 +422,23 @@ def download_instagram_media(url):
         )
         post = instaloader.Post.from_shortcode(loader.context, shortcode)
 
+        # استخراج عنوان الصوت إن وجد عبر instaloader
+        try:
+            if hasattr(post, 'music_info') and post.music_info:
+                audio_title = post.music_info.get('title', '')
+        except Exception:
+            pass
+
         if (
             url_kind == "post"
             and post.is_video
             and post.typename != "GraphSidecar"
         ):
             try:
-                reel_files = download_reel_with_audio(url, output_dir)
-                return output_dir, normalize_media_files(reel_files)
+                reel_files, info = download_reel_with_audio(url, output_dir)
+                if info and not audio_title:
+                    audio_title = info.get("track") or info.get("title") or ""
+                return output_dir, normalize_media_files(reel_files), audio_title
             except yt_dlp.utils.DownloadError:
                 logger.warning("Falling back to direct Instagram reel URL", exc_info=True)
 
@@ -448,7 +464,7 @@ def download_instagram_media(url):
         if not media_files:
             raise InstagramDownloadError("No downloadable Instagram media was found")
 
-        return output_dir, normalize_media_files(media_files)
+        return output_dir, normalize_media_files(media_files), audio_title
 
     except Exception:
         shutil.rmtree(output_dir, ignore_errors=True)
@@ -655,7 +671,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             await status_message.delete()
             return
 
-        output_dir, media_files = await asyncio.to_thread(download_instagram_media, url)
+        output_dir, media_files, audio_title = await asyncio.to_thread(download_instagram_media, url)
         
         is_reel = (get_url_kind(url) == "reel") or (len(media_files) == 1 and is_video_file(media_files[0]))
         action = ChatAction.UPLOAD_VIDEO if (media_files and is_video_file(media_files[0])) else ChatAction.UPLOAD_PHOTO
@@ -665,7 +681,6 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             action=action,
         )
 
-        # إضافة أزرار التفاعل للفيديوهات الأحادية (الريلز) مثل تيك توك
         reply_markup = None
         if is_reel and len(media_files) == 1 and is_video_file(media_files[0]):
             keyboard = [
@@ -678,12 +693,11 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             update.message, context, media_files, is_reel=is_reel, reply_markup=reply_markup
         )
 
-        # حفظ الجلسة في حال أراد المستخدم النقر على أزرار الصوت أو الفيديو
+        # حفظ الجلسة مع اسم الأغنية لكي يظهر عند تحويل المقطع لصوت
         if is_reel and sent_messages:
             user_id = update.effective_user.id
-            title = "محتوى انستغرام"
+            title = audio_title if audio_title else "محتوى انستغرام"
             sessions = context.application.bot_data.setdefault("download_sessions", {})
-            # نربط الجلسة بأول رسالة تم إرسالها لتتوافق مع معالج الأزرار الحالي لديك
             first_sent = sent_messages[0]
             sessions[(first_sent.chat_id, first_sent.message_id)] = {
                 "user_id": user_id,
