@@ -663,9 +663,17 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
         return
 
     status_message = await update.message.reply_text("♻️┇جاري التحميل...")
+    output_dir = None
 
     try:
-        # إعدادات جلب الرابط المباشر السريع لتشغيل الفيديو فوراً وبدون تحميل ثقيل
+        # 1. فحص الكاش أولاً (إذا كان مخزناً مسبقاً)
+        cached_media = MEDIA_ID_CACHE.get(shortcode)
+        if cached_media is not None and get_url_kind(url) != "reel":
+            await send_cached_media(update.message, context, cached_media)
+            await status_message.delete()
+            return
+
+        # 2. فحص سريع لمعرفة ما إذا كان الرابط فيديو مفرد أو ريلز لاستخدام تقنية الرابط المباشر السريع
         ydl_opts = {
             "quiet": True,
             "no_warnings": True,
@@ -674,22 +682,45 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
         }
         
         video_url = None
+        is_sidecar = False
         post_caption = "- @G66GBOT"
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = await asyncio.to_thread(ydl.extract_info, url, False)
-            if "url" in info:
-                video_url = info["url"]
-            elif "entries" in info and info["entries"]:
-                video_url = info["entries"][0].get("url")
+            is_sidecar = info.get("extractor") == "instagram:post" and info.get("_type") == "playlist"
             
+            if not is_sidecar and "url" in info:
+                video_url = info["url"]
+            elif not is_sidecar and "entries" in info and info["entries"]:
+                video_url = info["entries"][0].get("url")
+
             if info.get("description"):
-                desc = info.get("description").strip().split("\n")[0][:50]
+                desc = info.get("description").strip().split("\n")[0][:60]
                 post_caption = f"{desc}\n- @G66GBOT"
 
-        if not video_url:
-            raise Exception("تعذر جلب رابط الفيديو المباشر")
+        # 3. إذا كان ألبوم (صور أو فيديوهات متعددة)، نستخدم طريقتك الأصلية الكاملة (Instaloader)
+        if is_sidecar or not video_url:
+            output_dir, media_files, inst_caption = await asyncio.to_thread(download_instagram_media, url)
+            if inst_caption:
+                post_caption = inst_caption
+            
+            is_reel = False
+            await context.bot.send_chat_action(
+                chat_id=update.effective_chat.id,
+                action=ChatAction.UPLOAD_PHOTO,
+            )
 
+            sent_messages = await send_instagram_album(
+                update.message, context, media_files, is_reel=is_reel
+            )
+
+            if get_url_kind(url) != "reel":
+                cache_sent_media(shortcode, sent_messages)
+
+            await status_message.delete()
+            return
+
+        # 4. إذا كان فيديو مفرد أو ريلز، نرسله بالرابط المباشر السريع (بالحجم الصغير 2.5 - 3 MB والصوت تماماً مثل البوتات الأخرى!)
         await context.bot.send_chat_action(
             chat_id=update.effective_chat.id,
             action=ChatAction.UPLOAD_VIDEO,
@@ -701,7 +732,6 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # إرسال الفيديو برابطه المباشر ليكون بالحجم الخفيف والسرعة العالية
         sent_msg = await update.message.reply_video(
             video=video_url,
             caption=post_caption,
@@ -709,7 +739,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             reply_markup=reply_markup,
         )
 
-        # تخزين الجلسة لأزرار التحميل الإضافية
+        # حفظ الجلسة لكي تعمل أزرار الصوت والـ HD بشكل طبيعي جداً
         user_id = update.effective_user.id
         sessions = context.application.bot_data.setdefault("download_sessions", {})
         sessions[(sent_msg.chat_id, sent_msg.message_id)] = {
@@ -721,11 +751,31 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
         await status_message.delete()
 
-    except Exception:
-        logger.exception("Instagram direct stream failed")
+    except InstagramMediaTooLarge:
+        await status_message.edit_text(
+            "⚠️┇هذا الملف لا يمكنني تحميله،\n"
+            "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
+            "⚠️┇أعد المحاوله مع ملف اخر."
+        )
+    except VideoProcessingError:
+        await status_message.edit_text("❌ تعذر تجهيز الفيديو. حاول مرة أخرى.")
+    except (
+        InstagramDownloadError,
+        instaloader.exceptions.InstaloaderException,
+        requests.RequestException,
+        yt_dlp.utils.DownloadError,
+        TelegramError,
+    ):
+        logger.exception("Instagram download failed")
         await status_message.edit_text(
             "❌ تعذر تحميل هذا الرابط. تأكد أن الحساب والمنشور عام ثم أعد المحاولة."
         )
+    except Exception:
+        logger.exception("Unexpected Instagram handler error")
+        await status_message.edit_text("❌ حدث خطأ أثناء تحميل محتوى الإنستغرام.")
+    finally:
+        if output_dir:
+            await asyncio.to_thread(shutil.rmtree, output_dir, True)
 
 
 log_media_tools_status()
