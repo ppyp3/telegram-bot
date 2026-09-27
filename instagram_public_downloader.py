@@ -223,46 +223,34 @@ def run_ffmpeg(command, output_path, timeout=300):
 
 
 def normalize_video_for_telegram(source_path):
+    # نتحقق من وجود الصوت والفيديو بدقة بدون أي تعديل أو ضغط لحجم الملف
     video_codec, audio_codec, _, _, _ = probe_video(source_path)
     if not video_codec:
         raise VideoProcessingError("Downloaded file has no video stream")
     
-    output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
-    
-    # استخدام وضع النسخ السريع (Copy) للفيديو والصوت قدر الإمكان لمنع تكبير الحجم،
-    # مع تحويل الصوت لـ aac فقط إذا لم يكن متوافقاً دون إعادة ضغط الفيديو الأصلي.
+    # إذا كان الفيديو يحتوي على صوت مدمج وجاهز، نرجعه مباشرة ليحفظ حجمه الخفيف جداً
     if audio_codec:
-        command = [
-            "ffmpeg",
-            "-y",
-            "-i",
-            str(source_path),
-            "-c:v",
-            "copy",
-            "-c:a",
-            "aac",
-            "-movflags",
-            "+faststart",
-            str(output_path),
-        ]
-    else:
-        # إذا لم يكن هناك صوت مدمج، نجعله يمرر كما هو
-        command = [
-            "ffmpeg",
-            "-y",
-            "-i",
-            str(source_path),
-            "-c",
-            "copy",
-            "-movflags",
-            "+faststart",
-            str(output_path),
-        ]
+        if source_path.stat().st_size > MAX_MEDIA_SIZE:
+            raise InstagramMediaTooLarge
+        return source_path
+
+    # إذا افتقر الملف للصوت الصافي، نقوم بعملية ربط سريعة جداً للملف بدون ضغط
+    output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(source_path),
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
 
     try:
-        run_ffmpeg(command, output_path, timeout=300)
+        run_ffmpeg(command, output_path, timeout=120)
     except VideoProcessingError:
-        # لو فشل وضع النسخ السريع، نرجع الملف الأصلي كما هو لضمان بقاء الحجم صغيراً
         return source_path
 
     if output_path.stat().st_size > MAX_MEDIA_SIZE:
@@ -316,7 +304,6 @@ def is_video_file(file_path):
 
 def normalize_media_files(media_files):
     prepared_files = []
-
     for file_path in media_files:
         if is_video_file(file_path):
             try:
@@ -324,12 +311,9 @@ def normalize_media_files(media_files):
             except VideoProcessingError:
                 prepared_files.append(file_path)
                 continue
-            if converted_path != file_path and converted_path.exists():
-                file_path.unlink(missing_ok=True)
             prepared_files.append(converted_path)
         else:
             prepared_files.append(file_path)
-
     return prepared_files
 
 
@@ -344,20 +328,11 @@ def collect_downloaded(output_dir, prefix, suffixes):
     )
 
 
-def select_reel_media(candidates):
-    videos = [path for path in candidates if probe_video(path)[0] is not None]
-    if not videos:
-        return []
-    with_audio = [path for path in videos if probe_video(path)[1]]
-    chosen = with_audio or videos
-    return [max(chosen, key=lambda path: path.stat().st_size)]
-
-
-def download_reel_with_audio(url, output_dir):
+def download_reel_direct(url, output_dir):
+    # استخدام تنسيق يطلب دمج الصوت والصورة بذكاء وبدون إعادة ترميز ثقيلة للحفاظ على الحجم الأصلي الصغير
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "bestvideo+bestaudio/best",
-        "merge_output_format": "mp4",
+        "format": "best[ext=mp4]/best",
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
@@ -373,21 +348,18 @@ def download_reel_with_audio(url, output_dir):
         with yt_dlp.YoutubeDL(options) as downloader:
             downloader.extract_info(url, download=True)
     except yt_dlp.utils.DownloadError as error:
-        logger.error("فشل تحميل الرابط: %s", error)
+        logger.error("فشل التحميل المباشر: %s", error)
         raise error
 
-    media_files = select_reel_media(
-        collect_downloaded(output_dir, "reel_", {".mp4", ".mkv", ".webm"})
-    )
-
+    media_files = collect_downloaded(output_dir, "reel_", {".mp4", ".mkv", ".webm"})
     if not media_files:
-        raise InstagramDownloadError("لم يتم العثور على أي ملف فيديو قابل للتحميل")
+        raise InstagramDownloadError("لم يتم العثور على ملفات فيديو")
 
-    for path in media_files:
-        if path.stat().st_size > MAX_MEDIA_SIZE:
-            raise InstagramMediaTooLarge
+    chosen = max(media_files, key=lambda p: p.stat().st_size)
+    if chosen.stat().st_size > MAX_MEDIA_SIZE:
+        raise InstagramMediaTooLarge
 
-    return media_files
+    return [chosen]
 
 
 def download_instagram_media(url):
@@ -399,52 +371,39 @@ def download_instagram_media(url):
     post_caption = ""
 
     try:
-        try:
-            loader = instaloader.Instaloader(
-                download_pictures=False,
-                download_videos=False,
-                download_video_thumbnails=False,
-                save_metadata=False,
-                compress_json=False,
-                post_metadata_txt_pattern="",
-            )
-            post = instaloader.Post.from_shortcode(loader.context, shortcode)
-            if post.caption:
-                post_caption = post.caption.strip().split("\n")[0][:60]
-        except Exception:
-            pass
-
         url_kind = get_url_kind(url)
-        if url_kind == "reel":
+        
+        # محاولة التحميل السريع المباشر للريلز أو الفيديوهات الفردية بنفس طريقة البوتات الخدمية
+        try:
+            reel_files = download_reel_direct(url, output_dir)
+            
+            # محاولة جلب الوصف عبر Instaloader بشكل سريع وخفيف
             try:
-                reel_files = download_reel_with_audio(url, output_dir)
-                return output_dir, normalize_media_files(reel_files), post_caption
-            except yt_dlp.utils.DownloadError:
-                logger.warning("Falling back to direct Instagram reel URL", exc_info=True)
+                loader = instaloader.Instaloader(
+                    download_pictures=False, download_videos=False, save_metadata=False
+                )
+                post = instaloader.Post.from_shortcode(loader.context, shortcode)
+                if post.caption:
+                    post_caption = post.caption.strip().split("\n")[0][:60]
+            except Exception:
+                pass
 
-        if 'post' not in locals() or post is None:
-            loader = instaloader.Instaloader(
-                download_pictures=False,
-                download_videos=False,
-                download_video_thumbnails=False,
-                save_metadata=False,
-                compress_json=False,
-                post_metadata_txt_pattern="",
-            )
-            post = instaloader.Post.from_shortcode(loader.context, shortcode)
-            if post.caption and not post_caption:
-                post_caption = post.caption.strip().split("\n")[0][:60]
+            return output_dir, normalize_media_files(reel_files), post_caption
+        except Exception:
+            logger.warning("Direct download failed, falling back to Instaloader", exc_info=True)
 
-        if (
-            url_kind == "post"
-            and post.is_video
-            and post.typename != "GraphSidecar"
-        ):
-            try:
-                reel_files = download_reel_with_audio(url, output_dir)
-                return output_dir, normalize_media_files(reel_files), post_caption
-            except yt_dlp.utils.DownloadError:
-                logger.warning("Falling back to direct Instagram reel URL", exc_info=True)
+        # الطريقة الاحتياطية عبر Instaloader في حال فشل الرابط المباشر
+        loader = instaloader.Instaloader(
+            download_pictures=False,
+            download_videos=False,
+            download_video_thumbnails=False,
+            save_metadata=False,
+            compress_json=False,
+            post_metadata_txt_pattern="",
+        )
+        post = instaloader.Post.from_shortcode(loader.context, shortcode)
+        if post.caption:
+            post_caption = post.caption.strip().split("\n")[0][:60]
 
         if post.typename == "GraphSidecar":
             media_items = [
