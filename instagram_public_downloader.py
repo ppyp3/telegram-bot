@@ -229,24 +229,15 @@ def normalize_video_for_telegram(source_path):
     
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
-    # فرض تحويل الصوت وتضمينه بقوة لتلافي أي مشكلة كتم في المنشورات العادية
+    # فرض إعادة ترميز الصوت بنظام AAC وقناتين لضمان عمل الصوت داخل مشغل التيليجرام حصرياً
     command = [
         "ffmpeg", "-y", "-threads", "4", "-i", str(source_path),
         "-c:v", "libx264", "-preset", "fast", "-crf", "28", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
-        "-map", "0:v:0", "-map", "0:a:?", 
+        "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
         "-movflags", "+faststart", str(output_path),
     ]
 
-    try:
-        run_ffmpeg(command, output_path, timeout=600)
-    except VideoProcessingError:
-        # أمر احتياطي بسيط في حال فشل التعديل المعقد
-        fallback_command = [
-            "ffmpeg", "-y", "-i", str(source_path),
-            "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", str(output_path)
-        ]
-        run_ffmpeg(fallback_command, output_path, timeout=300)
+    run_ffmpeg(command, output_path, timeout=600)
 
     if output_path.stat().st_size > MAX_MEDIA_SIZE:
         output_path.unlink(missing_ok=True)
@@ -339,8 +330,9 @@ def select_reel_media(candidates):
 def download_with_ytdlp(url, output_dir, prefix="media_"):
     options = {
         "outtmpl": str(output_dir / f"{prefix}%(id)s.%(ext)s"),
-        "format": "bestvideo+bestaudio/best/best",
+        "format": "bestvideo+bestaudio/best",
         "merge_output_format": "mp4",
+        "postprocessors": [{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}],
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
@@ -393,12 +385,12 @@ def download_instagram_media(url):
         except Exception:
             post = None
 
-        # استخدام yt_dlp مباشرة لجميع الروابط (سواء ريلز أو منشورات عادية) لضمان دمج الصوت بدقة
+        # محاولة التحميل الحصري عبر yt_dlp لضمان دمج الصوت والصورة تلقائياً لأي رابط
         try:
             media_files = download_with_ytdlp(url, output_dir, prefix="vid_")
             return output_dir, normalize_media_files(media_files), post_caption
         except Exception:
-            logger.warning("yt_dlp direct download failed, trying fallback to instaloader", exc_info=True)
+            logger.warning("yt_dlp failed, falling back to instaloader nodes", exc_info=True)
 
         if post is None:
             loader = instaloader.Instaloader(
@@ -413,7 +405,6 @@ def download_instagram_media(url):
             if post.caption and not post_caption:
                 post_caption = post.caption.strip().split("\n")[0][:60]
 
-        # معالجة ألبومات المنشورات (GraphSidecar)
         if post.typename == "GraphSidecar":
             media_files = []
             for index, node in enumerate(post.get_sidecar_nodes(), start=1):
@@ -428,10 +419,11 @@ def download_instagram_media(url):
                                 if output_path.exists():
                                     output_path.unlink()
                                 sub_files[0].rename(output_path)
-                        else:
-                            download_file(node.video_url, output_path)
+                            media_files.append(output_path)
+                            continue
                     except Exception:
-                        download_file(node.video_url, output_path)
+                        pass
+                    download_file(node.video_url, output_path)
                 else:
                     media_url = node.display_url
                     if media_url:
