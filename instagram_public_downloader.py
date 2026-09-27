@@ -228,7 +228,7 @@ def normalize_video_to_mp4(source_path):
     
     output_path = source_path.with_name(f"{source_path.stem}_output.mp4")
     
-    # تم رفع الدقة والجودة هنا عبر جعل CRF 18 (جودة عالية جداً) مع preset slow لضغط ممتاز وبدون فقدان تفاصيل
+    # إعدادات متوسطة ومتوازنة (CRF 21 مع preset fast للمعالجة السريعة)
     command = [
         "ffmpeg",
         "-y",
@@ -237,15 +237,15 @@ def normalize_video_to_mp4(source_path):
         "-c:v",
         "libx264",
         "-preset",
-        "slow",
+        "fast",
         "-crf",
-        "18",
+        "21",
         "-pix_fmt",
         "yuv420p",
         "-c:a",
         "aac",
         "-b:a",
-        "192k",
+        "128k",
         "-movflags",
         "+faststart",
         str(output_path),
@@ -289,7 +289,7 @@ def create_video_thumbnail(file_path):
         "-vf",
         "scale=320:-2",
         "-q:v",
-        "2",
+        "4",
         str(thumbnail_path),
     ]
     try:
