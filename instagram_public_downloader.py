@@ -229,25 +229,19 @@ def normalize_video_for_telegram(source_path):
     
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
-    # استخدام خريطة صريحة لضمان بقاء الصوت والفيديو معاً بدون كتم
-    if audio_codec and audio_codec != UNKNOWN_CODEC:
-        command = [
-            "ffmpeg", "-y", "-threads", "4", "-i", str(source_path),
-            "-c:v", "libx264", "-preset", "fast", "-crf", "28", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "128k", "-map", "0:v:0", "-map", "0:a:0",
-            "-movflags", "+faststart", str(output_path),
-        ]
-    else:
-        command = [
-            "ffmpeg", "-y", "-threads", "4", "-i", str(source_path),
-            "-c:v", "libx264", "-preset", "fast", "-crf", "28", "-pix_fmt", "yuv420p",
-            "-an", "-movflags", "+faststart", str(output_path),
-        ]
+    # فرض تحويل الصوت وتضمينه بقوة لتلافي أي مشكلة كتم في المنشورات العادية
+    command = [
+        "ffmpeg", "-y", "-threads", "4", "-i", str(source_path),
+        "-c:v", "libx264", "-preset", "fast", "-crf", "28", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+        "-map", "0:v:0", "-map", "0:a:?", 
+        "-movflags", "+faststart", str(output_path),
+    ]
 
     try:
         run_ffmpeg(command, output_path, timeout=600)
     except VideoProcessingError:
-        # محاولة أخيرة بديلة دون فرض خرائط معقدة في حال فشل الأمر الأول
+        # أمر احتياطي بسيط في حال فشل التعديل المعقد
         fallback_command = [
             "ffmpeg", "-y", "-i", str(source_path),
             "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", str(output_path)
@@ -399,15 +393,12 @@ def download_instagram_media(url):
         except Exception:
             post = None
 
-        url_kind = get_url_kind(url)
-
-        # محاولة التحميل باستخدام yt_dlp مباشرة أولاً لأنه يضمن دمج الصوت والصورة لأي فيديو (سواء منشور عادي p/ أو ريلز)
-        if url_kind in {"reel", "reels"} or (post is not None and post.is_video and post.typename != "GraphSidecar"):
-            try:
-                media_files = download_with_ytdlp(url, output_dir, prefix="vid_")
-                return output_dir, normalize_media_files(media_files), post_caption
-            except Exception:
-                logger.warning("yt_dlp failed, falling back to direct extraction", exc_info=True)
+        # استخدام yt_dlp مباشرة لجميع الروابط (سواء ريلز أو منشورات عادية) لضمان دمج الصوت بدقة
+        try:
+            media_files = download_with_ytdlp(url, output_dir, prefix="vid_")
+            return output_dir, normalize_media_files(media_files), post_caption
+        except Exception:
+            logger.warning("yt_dlp direct download failed, trying fallback to instaloader", exc_info=True)
 
         if post is None:
             loader = instaloader.Instaloader(
@@ -453,20 +444,8 @@ def download_instagram_media(url):
             if media_url:
                 suffix = ".mp4" if post.is_video else ".jpg"
                 output_path = output_dir / f"001{suffix}"
-                if post.is_video:
-                    try:
-                        sub_files = download_with_ytdlp(url, output_dir, prefix="single_")
-                        if sub_files:
-                            media_files = sub_files
-                        else:
-                            download_file(media_url, output_path)
-                            media_files = [output_path]
-                    except Exception:
-                        download_file(media_url, output_path)
-                        media_files = [output_path]
-                else:
-                    download_file(media_url, output_path)
-                    media_files = [output_path]
+                download_file(media_url, output_path)
+                media_files = [output_path]
 
         if not media_files:
             raise InstagramDownloadError("No downloadable Instagram media was found")
