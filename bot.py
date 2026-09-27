@@ -260,7 +260,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_msg = (
         f"♦️ أهلاً بك ( {user_name} ) 🖤\n\n"
         f"▫️ بوت التحميل السريع 📥\n"
-        f"▫️ يوتيوب • تيك توك • إنستگرام • بينترست •\n"
+        f"▫️ يوتيوب • تيك توك • إنستگرام • بينترست \n"
         f"⚡️ أرسل الرابط الآن للبدء 🔻"
     )
     
