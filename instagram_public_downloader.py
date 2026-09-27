@@ -228,27 +228,30 @@ def normalize_video_to_mp4(source_path):
     
     output_path = source_path.with_name(f"{source_path.stem}_output.mp4")
     
-    # تحسين ذكي: نسخ الفيديو الأصلي كما هو بدون إعادة ضغط لتوفير الحجم والحفاظ على الجودة الخارقة HD، مع ضبط الصوت والتوافق مع تيليجرام
     command = [
         "ffmpeg",
         "-y",
         "-i",
         str(source_path),
         "-c:v",
-        "copy",
+        "libx264",
+        "-preset",
+        "fast",
+        "-crf",
+        "26",
+        "-pix_fmt",
+        "yuv420p",
         "-c:a",
         "aac",
         "-b:a",
         "128k",
-        "-pix_fmt",
-        "yuv420p",
         "-movflags",
         "+faststart",
         str(output_path),
     ]
 
     try:
-        run_ffmpeg(command, output_path, timeout=120)
+        run_ffmpeg(command, output_path, timeout=180)
     except VideoProcessingError:
         return source_path
 
