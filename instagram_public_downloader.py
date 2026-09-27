@@ -250,7 +250,6 @@ def is_video_file(file_path):
 
 
 def normalize_media_files(media_files):
-    # مطابقة البوتات الأخرى: إرجاع الملفات كما تم تحميلها دون أي تعديل أو إعادة تشفير
     checked_files = []
     for file_path in media_files:
         if file_path.stat().st_size > MAX_MEDIA_SIZE:
@@ -273,7 +272,7 @@ def collect_downloaded(output_dir, prefix, suffixes):
 def download_reel_as_instagram(url, output_dir):
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "best[ext=mp4]/best",
+        "format": "bv*+ba/b",  # دمج أفضل فيديو مع أفضل صوت لضمان عدم فقدان الصوت
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
