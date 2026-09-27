@@ -65,6 +65,7 @@ def request_headers():
     return {
         "User-Agent": random.choice(USER_AGENTS),
         "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.tiktok.com/",
     }
 
 def fetch_tiktok_data(url):
@@ -80,55 +81,51 @@ def fetch_tiktok_data(url):
         if not is_valid_tiktok_url(url):
             return None
 
-        ydl_opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "extract_flat": False,
-        }
-
-        info = None
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            try:
-                info = ydl.extract_info(url, download=False)
-            except Exception:
-                info = None
-
-        title = "محتوى تيك توك"
-        music_url = None
         images = []
+        music_url = None
+        title = "محتوى تيك توك"
 
-        if info:
-            title = str(info.get("title") or "محتوى تيك توك")
-            
-            if "requested_formats" in info:
-                for f in info["requested_formats"]:
-                    if f.get("acodec") != "none" and f.get("vcodec") == "none":
-                        music_url = f.get("url")
-                        break
-            if not music_url:
-                music_url = info.get("url") if info.get("vcodec") == "none" else None
+        # محاولة أولية عبر API خارجي موثوق لجلب الصور والموسيقى بدقة عالية
+        try:
+            api_res = requests.get(
+                "https://tikwm.com/api/",
+                params={"url": url, "music": 1},
+                headers=request_headers(),
+                timeout=(8, 20),
+            ).json()
+            if api_res.get("code") == 0:
+                data = api_res.get("data", {})
+                if isinstance(data, dict):
+                    title = data.get("title", title)
+                    images = data.get("images", [])
+                    music_url = data.get("music")
+        except Exception:
+            pass
 
-            if "entries" in info:
-                images = [e.get("url") for e in info.get("entries", []) if e.get("url")]
-
-        if not images or not music_url or "/photo/" in url:
-            try:
-                api_res = requests.get(
-                    "https://tikwm.com/api/",
-                    params={"url": url, "music": 1},
-                    headers=request_headers(),
-                    timeout=(8, 20),
-                ).json()
-                if api_res.get("code") == 0:
-                    data = api_res.get("data", {})
-                    if isinstance(data, dict):
-                        title = data.get("title", title)
-                        if not images:
-                            images = data.get("images", [])
+        # إذا فشل الـ API الخارجي أو لم يتم العثور على صور، نجرب yt-dlp كبديل
+        if not images:
+            ydl_opts = {
+                "quiet": True,
+                "no_warnings": True,
+                "extract_flat": False,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                try:
+                    info = ydl.extract_info(url, download=False)
+                    if info:
+                        title = str(info.get("title") or title)
+                        if "entries" in info:
+                            images = [e.get("url") for e in info.get("entries", []) if e.get("url")]
                         if not music_url:
-                            music_url = data.get("music")
-            except Exception:
-                pass
+                            if "requested_formats" in info:
+                                for f in info["requested_formats"]:
+                                    if f.get("acodec") != "none" and f.get("vcodec") == "none":
+                                        music_url = f.get("url")
+                                        break
+                            if not music_url:
+                                music_url = info.get("url") if info.get("vcodec") == "none" else None
+                except Exception:
+                    pass
 
         clean_title = "".join(
             character
@@ -156,11 +153,12 @@ def download_tiktok_with_ytdlp(url, is_audio=False):
         "outtmpl": os.path.join(temp_dir, "file.%(ext)s"),
         "quiet": True,
         "no_warnings": True,
+        "max_filesize": MAX_MEDIA_SIZE,
     }
     if is_audio:
         ydl_opts["format"] = "bestaudio/best"
     else:
-        ydl_opts["format"] = "best"
+        ydl_opts["format"] = "best[filesize<50M]/best"
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -173,8 +171,10 @@ def download_tiktok_with_ytdlp(url, is_audio=False):
                 else:
                     return None
             return Path(filename)
-    except Exception:
+    except Exception as e:
         logger.exception("Error downloading via yt-dlp")
+        if "max_filesize" in str(e) or "too large" in str(e).lower():
+            raise DownloadTooLarge
         return None
 
 def download_media(url, suffix):
@@ -336,7 +336,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption_text = "- @G66GBOT"
 
             if images:
-                # إرسال الملف الصوتي في المقدمة أولاً
                 if audio_url:
                     local_audio_path = None
                     try:
@@ -383,7 +382,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if total_valid == 0:
                         raise ValueError("No valid images found.")
 
-                    # إرسال الصور بألبومات مجمعة كل ألبوم يحتوي على 10 صور كحد أقصى (الحد الأقصى المسموح به في تيليجرام)
+                    # إرسال الصور بألبومات مجمعة كل ألبوم يحتوي على 10 صور كحد أقصى وبفاصل زمني آمن لمنع الحظر
                     for i in range(0, total_valid, 10):
                         batch = valid_images_data[i:i + 10]
                         media_group = []
@@ -407,7 +406,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         if media_group:
                             try:
                                 await update.message.reply_media_group(media=media_group)
-                                # فاصل زمني آمن لمدة ثانيتين بين كل ألبوم مكون من 10 صور لمنع حدوث حظر FloodWait
                                 await asyncio.sleep(2.0)
                             except TelegramError as e:
                                 logger.error(f"Telegram error while sending media group: {e}")
@@ -464,6 +462,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await processing_msg.edit_text(error_custom_msg)
 
+    except DownloadTooLarge:
+        error_custom_msg = (
+            "⚠️┇هذا الملف لا يمكنني تحميله،\n"
+            "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
+            "⚠️┇أعد المحاوله مع ملف اخر."
+        )
+        await processing_msg.edit_text(error_custom_msg)
     except Exception:
         logger.exception("Error in handle_message")
         error_custom_msg = (
@@ -619,6 +624,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await status_msg.delete()
 
+        except DownloadTooLarge:
+            error_custom_msg = (
+                "⚠️┇هذا الملف لا يمكنني تحميله،\n"
+                "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
+                "⚠️┇أعد المحاوله مع ملف اخر."
+            )
+            await status_msg.edit_text(error_custom_msg)
         except Exception:
             logger.exception("HD video callback error")
             error_custom_msg = (
