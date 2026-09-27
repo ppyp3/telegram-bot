@@ -259,7 +259,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_msg = (
         f"✦ أهلاً بك ⦗ {user_name} ⦘ 🖤\n\n"
         f"▫︎ بوت التحميل السريع 📥\n"
-        f"▫︎ يوتيوب • تيك توك • إنستغرام • بينترست\n\n"  # هنا أضفنا \n\n لترك سطر فارغ
+        f"▫︎ يوتيوب • تيك توك • إنستغرام • بينترست\n\n"
         f"⚡ أرسل الرابط الآن للبدء 🔻"
     )
     
@@ -385,8 +385,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if total_valid == 0:
                         raise ValueError("No valid images found.")
 
-                    for i in range(0, total_valid, 10):
-                        batch = valid_images_data[i:i + 10]
+                    # تم تقليل حجم الدفعة إلى 5 صور مع فاصل زمني لمنع الحظر (FloodWait)
+                    for i in range(0, total_valid, 5):
+                        batch = valid_images_data[i:i + 5]
                         media_group = []
                         batch_file_objs = []
 
@@ -395,7 +396,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             file_obj = open(img_path, "rb")
                             batch_file_objs.append(file_obj)
 
-                            # التعديل هنا: ضبط النص أسفل الألبوم بالشكل المطلوب تماماً بدون سمايلات
                             if absolute_index == total_valid or idx == len(batch) - 1:
                                 media_group.append(
                                     InputMediaPhoto(
@@ -407,8 +407,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 media_group.append(InputMediaPhoto(media=file_obj))
 
                         if media_group:
-                            await update.message.reply_media_group(media=media_group)
-                            await asyncio.sleep(0.7)
+                            try:
+                                await update.message.reply_media_group(media=media_group)
+                                # مهلة أمان قصيرة بين كل دفعة صور وأخرى لحماية البوت من الحظر
+                                await asyncio.sleep(1.5)
+                            except TelegramError as e:
+                                logger.error(f"Telegram error while sending media group: {e}")
+                                await asyncio.sleep(4.0)
 
                 finally:
                     for path_obj in temp_files:
