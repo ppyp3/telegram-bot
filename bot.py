@@ -557,8 +557,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_id=chat_id,
                     audio=audio_file,
                     title=video_title,
-                    performer="@G66Gbot",
-                    caption="- @G66Gbot",
+                    performer="@G66GBOT",
+                    caption="- @G66GBOT",
                 )
 
             await status_msg.delete()
@@ -602,7 +602,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 sent_video = await context.bot.send_video(
                     chat_id=chat_id,
                     video=video_file,
-                    caption="- @G66Gbot",
+                    caption="- @G66GBOT",
                     reply_markup=audio_reply_markup,
                 )
 
@@ -647,7 +647,7 @@ def main():
     )
     app.add_handler(CallbackQueryHandler(button_callback))
 
-    print("بوت التح يعمل الآن بكفاءة...")
+    print("بوت التحميل يعمل الآن بكفاءة...")
     app.run_polling()
 
 if __name__ == "__main__":
