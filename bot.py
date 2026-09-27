@@ -68,7 +68,6 @@ def request_headers():
     }
 
 def fetch_tiktok_data(url):
-    """جلب بيانات تيك توك مع استخراج دقيق للملف الصوتي والصور لضمان عمل الـ Slideshow والصوت بالمقدمة"""
     try:
         parsed_url = urlparse(url)
         if parsed_url.hostname in {"vm.tiktok.com", "vt.tiktok.com"}:
@@ -215,7 +214,6 @@ def download_media(url, suffix):
         raise
 
 def process_image_to_jpeg(input_path):
-    """التحقق من سلامة الصورة وتحويلها إلى JPEG صالحة 100% عبر مكتبة Pillow"""
     try:
         with Image.open(input_path) as img:
             img.verify()
@@ -385,9 +383,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if total_valid == 0:
                         raise ValueError("No valid images found.")
 
-                    # تم تقليل حجم الدفعة إلى 5 صور مع فاصل زمني لمنع الحظر (FloodWait)
-                    for i in range(0, total_valid, 5):
-                        batch = valid_images_data[i:i + 5]
+                    # إرسال الصور بألبومات مجمعة كل ألبوم يحتوي على 10 صور كحد أقصى (الحد الأقصى المسموح به في تيليجرام)
+                    for i in range(0, total_valid, 10):
+                        batch = valid_images_data[i:i + 10]
                         media_group = []
                         batch_file_objs = []
 
@@ -409,11 +407,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         if media_group:
                             try:
                                 await update.message.reply_media_group(media=media_group)
-                                # مهلة أمان قصيرة بين كل دفعة صور وأخرى لحماية البوت من الحظر
-                                await asyncio.sleep(1.5)
+                                # فاصل زمني آمن لمدة ثانيتين بين كل ألبوم مكون من 10 صور لمنع حدوث حظر FloodWait
+                                await asyncio.sleep(2.0)
                             except TelegramError as e:
                                 logger.error(f"Telegram error while sending media group: {e}")
-                                await asyncio.sleep(4.0)
+                                await asyncio.sleep(5.0)
 
                 finally:
                     for path_obj in temp_files:
