@@ -226,26 +226,43 @@ def normalize_video_for_telegram(source_path):
     video_codec, audio_codec, _, _, _ = probe_video(source_path)
     if not video_codec:
         raise VideoProcessingError("Downloaded file has no video stream")
-    
+    if not audio_codec:
+        raise VideoProcessingError("Downloaded reel has no audio stream")
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
-    # حل جذري: فصل الصوت وإعادة ترميزه بصيغة AAC واضحة مع إجبار الخريطة لضمان عدم ضياعه
     command = [
-        "ffmpeg", "-y", "-i", str(source_path),
-        "-c:v", "libx264", "-preset", "medium", "-crf", "23", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
-        "-map", "0:v:0", "-map", "0:a:?",
-        "-shortest", "-movflags", "+faststart", str(output_path),
+        "ffmpeg",
+        "-y",
+        "-threads",
+        "4",
+        "-i",
+        str(source_path),
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-crf",
+        "28",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-map",
+        "0:v:0?",
+        "-map",
+        "0:a:0",
+        "-movflags",
+        "+faststart",
+        str(output_path),
     ]
 
-    try:
-        run_ffmpeg(command, output_path, timeout=600)
-    except VideoProcessingError:
-        fallback_command = [
-            "ffmpeg", "-y", "-i", str(source_path),
-            "-c:v", "copy", "-c:a", "aac", str(output_path)
-        ]
-        run_ffmpeg(fallback_command, output_path, timeout=300)
+    run_ffmpeg(command, output_path, timeout=600)
+    _, output_audio_codec, _, _, _ = probe_video(output_path)
+    if not output_audio_codec:
+        output_path.unlink(missing_ok=True)
+        raise VideoProcessingError("FFmpeg output is missing its audio stream")
 
     if output_path.stat().st_size > MAX_MEDIA_SIZE:
         output_path.unlink(missing_ok=True)
@@ -335,12 +352,11 @@ def select_reel_media(candidates):
     return [max(chosen, key=lambda path: path.stat().st_size)]
 
 
-def download_with_ytdlp(url, output_dir, prefix="media_"):
+def download_reel_with_audio(url, output_dir):
     options = {
-        "outtmpl": str(output_dir / f"{prefix}%(id)s.%(ext)s"),
+        "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
         "format": "bestvideo+bestaudio/best",
         "merge_output_format": "mp4",
-        "postprocessors": [{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}],
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
@@ -348,15 +364,19 @@ def download_with_ytdlp(url, output_dir, prefix="media_"):
         "socket_timeout": 15,
     }
 
+    for stale_file in output_dir.iterdir():
+        if stale_file.is_file():
+            stale_file.unlink(missing_ok=True)
+
     try:
         with yt_dlp.YoutubeDL(options) as downloader:
             downloader.extract_info(url, download=True)
     except yt_dlp.utils.DownloadError as error:
-        logger.error("فشل التحميل عبر yt_dlp: %s", error)
+        logger.error("فشل تحميل الرابط: %s", error)
         raise error
 
     media_files = select_reel_media(
-        collect_downloaded(output_dir, prefix, {".mp4", ".mkv", ".webm"})
+        collect_downloaded(output_dir, "reel_", {".mp4", ".mkv", ".webm"})
     )
 
     if not media_files:
@@ -378,6 +398,7 @@ def download_instagram_media(url):
     post_caption = ""
 
     try:
+        # استخراج وصف المنشور الأصلي باستخدام instaloader
         try:
             loader = instaloader.Instaloader(
                 download_pictures=False,
@@ -389,17 +410,20 @@ def download_instagram_media(url):
             )
             post = instaloader.Post.from_shortcode(loader.context, shortcode)
             if post.caption:
+                # نأخذ أول سطر من الوصف أو أول 50 حرف كعنوان للملف الصوتي
                 post_caption = post.caption.strip().split("\n")[0][:60]
         except Exception:
-            post = None
+            pass
 
-        try:
-            media_files = download_with_ytdlp(url, output_dir, prefix="vid_")
-            return output_dir, normalize_media_files(media_files), post_caption
-        except Exception:
-            logger.warning("yt_dlp failed, falling back to instaloader nodes", exc_info=True)
+        url_kind = get_url_kind(url)
+        if url_kind == "reel":
+            try:
+                reel_files = download_reel_with_audio(url, output_dir)
+                return output_dir, normalize_media_files(reel_files), post_caption
+            except yt_dlp.utils.DownloadError:
+                logger.warning("Falling back to direct Instagram reel URL", exc_info=True)
 
-        if post is None:
+        if 'post' not in locals() or post is None:
             loader = instaloader.Instaloader(
                 download_pictures=False,
                 download_videos=False,
@@ -412,39 +436,35 @@ def download_instagram_media(url):
             if post.caption and not post_caption:
                 post_caption = post.caption.strip().split("\n")[0][:60]
 
+        if (
+            url_kind == "post"
+            and post.is_video
+            and post.typename != "GraphSidecar"
+        ):
+            try:
+                reel_files = download_reel_with_audio(url, output_dir)
+                return output_dir, normalize_media_files(reel_files), post_caption
+            except yt_dlp.utils.DownloadError:
+                logger.warning("Falling back to direct Instagram reel URL", exc_info=True)
+
         if post.typename == "GraphSidecar":
-            media_files = []
-            for index, node in enumerate(post.get_sidecar_nodes(), start=1):
-                suffix = ".mp4" if node.is_video else ".jpg"
-                output_path = output_dir / f"{index:03d}{suffix}"
-                
-                if node.is_video and hasattr(node, "video_url") and node.video_url:
-                    try:
-                        sub_files = download_with_ytdlp(node.video_url, output_dir, prefix=f"side_{index}_")
-                        if sub_files:
-                            if sub_files[0] != output_path:
-                                if output_path.exists():
-                                    output_path.unlink()
-                                sub_files[0].rename(output_path)
-                            media_files.append(output_path)
-                            continue
-                    except Exception:
-                        pass
-                    download_file(node.video_url, output_path)
-                else:
-                    media_url = node.display_url
-                    if media_url:
-                        download_file(media_url, output_path)
-                
-                if output_path.exists():
-                    media_files.append(output_path)
+            media_items = [
+                (node.video_url if node.is_video else node.display_url, node.is_video)
+                for node in post.get_sidecar_nodes()
+            ]
         else:
-            media_url = post.video_url if post.is_video else post.url
-            if media_url:
-                suffix = ".mp4" if post.is_video else ".jpg"
-                output_path = output_dir / f"001{suffix}"
-                download_file(media_url, output_path)
-                media_files = [output_path]
+            media_items = [
+                (post.video_url if post.is_video else post.url, post.is_video)
+            ]
+
+        media_files = []
+        for index, (media_url, is_video) in enumerate(media_items, start=1):
+            if not media_url:
+                continue
+            suffix = ".mp4" if is_video else ".jpg"
+            output_path = output_dir / f"{index:03d}{suffix}"
+            download_file(media_url, output_path)
+            media_files.append(output_path)
 
         if not media_files:
             raise InstagramDownloadError("No downloadable Instagram media was found")
@@ -678,6 +698,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             update.message, context, media_files, is_reel=is_reel, reply_markup=reply_markup
         )
 
+        # تخزين وصف المنشور (Caption) في الجلسة ليظهر كعنوان عند تحويله لصوت
         if is_reel and sent_messages:
             user_id = update.effective_user.id
             title = post_caption if post_caption else "محتوى انستغرام"
@@ -722,4 +743,3 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
- 
