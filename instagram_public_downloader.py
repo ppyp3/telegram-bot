@@ -226,43 +226,44 @@ def normalize_video_for_telegram(source_path):
     video_codec, audio_codec, _, _, _ = probe_video(source_path)
     if not video_codec:
         raise VideoProcessingError("Downloaded file has no video stream")
-    if not audio_codec:
-        raise VideoProcessingError("Downloaded reel has no audio stream")
+    
     output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
     
-    command = [
-        "ffmpeg",
-        "-y",
-        "-threads",
-        "4",
-        "-i",
-        str(source_path),
-        "-c:v",
-        "libx264",
-        "-preset",
-        "fast",
-        "-crf",
-        "28",
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "128k",
-        "-map",
-        "0:v:0?",
-        "-map",
-        "0:a:0",
-        "-movflags",
-        "+faststart",
-        str(output_path),
-    ]
+    # استخدام وضع النسخ السريع (Copy) للفيديو والصوت قدر الإمكان لمنع تكبير الحجم،
+    # مع تحويل الصوت لـ aac فقط إذا لم يكن متوافقاً دون إعادة ضغط الفيديو الأصلي.
+    if audio_codec:
+        command = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(source_path),
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ]
+    else:
+        # إذا لم يكن هناك صوت مدمج، نجعله يمرر كما هو
+        command = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(source_path),
+            "-c",
+            "copy",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ]
 
-    run_ffmpeg(command, output_path, timeout=600)
-    _, output_audio_codec, _, _, _ = probe_video(output_path)
-    if not output_audio_codec:
-        output_path.unlink(missing_ok=True)
-        raise VideoProcessingError("FFmpeg output is missing its audio stream")
+    try:
+        run_ffmpeg(command, output_path, timeout=300)
+    except VideoProcessingError:
+        # لو فشل وضع النسخ السريع، نرجع الملف الأصلي كما هو لضمان بقاء الحجم صغيراً
+        return source_path
 
     if output_path.stat().st_size > MAX_MEDIA_SIZE:
         output_path.unlink(missing_ok=True)
@@ -323,7 +324,7 @@ def normalize_media_files(media_files):
             except VideoProcessingError:
                 prepared_files.append(file_path)
                 continue
-            if converted_path != file_path:
+            if converted_path != file_path and converted_path.exists():
                 file_path.unlink(missing_ok=True)
             prepared_files.append(converted_path)
         else:
@@ -357,7 +358,6 @@ def download_reel_with_audio(url, output_dir):
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
         "format": "bestvideo+bestaudio/best",
         "merge_output_format": "mp4",
-        "postprocessors": [{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}],
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
