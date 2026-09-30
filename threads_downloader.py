@@ -20,7 +20,7 @@ class ThreadsMediaTooLarge(ThreadsDownloadError):
     pass
 
 def is_valid_threads_url(url: str) -> bool:
-    """دالة محسنة ومرنة للتحقق من صحة روابط ثريدز بجميع أشكالها"""
+    """التحقق من صحة روابط ثريدز سواء كانت .net أو .com"""
     if not url or not isinstance(url, str):
         return False
     try:
@@ -28,8 +28,8 @@ def is_valid_threads_url(url: str) -> bool:
         hostname = (parsed.hostname or "").lower().rstrip(".")
         if not hostname:
             return False
-        # التحقق مما إذا كان النطاق يتبع لثريدز
-        if "threads.net" in hostname:
+        # يدعم نطاق threads.net ونطاق threads.com
+        if "threads.net" in hostname or "threads.com" in hostname:
             return True
         return False
     except Exception:
