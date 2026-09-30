@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import re
-import requests
 from pathlib import Path
 import shutil
 import tempfile
@@ -22,20 +21,21 @@ class ThreadsMediaTooLarge(ThreadsDownloadError):
     pass
 
 def clean_threads_url(url: str) -> str:
-    """تنظيف وتوحيد رابط ثريدز"""
+    """تنظيف وتصحيح رابط ثريدز مهما كانت صيغته ليتوافق مع yt-dlp"""
     if not url:
         return url
     url = url.strip()
     
-    # استخراج معرف المنشور أيا كان شكله
-    for pattern in [r'/post/([A-Za-z0-9_-]+)', r'/t/([A-Za-z0-9_-]+)', r'/share/([A-Za-z0-9_-]+)']:
-        match = re.search(pattern, url)
-        if match:
-            post_id = match.group(1)
-            return f"https://www.threads.net/@i/post/{post_id}"
+    # استخراج معرف المنشور (Post ID) بدقة من أي رابط ثريدز (سواء بروفايل، مشاركة، أو رابط مختصر)
+    match = re.search(r'(?:/post/|/t/|/share/)([A-Za-z0-9_-]+)', url)
+    if match:
+        post_id = match.group(1)
+        return f"https://www.threads.net/t/{post_id}"
 
+    # احتياطياً: استبدال أي نطاق .com بـ .net
     if "threads.com" in url:
         url = url.replace("threads.com", "threads.net")
+        
     return url
 
 def is_valid_threads_url(url: str) -> bool:
@@ -56,21 +56,20 @@ class ThreadsFilter(filters.MessageFilter):
 THREADS_FILTER = ThreadsFilter()
 
 def get_threads_info(url: str):
-    """استخراج معلومات المنشور مع استخدام خيارات بديلة لـ yt-dlp"""
+    """استخراج معلومات المنشور بالاعتماد على الرابط المنظف حصرياً"""
     clean_url = clean_threads_url(url)
     
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
-        "extractor_args": {"threads": {"api": "web"}},
     }
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        # محاولة السحب بالرابط المنظف، وإذا فشل يتم المحاولة بالرابط الأصلي
         try:
             info = ydl.extract_info(clean_url, download=False)
         except Exception:
-            # محاولة أخيرة باستخدام الرابط الأصلي إذا فشل الرابط النظيف
             info = ydl.extract_info(url, download=False)
             
         if not info:
@@ -92,7 +91,6 @@ async def download_threads_media(url: str, mode: str = "video"):
         "noprogress": True,
         "noplaylist": True,
         "socket_timeout": 30,
-        "extractor_args": {"threads": {"api": "web"}},
     }
 
     if mode == "audio":
@@ -107,12 +105,10 @@ async def download_threads_media(url: str, mode: str = "video"):
         options["merge_output_format"] = "mp4"
 
     def _download():
-        try:
-            with yt_dlp.YoutubeDL(options) as downloader:
+        with yt_dlp.YoutubeDL(options) as downloader:
+            try:
                 downloader.extract_info(clean_url, download=True)
-        except Exception:
-            # تجربة الرابط الأصلي في حال فشل الرابط المعدل
-            with yt_dlp.YoutubeDL(options) as downloader:
+            except Exception:
                 downloader.extract_info(url, download=True)
 
     try:
