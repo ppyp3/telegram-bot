@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from pathlib import Path
 import shutil
 import tempfile
@@ -19,8 +20,33 @@ class ThreadsDownloadError(Exception):
 class ThreadsMediaTooLarge(ThreadsDownloadError):
     pass
 
+def clean_threads_url(url: str) -> str:
+    """تنظيف وتصحيح رابط ثريدز ليعمل بسلاسة مع yt-dlp"""
+    if not url:
+        return url
+    
+    url = url.strip()
+    
+    # استخراج كود المنشور إذا كان الرابط يحتوي على /post/
+    post_match = re.search(r'/post/([A-Za-z0-9_-]+)', url)
+    if post_match:
+        post_id = post_match.group(1)
+        return f"https://www.threads.net/t/{post_id}"
+
+    # استخراج كود المنشور إذا كان الرابط يحتوي على /share/
+    share_match = re.search(r'/share/([A-Za-z0-9_-]+)', url)
+    if share_match:
+        share_id = share_match.group(1)
+        return f"https://www.threads.net/t/{share_id}"
+
+    # استبدال threads.com بـ threads.net
+    if "threads.com" in url:
+        url = url.replace("threads.com", "threads.net")
+        
+    return url
+
 def is_valid_threads_url(url: str) -> bool:
-    """التحقق من صحة روابط ثريدز سواء كانت .net أو .com"""
+    """التحقق من صحة روابط ثريدز"""
     if not url or not isinstance(url, str):
         return False
     try:
@@ -42,9 +68,8 @@ class ThreadsFilter(filters.MessageFilter):
 THREADS_FILTER = ThreadsFilter()
 
 def get_threads_info(url: str):
-    """استخراج معلومات منشور ثريدز مع تصحيح النطاق تلقائياً"""
-    if "threads.com" in url:
-        url = url.replace("threads.com", "threads.net")
+    """استخراج معلومات منشور ثريدز مع تنظيف الرابط"""
+    clean_url = clean_threads_url(url)
         
     ydl_opts = {
         "quiet": True,
@@ -52,18 +77,16 @@ def get_threads_info(url: str):
         "skip_download": True,
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
+        info = ydl.extract_info(clean_url, download=False)
         if not info:
             raise ValueError("Could not extract Threads information")
         return {
             "title": info.get("title", "منشور ثريدز"),
-            "url": url,
+            "url": clean_url,
         }
 
 async def download_threads_media(url: str, mode: str = "video"):
-    if "threads.com" in url:
-        url = url.replace("threads.com", "threads.net")
-
+    clean_url = clean_threads_url(url)
     output_dir = Path(tempfile.mkdtemp(prefix="threads_media_"))
     
     options = {
@@ -88,7 +111,7 @@ async def download_threads_media(url: str, mode: str = "video"):
 
     def _download():
         with yt_dlp.YoutubeDL(options) as downloader:
-            downloader.extract_info(url, download=True)
+            downloader.extract_info(clean_url, download=True)
 
     try:
         await asyncio.to_thread(_download)
