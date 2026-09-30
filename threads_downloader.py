@@ -28,14 +28,12 @@ def is_valid_threads_url(url: str) -> bool:
         hostname = (parsed.hostname or "").lower().rstrip(".")
         if not hostname:
             return False
-        # يدعم نطاق threads.net ونطاق threads.com
         if "threads.net" in hostname or "threads.com" in hostname:
             return True
         return False
     except Exception:
         return False
 
-# فلتر تيليجرام المخصص لثريدز
 class ThreadsFilter(filters.MessageFilter):
     def filter(self, message):
         text = message.text or message.caption or ""
@@ -44,7 +42,10 @@ class ThreadsFilter(filters.MessageFilter):
 THREADS_FILTER = ThreadsFilter()
 
 def get_threads_info(url: str):
-    """استخراج معلومات منشور ثريدز"""
+    """استخراج معلومات منشور ثريدز مع تصحيح النطاق تلقائياً"""
+    if "threads.com" in url:
+        url = url.replace("threads.com", "threads.net")
+        
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
@@ -60,6 +61,9 @@ def get_threads_info(url: str):
         }
 
 async def download_threads_media(url: str, mode: str = "video"):
+    if "threads.com" in url:
+        url = url.replace("threads.com", "threads.net")
+
     output_dir = Path(tempfile.mkdtemp(prefix="threads_media_"))
     
     options = {
@@ -127,6 +131,7 @@ async def handle_threads_message(update: Update, context: ContextTypes.DEFAULT_T
     try:
         info = await asyncio.to_thread(get_threads_info, url)
         title = info["title"]
+        fixed_url = info["url"]
 
         keyboard = [
             [InlineKeyboardButton("🎬 فيديو", callback_data="th_video")],
@@ -148,7 +153,7 @@ async def handle_threads_message(update: Update, context: ContextTypes.DEFAULT_T
 
         sessions = context.application.bot_data.setdefault("threads_sessions", {})
         key = (sent_msg.chat_id, sent_msg.message_id)
-        sessions[key] = {"user_id": user_id, "url": url, "title": title}
+        sessions[key] = {"user_id": user_id, "url": fixed_url, "title": title}
 
         await processing_msg.delete()
 
