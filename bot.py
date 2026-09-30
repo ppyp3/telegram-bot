@@ -32,7 +32,7 @@ from telegram.ext import (
 from instagram_public_downloader import INSTAGRAM_FILTER, handle_instagram_message
 from youtube_downloader import YOUTUBE_FILTER, handle_youtube_message, handle_youtube_callback
 from pinterest_downloader import is_valid_pinterest_url, handle_pinterest_message
-from threads_downloader import THREADS_FILTER, handle_threads_message, handle_threads_callback
+from threads_downloader import THREADS_FILTER, is_valid_threads_url, handle_threads_message, handle_threads_callback
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -70,7 +70,6 @@ def request_headers():
     }
 
 def fetch_tiktok_data(url):
-    """جلب بيانات تيك توك مع وقت انتظار طويل جداً (Timeout مفتوح) لضمان عدم حدوث تايم أوت"""
     try:
         parsed_url = urlparse(url)
         if parsed_url.hostname in {"vm.tiktok.com", "vt.tiktok.com"}:
@@ -87,7 +86,6 @@ def fetch_tiktok_data(url):
         music_url = None
         title = "محتوى تيك توك"
 
-        # محاولة الجلب عبر API الخارجي بمهلة اتصال واسعة جداً
         try:
             api_res = requests.get(
                 "https://tikwm.com/api/",
@@ -104,7 +102,6 @@ def fetch_tiktok_data(url):
         except Exception:
             pass
 
-        # إذا لم يتم العثور على صور عبر الـ API، نستخدم yt-dlp كبديل آمن
         if not images:
             ydl_opts = {
                 "quiet": True,
@@ -308,10 +305,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     url = text.strip()
 
+    # 1. التحقق من روابط بينترست
     if is_valid_pinterest_url(url):
         await handle_pinterest_message(update, context)
         return
 
+    # 2. التحقق من روابط ثريدز
+    if is_valid_threads_url(url):
+        await handle_threads_message(update, context)
+        return
+
+    # 3. التحقق من روابط تيك توك
     if not is_valid_tiktok_url(url):
         await update.message.reply_text("❌ أرسل رابطاً صحيحاً من فضلك.")
         return
@@ -467,7 +471,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         error_custom_msg = (
             "⚠️┇هذا الملف لا يمكنني تحميله،\n"
             "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
-            "⚠️️┇أعد المحاوله مع ملف اخر."
+            "⚠️┇أعد المحاوله مع ملف اخر."
         )
         await processing_msg.edit_text(error_custom_msg)
 
