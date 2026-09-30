@@ -1,7 +1,7 @@
 instaloader
 --pre
 python-telegram-bot
-yt-dlp --upgrade
+yt-dlp
 pypdl
 aiohttp
 requests
