@@ -31,7 +31,6 @@ def is_valid_pinterest_url(text):
 def upgrade_image_to_hd(img_url):
     if not img_url:
         return img_url
-    # استبدال أي حجم متوسط (مثل 736x, 564x, 470x) إلى الدقة الأصلية originals
     hd_url = re.sub(r'/(?:736x|564x|470x|236x|150x|originals)/', '/originals/', img_url)
     return hd_url
 
@@ -50,21 +49,38 @@ def fetch_pinterest_media(raw_url):
             html_content = response.text
             soup = BeautifulSoup(html_content, 'html.parser')
 
-        # 1. البحث أولاً عن الفيديو
-        video_match = re.search(r'"contentUrl"\s*:\s*"([^"]+\.mp4[^"]*)"', html_content)
-        if not video_match:
-            og_video = soup.find('meta', property='og:video')
-            if og_video and og_video.get('content'):
-                return {"type": "video", "url": og_video['content']}
-            
-            video_match = re.search(r'https?://[^"\s]+\.mp4[^"\s]*', html_content)
+        # 1. البحث الشامل والمتقدم عن الفيديو (بما في ذلك روابط الـ HLS والـ MP4 المخفية في النوافذ الديناميكية)
+        video_url = None
+        
+        # البحث عن وسوم الفيديو المباشرة أو الـ meta tags
+        og_video = soup.find('meta', property='og:video')
+        if og_video and og_video.get('content'):
+            video_url = og_video['content']
+        
+        if not video_url:
+            twitter_player = soup.find('meta', property='twitter:player:stream')
+            if twitter_player and twitter_player.get('content'):
+                video_url = twitter_player['content']
 
-        if video_match:
-            video_url = video_match.group(1) if '"contentUrl"' in video_match.string else video_match.group(0)
-            video_url = video_url.replace(r'\u0026', '&')
+        # البحث داخل السكريبتات وجافاسكريبت الصفحة (JSON-LD أو الروابط المضمنة)
+        if not video_url:
+            # البحث عن روابط mp4 مباشرة داخل النص البرمجي
+            video_matches = re.findall(r'https?://[^"\s]+\.mp4[^"\s]*', html_content)
+            if video_matches:
+                # اختيار أطول رابط فيديو متوفر غالباً ما يكون الدقة الأعلى
+                video_url = max(video_matches, key=len)
+
+        if not video_url:
+            # البحث عن contentUrl الخاص بالفيديو في بيانات الصفحة
+            content_url_match = re.search(r'"contentUrl"\s*:\s*"([^"]+\.mp4[^"]*)"', html_content)
+            if content_url_match:
+                video_url = content_url_match.group(1)
+
+        if video_url:
+            video_url = video_url.replace(r'\u0026', '&').replace(r'\/', '/')
             return {"type": "video", "url": video_url}
 
-        # 2. البحث عن الصورة وتحسينها لأعلى دقة (originals)
+        # 2. إذا لم يتوفر فيديو تماماً، يتم البحث عن الصورة وتحسينها لأعلى دقة
         img_url = None
         og_image = soup.find('meta', property='og:image')
         if og_image and og_image.get('content'):
@@ -121,7 +137,6 @@ async def handle_pinterest_message(update: Update, context):
             try:
                 await context.bot.send_chat_action(chat_id=message.chat_id, action=ChatAction.UPLOAD_PHOTO)
                 with open(local_path, "rb") as img_file:
-                    # استخدام reply_photo يرسل الصورة كاملة وصافية (وليس كملف مضغوط أو مصغر)
                     await message.reply_photo(photo=img_file, caption="- @G66GBOT")
                 await processing_msg.delete()
             finally:
