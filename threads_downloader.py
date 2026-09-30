@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+import requests
 from pathlib import Path
 import shutil
 import tempfile
@@ -21,42 +22,29 @@ class ThreadsMediaTooLarge(ThreadsDownloadError):
     pass
 
 def clean_threads_url(url: str) -> str:
-    """تنظيف وتصحيح رابط ثريدز ليعمل بسلاسة مع yt-dlp"""
+    """تنظيف وتوحيد رابط ثريدز"""
     if not url:
         return url
-    
     url = url.strip()
     
-    # استخراج كود المنشور إذا كان الرابط يحتوي على /post/
-    post_match = re.search(r'/post/([A-Za-z0-9_-]+)', url)
-    if post_match:
-        post_id = post_match.group(1)
-        return f"https://www.threads.net/t/{post_id}"
+    # استخراج معرف المنشور أيا كان شكله
+    for pattern in [r'/post/([A-Za-z0-9_-]+)', r'/t/([A-Za-z0-9_-]+)', r'/share/([A-Za-z0-9_-]+)']:
+        match = re.search(pattern, url)
+        if match:
+            post_id = match.group(1)
+            return f"https://www.threads.net/@i/post/{post_id}"
 
-    # استخراج كود المنشور إذا كان الرابط يحتوي على /share/
-    share_match = re.search(r'/share/([A-Za-z0-9_-]+)', url)
-    if share_match:
-        share_id = share_match.group(1)
-        return f"https://www.threads.net/t/{share_id}"
-
-    # استبدال threads.com بـ threads.net
     if "threads.com" in url:
         url = url.replace("threads.com", "threads.net")
-        
     return url
 
 def is_valid_threads_url(url: str) -> bool:
-    """التحقق من صحة روابط ثريدز"""
     if not url or not isinstance(url, str):
         return False
     try:
         parsed = urlparse(url.strip())
         hostname = (parsed.hostname or "").lower().rstrip(".")
-        if not hostname:
-            return False
-        if "threads.net" in hostname or "threads.com" in hostname:
-            return True
-        return False
+        return bool(hostname and ("threads.net" in hostname or "threads.com" in hostname))
     except Exception:
         return False
 
@@ -68,20 +56,28 @@ class ThreadsFilter(filters.MessageFilter):
 THREADS_FILTER = ThreadsFilter()
 
 def get_threads_info(url: str):
-    """استخراج معلومات منشور ثريدز مع تنظيف الرابط"""
+    """استخراج معلومات المنشور مع استخدام خيارات بديلة لـ yt-dlp"""
     clean_url = clean_threads_url(url)
-        
+    
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
+        "extractor_args": {"threads": {"api": "web"}},
     }
+    
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(clean_url, download=False)
+        try:
+            info = ydl.extract_info(clean_url, download=False)
+        except Exception:
+            # محاولة أخيرة باستخدام الرابط الأصلي إذا فشل الرابط النظيف
+            info = ydl.extract_info(url, download=False)
+            
         if not info:
             raise ValueError("Could not extract Threads information")
+            
         return {
-            "title": info.get("title", "منشور ثريدز"),
+            "title": info.get("title") or info.get("description") or "منشور ثريدز",
             "url": clean_url,
         }
 
@@ -95,7 +91,8 @@ async def download_threads_media(url: str, mode: str = "video"):
         "no_warnings": True,
         "noprogress": True,
         "noplaylist": True,
-        "socket_timeout": 20,
+        "socket_timeout": 30,
+        "extractor_args": {"threads": {"api": "web"}},
     }
 
     if mode == "audio":
@@ -106,12 +103,17 @@ async def download_threads_media(url: str, mode: str = "video"):
             "preferredquality": "192",
         }]
     else:
-        options["format"] = "bv*+ba/b/best"
+        options["format"] = "best/bv*+ba/b"
         options["merge_output_format"] = "mp4"
 
     def _download():
-        with yt_dlp.YoutubeDL(options) as downloader:
-            downloader.extract_info(clean_url, download=True)
+        try:
+            with yt_dlp.YoutubeDL(options) as downloader:
+                downloader.extract_info(clean_url, download=True)
+        except Exception:
+            # تجربة الرابط الأصلي في حال فشل الرابط المعدل
+            with yt_dlp.YoutubeDL(options) as downloader:
+                downloader.extract_info(url, download=True)
 
     try:
         await asyncio.to_thread(_download)
