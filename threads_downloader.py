@@ -20,18 +20,22 @@ class ThreadsMediaTooLarge(ThreadsDownloadError):
     pass
 
 def is_valid_threads_url(url: str) -> bool:
-    """التحقق من صحة رابط ثريدز"""
+    """دالة محسنة ومرنة للتحقق من صحة روابط ثريدز بجميع أشكالها"""
+    if not url or not isinstance(url, str):
+        return False
     try:
         parsed = urlparse(url.strip())
         hostname = (parsed.hostname or "").lower().rstrip(".")
-        if hostname not in {"threads.net", "www.threads.net"}:
+        if not hostname:
             return False
-        path_parts = [p for p in parsed.path.split("/") if p]
-        return len(path_parts) > 0
+        # التحقق مما إذا كان النطاق يتبع لثريدز
+        if "threads.net" in hostname:
+            return True
+        return False
     except Exception:
         return False
 
-# فلتر تيليجرام المخصص لثريدز لكي يلتقط الروابط فور إرسالها
+# فلتر تيليجرام المخصص لثريدز
 class ThreadsFilter(filters.MessageFilter):
     def filter(self, message):
         text = message.text or message.caption or ""
@@ -190,7 +194,7 @@ async def handle_threads_callback(query, context, session_data, mode):
                     )
                 elif ext in {".jpg", ".jpeg", ".png", ".webp"}:
                     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
-                    await message.reply_photo(photo=f, caption="- @G66GBOT")
+                    await query.message.reply_photo(photo=f, caption="- @G66GBOT")
                 else:
                     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
                     await context.bot.send_video(
