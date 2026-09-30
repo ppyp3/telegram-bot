@@ -1,7 +1,7 @@
 instaloader
 --pre
 python-telegram-bot
-yt-dlp
+git+https://github.com/yt-dlp/yt-dlp.git
 pypdl
 aiohttp
 requests
