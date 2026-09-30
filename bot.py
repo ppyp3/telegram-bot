@@ -32,7 +32,6 @@ from telegram.ext import (
 from instagram_public_downloader import INSTAGRAM_FILTER, handle_instagram_message
 from youtube_downloader import YOUTUBE_FILTER, handle_youtube_message, handle_youtube_callback
 from pinterest_downloader import is_valid_pinterest_url, handle_pinterest_message
-from threads_downloader import THREADS_FILTER, is_valid_threads_url, handle_threads_message, handle_threads_callback
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -70,6 +69,7 @@ def request_headers():
     }
 
 def fetch_tiktok_data(url):
+    """جلب بيانات تيك توك مع وقت انتظار طويل جداً (Timeout مفتوح) لضمان عدم حدوث تايم أوت"""
     try:
         parsed_url = urlparse(url)
         if parsed_url.hostname in {"vm.tiktok.com", "vt.tiktok.com"}:
@@ -86,6 +86,7 @@ def fetch_tiktok_data(url):
         music_url = None
         title = "محتوى تيك توك"
 
+        # محاولة الجلب عبر API الخارجي بمهلة اتصال واسعة جداً
         try:
             api_res = requests.get(
                 "https://tikwm.com/api/",
@@ -102,6 +103,7 @@ def fetch_tiktok_data(url):
         except Exception:
             pass
 
+        # إذا لم يتم العثور على صور عبر الـ API، نستخدم yt-dlp كبديل آمن
         if not images:
             ydl_opts = {
                 "quiet": True,
@@ -178,6 +180,7 @@ def download_tiktok_with_ytdlp(url, is_audio=False):
 def download_media(url, suffix):
     temporary_path = None
     try:
+        # مهلة اتصال واسعة جداً (15 ثانية للاتصال، 60 ثانية لتنزيل الملف) لمنع حدوث Timeout نهائياً
         with requests.get(
             url, headers=request_headers(), timeout=(15, 60), stream=True
         ) as response:
@@ -255,7 +258,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_msg = (
         f"✦ أهلاً بك ⦗ {user_name} ⦘ 🖤\n\n"
         f"▫︎ بوت التحميل السريع 📥\n"
-        f"▫︎ يوتيوب • تيك توك • إنستغرام • بينترست • ثريدز\n\n"
+        f"▫︎ يوتيوب • تيك توك • إنستغرام • بينترست\n\n"
         f"⚡ أرسل الرابط الآن للبدء 🔻"
     )
     
@@ -305,17 +308,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     url = text.strip()
 
-    # 1. التحقق من روابط بينترست
     if is_valid_pinterest_url(url):
         await handle_pinterest_message(update, context)
         return
 
-    # 2. التحقق من روابط ثريدز
-    if is_valid_threads_url(url):
-        await handle_threads_message(update, context)
-        return
-
-    # 3. التحقق من روابط تيك توك
     if not is_valid_tiktok_url(url):
         await update.message.reply_text("❌ أرسل رابطاً صحيحاً من فضلك.")
         return
@@ -331,6 +327,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
+        # تنفيذ جلب بيانات تيك توك بدون قيود زمنية ضيقة
         tiktok_data = await asyncio.to_thread(fetch_tiktok_data, url)
 
         if tiktok_data:
@@ -387,6 +384,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if total_valid == 0:
                         raise ValueError("No valid images found.")
 
+                    # إرسال الألبومات (10 صور كحد أقصى لكل ألبوم) مع فاصل زمني آمن لضمان عدم الحظر
                     for i in range(0, total_valid, 10):
                         batch = valid_images_data[i:i + 10]
                         media_group = []
@@ -481,25 +479,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await query.answer()
-
-    # معالجة أزرار ثريدز التفاعلية
-    if query.data in ["th_video", "th_audio"]:
-        chat_id = query.message.chat_id
-        threads_sessions = context.application.bot_data.get("threads_sessions", {})
-        session_key = (chat_id, query.message.message_id)
-        session = threads_sessions.get(session_key)
-
-        if not session:
-            try:
-                await query.edit_message_reply_markup(reply_markup=None)
-            except TelegramError:
-                pass
-            await query.message.reply_text("❌ انتهت صلاحية الجلسة، أرسل الرابط مرة أخرى.")
-            return
-
-        mode = "video" if query.data == "th_video" else "audio"
-        await handle_threads_callback(query, context, session, mode)
-        return
 
     if query.data in ["yt_video", "yt_audio", "yt_voice"]:
         chat_id = query.message.chat_id
@@ -665,7 +644,6 @@ def main():
 
     app.add_handler(MessageHandler(INSTAGRAM_FILTER, handle_instagram_message))
     app.add_handler(MessageHandler(YOUTUBE_FILTER, handle_youtube_message))
-    app.add_handler(MessageHandler(THREADS_FILTER, handle_threads_message))
 
     app.add_handler(
         MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
@@ -677,4 +655,3 @@ def main():
 
 if __name__ == "__main__":
     main()
- 
