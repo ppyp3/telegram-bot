@@ -21,21 +21,20 @@ class ThreadsMediaTooLarge(ThreadsDownloadError):
     pass
 
 def clean_threads_url(url: str) -> str:
-    """تنظيف وتصحيح رابط ثريدز مهما كانت صيغته ليتوافق مع yt-dlp"""
+    """استخراج كود المنشور بدقة تامة لضمان عمله 100 مع yt-dlp"""
     if not url:
         return url
     url = url.strip()
     
-    # استخراج معرف المنشور (Post ID) بدقة من أي رابط ثريدز (سواء بروفايل، مشاركة، أو رابط مختصر)
+    # البحث عن أي معرف منشور يقع بعد /post/ أو /t/ أو /share/
     match = re.search(r'(?:/post/|/t/|/share/)([A-Za-z0-9_-]+)', url)
     if match:
         post_id = match.group(1)
+        # إرجاع رابط نظيف يدعمه yt-dlp بشكل رسمي
         return f"https://www.threads.net/t/{post_id}"
 
-    # احتياطياً: استبدال أي نطاق .com بـ .net
-    if "threads.com" in url:
-        url = url.replace("threads.com", "threads.net")
-        
+    # حل احتياطي في حال لم يتطابق النمط
+    url = url.replace("threads.com", "threads.net")
     return url
 
 def is_valid_threads_url(url: str) -> bool:
@@ -56,7 +55,7 @@ class ThreadsFilter(filters.MessageFilter):
 THREADS_FILTER = ThreadsFilter()
 
 def get_threads_info(url: str):
-    """استخراج معلومات المنشور بالاعتماد على الرابط المنظف حصرياً"""
+    # استخدام الرابط النظيف حصرياً لعملية الجلب
     clean_url = clean_threads_url(url)
     
     ydl_opts = {
@@ -66,12 +65,7 @@ def get_threads_info(url: str):
     }
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        # محاولة السحب بالرابط المنظف، وإذا فشل يتم المحاولة بالرابط الأصلي
-        try:
-            info = ydl.extract_info(clean_url, download=False)
-        except Exception:
-            info = ydl.extract_info(url, download=False)
-            
+        info = ydl.extract_info(clean_url, download=False)
         if not info:
             raise ValueError("Could not extract Threads information")
             
@@ -106,10 +100,7 @@ async def download_threads_media(url: str, mode: str = "video"):
 
     def _download():
         with yt_dlp.YoutubeDL(options) as downloader:
-            try:
-                downloader.extract_info(clean_url, download=True)
-            except Exception:
-                downloader.extract_info(url, download=True)
+            downloader.extract_info(clean_url, download=True)
 
     try:
         await asyncio.to_thread(_download)
@@ -150,9 +141,10 @@ async def handle_threads_message(update: Update, context: ContextTypes.DEFAULT_T
     processing_msg = await message.reply_text("⏳┇جاري قراءة معلومات منشور ثريدز...")
 
     try:
-        info = await asyncio.to_thread(get_threads_info, url)
+        # هنا نقوم بتنظيف الرابط فور استلامه وحفظ الرابط النظيف للاستخدام لاحقاً
+        clean_url = clean_threads_url(url)
+        info = await asyncio.to_thread(get_threads_info, clean_url)
         title = info["title"]
-        fixed_url = info["url"]
 
         keyboard = [
             [InlineKeyboardButton("🎬 فيديو", callback_data="th_video")],
@@ -174,7 +166,8 @@ async def handle_threads_message(update: Update, context: ContextTypes.DEFAULT_T
 
         sessions = context.application.bot_data.setdefault("threads_sessions", {})
         key = (sent_msg.chat_id, sent_msg.message_id)
-        sessions[key] = {"user_id": user_id, "url": fixed_url, "title": title}
+        # تخزين الرابط النظيف حصرياً في الجلسة لضمان نجاح التحميل
+        sessions[key] = {"user_id": user_id, "url": clean_url, "title": title}
 
         await processing_msg.delete()
 
