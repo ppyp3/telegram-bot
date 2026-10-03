@@ -272,7 +272,7 @@ def collect_downloaded(output_dir, prefix, suffixes):
 def download_reel_as_instagram(url, output_dir):
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "best[ext=mp4]/best",
+        "format": "best/best",
         "extractor_args": {
             "instagram": {
                 "api_hostname": "www.instagram.com",
@@ -298,28 +298,37 @@ def download_reel_as_instagram(url, output_dir):
         logger.error("فشل السحب المباشر: %s", error)
         raise error
 
-    media_files = collect_downloaded(output_dir, "reel_", {".mp4", ".mkv", ".webm"})
+    media_files = collect_downloaded(output_dir, "reel_", {".mp4", ".mkv", ".webm", ".mov"})
     if not media_files:
         raise InstagramDownloadError("لم يتم العثور على ملفات فيديو مطابقة")
 
     chosen = max(media_files, key=lambda p: p.stat().st_size)
     
-    final_output = output_dir / f"final_{chosen.stem}.mp4"
+    # المعالجة الصارمة المتوافقة 100% مع مزاج ومواصفات مشغل تيليجرام الداخلي
+    final_output = output_dir / f"telegram_ready_{chosen.stem}.mp4"
     reencode_cmd = [
         "ffmpeg", "-y", "-i", str(chosen),
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-        "-c:a", "aac", "-b:a", "128k",
+        "-c:v", "libx264",
+        "-profile:v", "main",
+        "-level", "4.0",
+        "-pix_fmt", "yuv420p",
+        "-preset", "medium",
+        "-crf", "23",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-ac", "2",
+        "-ar", "44100",
         "-movflags", "+faststart",
         str(final_output)
     ]
     try:
-        result = subprocess.run(reencode_cmd, capture_output=True, text=True, timeout=120, check=False)
+        result = subprocess.run(reencode_cmd, capture_output=True, text=True, timeout=180, check=False)
         if final_output.exists() and final_output.stat().st_size > 0:
             chosen = final_output
         else:
-            logger.error("FFmpeg re-encode failed: %s", result.stderr)
+            logger.error("Telegram-ready FFmpeg re-encode failed: %s", result.stderr)
     except Exception:
-        logger.warning("خطأ أثناء إعادة التشفير، سيتم محاولة استخدام الملف الأصلي", exc_info=True)
+        logger.warning("خطأ أثناء إعادة التشفير بالتوافقية التامة", exc_info=True)
 
     if chosen.stat().st_size > MAX_MEDIA_SIZE:
         raise InstagramMediaTooLarge
@@ -581,7 +590,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
     if not shortcode:
         return
 
-    status_message = await update.message.reply_text("♻️️┇جاري التحميل...")
+    status_message = await update.message.reply_text("♻┇جاري التحميل...")
     output_dir = None
 
     try:
