@@ -270,20 +270,9 @@ def collect_downloaded(output_dir, prefix, suffixes):
 
 
 def download_reel_as_instagram(url, output_dir):
-    # خيارات متطورة لضمان دمج الصوت والصورة وإعادة التشفير بصيغة MP4 المتوافقة مع الآيفون والجالاكسي
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "bestvideo+bestaudio/best",
-        "merge_output_format": "mp4",
-        "postprocessors": [
-            {
-                "key": "FFmpegVideoConvertor",
-                "preferedformat": "mp4",
-            }
-        ],
-        "postprocessor_args": {
-            "ffmpeg": ["-c:v", "libx264", "-c:a", "aac", "-strict", "experimental"]
-        },
+        "format": "best[ext=mp4]/best",
         "extractor_args": {
             "instagram": {
                 "api_hostname": "www.instagram.com",
@@ -315,21 +304,22 @@ def download_reel_as_instagram(url, output_dir):
 
     chosen = max(media_files, key=lambda p: p.stat().st_size)
     
-    # خطوة أمان إضافية: فحص ما إذا كان الملف بحاجة لإعادة ترميز نهائية لضمان عمل الصوت والصورة على كافة الهواتف
     final_output = output_dir / f"final_{chosen.stem}.mp4"
     reencode_cmd = [
         "ffmpeg", "-y", "-i", str(chosen),
-        "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
         "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart",
         str(final_output)
     ]
     try:
-        subprocess.run(reencode_cmd, capture_output=True, text=True, timeout=120, check=True)
+        result = subprocess.run(reencode_cmd, capture_output=True, text=True, timeout=120, check=False)
         if final_output.exists() and final_output.stat().st_size > 0:
             chosen = final_output
+        else:
+            logger.error("FFmpeg re-encode failed: %s", result.stderr)
     except Exception:
-        logger.warning("فشل إعادة التشفير الإضافي، سيتم استخدام الملف الأساسي المدمج", exc_info=True)
+        logger.warning("خطأ أثناء إعادة التشفير، سيتم محاولة استخدام الملف الأصلي", exc_info=True)
 
     if chosen.stat().st_size > MAX_MEDIA_SIZE:
         raise InstagramMediaTooLarge
@@ -591,7 +581,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
     if not shortcode:
         return
 
-    status_message = await update.message.reply_text("♻️┇جاري التحميل...")
+    status_message = await update.message.reply_text("♻️️┇جاري التحميل...")
     output_dir = None
 
     try:
