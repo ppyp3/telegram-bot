@@ -399,7 +399,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 media_group.append(
                                     InputMediaPhoto(
                                         media=file_obj,
-                                        caption=f"- @G66GBOT - {absolute_index}/{total_valid}",
+                                        caption=f"- @G66GBOT - ({absolute_index}/{total_valid})",
                                     )
                                 )
                             else:
