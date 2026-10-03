@@ -270,22 +270,21 @@ def collect_downloaded(output_dir, prefix, suffixes):
 
 
 def download_reel_as_instagram(url, output_dir):
-    # تحميل مباشر وبدون تعديل أو إعادة ترميز لترك الملف كما يرسله إنستغرام ليتعامل معه تيليجرام على راحته
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "best[ext=mp4]/best",
+        "format": "best/best",
         "extractor_args": {
             "instagram": {
                 "api_hostname": "www.instagram.com",
             }
         },
         "geo_bypass": True,
-        "concurrent_fragment_downloads": 8,
+        "concurrent_fragment_downloads": 4,
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
         "noplaylist": True,
-        "socket_timeout": 15,
+        "socket_timeout": 30,
     }
 
     for stale_file in output_dir.iterdir():
@@ -304,6 +303,32 @@ def download_reel_as_instagram(url, output_dir):
         raise InstagramDownloadError("لم يتم العثور على ملفات فيديو مطابقة")
 
     chosen = max(media_files, key=lambda p: p.stat().st_size)
+    
+    # المعالجة الصارمة المتوافقة 100% مع مزاج ومواصفات مشغل تيليجرام الداخلي
+    final_output = output_dir / f"telegram_ready_{chosen.stem}.mp4"
+    reencode_cmd = [
+        "ffmpeg", "-y", "-i", str(chosen),
+        "-c:v", "libx264",
+        "-profile:v", "main",
+        "-level", "4.0",
+        "-pix_fmt", "yuv420p",
+        "-preset", "medium",
+        "-crf", "23",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-ac", "2",
+        "-ar", "44100",
+        "-movflags", "+faststart",
+        str(final_output)
+    ]
+    try:
+        result = subprocess.run(reencode_cmd, capture_output=True, text=True, timeout=180, check=False)
+        if final_output.exists() and final_output.stat().st_size > 0:
+            chosen = final_output
+        else:
+            logger.error("Telegram-ready FFmpeg re-encode failed: %s", result.stderr)
+    except Exception:
+        logger.warning("خطأ أثناء إعادة التشفير بالتوافقية التامة", exc_info=True)
 
     if chosen.stat().st_size > MAX_MEDIA_SIZE:
         raise InstagramMediaTooLarge
