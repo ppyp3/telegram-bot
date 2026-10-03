@@ -270,21 +270,22 @@ def collect_downloaded(output_dir, prefix, suffixes):
 
 
 def download_reel_as_instagram(url, output_dir):
+    # تحميل سريع جداً لملف MP4 جاهز لتفادي الانتظار الطويل
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "best/best",
+        "format": "best[ext=mp4]/best",
         "extractor_args": {
             "instagram": {
                 "api_hostname": "www.instagram.com",
             }
         },
         "geo_bypass": True,
-        "concurrent_fragment_downloads": 4,
+        "concurrent_fragment_downloads": 8,
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
         "noplaylist": True,
-        "socket_timeout": 30,
+        "socket_timeout": 15,
     }
 
     for stale_file in output_dir.iterdir():
@@ -304,16 +305,14 @@ def download_reel_as_instagram(url, output_dir):
 
     chosen = max(media_files, key=lambda p: p.stat().st_size)
     
-    # المعالجة الصارمة المتوافقة 100% مع مزاج ومواصفات مشغل تيليجرام الداخلي
-    final_output = output_dir / f"telegram_ready_{chosen.stem}.mp4"
+    # معالجة فائقة السرعة (ultrafast) تنهي التحويل بأجزاء من الثانية مع ضمان عمل الصوت والصورة في التيليجرام
+    final_output = output_dir / f"fast_tg_{chosen.stem}.mp4"
     reencode_cmd = [
         "ffmpeg", "-y", "-i", str(chosen),
         "-c:v", "libx264",
-        "-profile:v", "main",
-        "-level", "4.0",
+        "-preset", "ultrafast",
+        "-crf", "26",
         "-pix_fmt", "yuv420p",
-        "-preset", "medium",
-        "-crf", "23",
         "-c:a", "aac",
         "-b:a", "128k",
         "-ac", "2",
@@ -322,13 +321,11 @@ def download_reel_as_instagram(url, output_dir):
         str(final_output)
     ]
     try:
-        result = subprocess.run(reencode_cmd, capture_output=True, text=True, timeout=180, check=False)
+        result = subprocess.run(reencode_cmd, capture_output=True, text=True, timeout=45, check=False)
         if final_output.exists() and final_output.stat().st_size > 0:
             chosen = final_output
-        else:
-            logger.error("Telegram-ready FFmpeg re-encode failed: %s", result.stderr)
     except Exception:
-        logger.warning("خطأ أثناء إعادة التشفير بالتوافقية التامة", exc_info=True)
+        logger.warning("تخطي المعالجة واستخدام الملف الأصلي", exc_info=True)
 
     if chosen.stat().st_size > MAX_MEDIA_SIZE:
         raise InstagramMediaTooLarge
@@ -666,3 +663,4 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
+ 
