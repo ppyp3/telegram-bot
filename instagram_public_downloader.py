@@ -270,7 +270,7 @@ def collect_downloaded(output_dir, prefix, suffixes):
 
 
 def download_reel_as_instagram(url, output_dir):
-    # تحميل سريع جداً لملف MP4 جاهز لتفادي الانتظار الطويل
+    # تحميل مباشر وبدون تعديل أو إعادة ترميز لترك الملف كما يرسله إنستغرام ليتعامل معه تيليجرام على راحته
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
         "format": "best[ext=mp4]/best",
@@ -304,28 +304,6 @@ def download_reel_as_instagram(url, output_dir):
         raise InstagramDownloadError("لم يتم العثور على ملفات فيديو مطابقة")
 
     chosen = max(media_files, key=lambda p: p.stat().st_size)
-    
-    # معالجة فائقة السرعة (ultrafast) تنهي التحويل بأجزاء من الثانية مع ضمان عمل الصوت والصورة في التيليجرام
-    final_output = output_dir / f"fast_tg_{chosen.stem}.mp4"
-    reencode_cmd = [
-        "ffmpeg", "-y", "-i", str(chosen),
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-crf", "26",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-ac", "2",
-        "-ar", "44100",
-        "-movflags", "+faststart",
-        str(final_output)
-    ]
-    try:
-        result = subprocess.run(reencode_cmd, capture_output=True, text=True, timeout=45, check=False)
-        if final_output.exists() and final_output.stat().st_size > 0:
-            chosen = final_output
-    except Exception:
-        logger.warning("تخطي المعالجة واستخدام الملف الأصلي", exc_info=True)
 
     if chosen.stat().st_size > MAX_MEDIA_SIZE:
         raise InstagramMediaTooLarge
@@ -663,4 +641,3 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
- 
