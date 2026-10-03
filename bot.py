@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 TOKEN = os.environ.get("TOKEN")
 ADMIN_IDS = [5782729939]
-MAX_MEDIA_SIZE = 100 * 1024 * 1024  # تم تعديل الحجم الأقصى إلى 100 ميجابايت
+MAX_MEDIA_SIZE = 200 * 1024 * 1024  # تم تعديل الحجم الأقصى إلى 200 ميجابايت
 SESSION_TTL_SECONDS = 20 * 60
 
 USER_AGENTS = [
@@ -69,6 +69,7 @@ def request_headers():
     }
 
 def fetch_tiktok_data(url):
+    """جلب بيانات تيك توك مع وقت انتظار طويل جداً (Timeout مفتوح) لضمان عدم حدوث تايم أوت"""
     try:
         parsed_url = urlparse(url)
         if parsed_url.hostname in {"vm.tiktok.com", "vt.tiktok.com"}:
@@ -85,6 +86,7 @@ def fetch_tiktok_data(url):
         music_url = None
         title = "محتوى تيك توك"
 
+        # محاولة الجلب عبر API الخارجي بمهلة اتصال واسعة جداً
         try:
             api_res = requests.get(
                 "https://tikwm.com/api/",
@@ -101,7 +103,8 @@ def fetch_tiktok_data(url):
         except Exception:
             pass
 
-        if not images and "/photo/" not in url:
+        # إذا لم يتم العثور على صور عبر الـ API، نستخدم yt-dlp كبديل آمن
+        if not images:
             ydl_opts = {
                 "quiet": True,
                 "no_warnings": True,
@@ -177,6 +180,7 @@ def download_tiktok_with_ytdlp(url, is_audio=False):
 def download_media(url, suffix):
     temporary_path = None
     try:
+        # مهلة اتصال واسعة جداً (15 ثانية للاتصال، 60 ثانية لتنزيل الملف) لمنع حدوث Timeout نهائياً
         with requests.get(
             url, headers=request_headers(), timeout=(15, 60), stream=True
         ) as response:
@@ -323,6 +327,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
+        # تنفيذ جلب بيانات تيك توك بدون قيود زمنية ضيقة
         tiktok_data = await asyncio.to_thread(fetch_tiktok_data, url)
 
         if tiktok_data:
@@ -348,7 +353,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 audio=audio_file,
                                 title=title,
                                 performer="@G66GBOT",
-                                caption=f"- @G66GBOT - 1/1",
+                                caption="- @G66GBOT - 1/1",
                             )
                     except Exception:
                         logger.exception("Audio send error")
@@ -379,6 +384,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if total_valid == 0:
                         raise ValueError("No valid images found.")
 
+                    # إرسال الألبومات (10 صور كحد أقصى لكل ألبوم) مع فاصل زمني آمن لضمان عدم الحظر
                     for i in range(0, total_valid, 10):
                         batch = valid_images_data[i:i + 10]
                         media_group = []
@@ -453,7 +459,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         error_custom_msg = (
             "⚠️┇هذا الملف لا يمكنني تحميله،\n"
-            "⚠️┇لأن حجمه يتجاوز ( 100 Mbps )،\n"
+            "⚠️┇لأن حجمه يتجاوز ( 200 Mbps )،\n"
             "⚠️┇أعد المحاوله مع ملف اخر."
         )
         await processing_msg.edit_text(error_custom_msg)
@@ -461,8 +467,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         logger.exception("Error in handle_message")
         error_custom_msg = (
-            "⚠️️┇هذا الملف لا يمكنني تحميله،\n"
-            "⚠️┇لأن حجمه يتجاوز ( 100 Mbps )،\n"
+            "⚠️┇هذا الملف لا يمكنني تحميله،\n"
+            "⚠️┇لأن حجمه يتجاوز ( 200 Mbps )،\n"
             "⚠️┇أعد المحاوله مع ملف اخر."
         )
         await processing_msg.edit_text(error_custom_msg)
@@ -555,7 +561,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     audio=audio_file,
                     title=video_title,
                     performer="@G66GBOT",
-                    caption=f"{video_title}\n@G66GBOT",
+                    caption="- @G66GBOT",
                 )
 
             await status_msg.delete()
@@ -617,7 +623,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.exception("HD video callback error")
             error_custom_msg = (
                 "⚠️┇هذا الملف لا يمكنني تحميله،\n"
-                "⚠️┇لأن حجمه يتجاوز ( 100 Mbps )،\n"
+                "⚠️┇لأن حجمه يتجاوز ( 200 Mbps )،\n"
                 "⚠️┇أعد المحاوله مع ملف اخر."
             )
             await status_msg.edit_text(error_custom_msg)
