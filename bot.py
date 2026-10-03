@@ -69,7 +69,6 @@ def request_headers():
     }
 
 def fetch_tiktok_data(url):
-    """جلب بيانات تيك توك مع وقت انتظار طويل جداً (Timeout مفتوح) لضمان عدم حدوث تايم أوت"""
     try:
         parsed_url = urlparse(url)
         if parsed_url.hostname in {"vm.tiktok.com", "vt.tiktok.com"}:
@@ -86,7 +85,6 @@ def fetch_tiktok_data(url):
         music_url = None
         title = "محتوى تيك توك"
 
-        # محاولة الجلب عبر API الخارجي بمهلة اتصال واسعة جداً
         try:
             api_res = requests.get(
                 "https://tikwm.com/api/",
@@ -103,7 +101,6 @@ def fetch_tiktok_data(url):
         except Exception:
             pass
 
-        # إذا لم يتم العثور على صور عبر الـ API وكان الرابط ليس صوراً، نستخدم yt-dlp كبديل آمن
         if not images and "/photo/" not in url:
             ydl_opts = {
                 "quiet": True,
@@ -347,11 +344,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             action=ChatAction.UPLOAD_VOICE,
                         )
                         with local_audio_path.open("rb") as audio_file:
+                            # 🎵 هنا تم تعيين عنوان المقطع كاسم/كتابة للملف الصوتي مباشرة
+                            audio_caption = f"{title}\n@G66GBOT\n0:00 / 0:49\n\n- @G66GBOT - 1/1"
                             await update.message.reply_audio(
                                 audio=audio_file,
                                 title=title,
                                 performer="@G66GBOT",
-                                caption="- @G66GBOT - 1/1",
+                                caption=f"{title}\n@G66GBOT\n\n- @G66GBOT - 1/1",
                             )
                     except Exception:
                         logger.exception("Audio send error")
@@ -558,7 +557,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     audio=audio_file,
                     title=video_title,
                     performer="@G66GBOT",
-                    caption="- @G66GBOT",
+                    caption=f"{video_title}\n@G66GBOT",
                 )
 
             await status_msg.delete()
@@ -652,3 +651,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+ 
