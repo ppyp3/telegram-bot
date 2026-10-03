@@ -348,7 +348,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 audio=audio_file,
                                 title=title,
                                 performer="@G66GBOT",
-                                caption=f"{title}\n@G66GBOT\n\n- @G66GBOT - 1/1",
+                                caption=f"- @G66GBOT - 1/1",
                             )
                     except Exception:
                         logger.exception("Audio send error")
