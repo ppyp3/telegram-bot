@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 TOKEN = os.environ.get("TOKEN")
 ADMIN_IDS = [5782729939]
-MAX_MEDIA_SIZE = 200 * 1024 * 1024  # تم تعديل الحجم الأقصى إلى 200 ميجابايت
+MAX_MEDIA_SIZE = 50 * 1024 * 1024  # تم تعديل الحد الأقصى إلى 50 ميجابايت
 SESSION_TTL_SECONDS = 20 * 60
 
 USER_AGENTS = [
@@ -164,6 +164,13 @@ def download_tiktok_with_ytdlp(url, is_audio=False):
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # التحقق السريع من الحجم قبل التحميل الكامل إن أمكن عبر استخراج المعلومات
+            info = ydl.extract_info(url, download=False)
+            if info:
+                filesize = info.get("filesize") or info.get("filesize_approx")
+                if filesize and filesize > MAX_MEDIA_SIZE:
+                    raise DownloadTooLarge
+
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
             if not os.path.exists(filename):
@@ -172,7 +179,14 @@ def download_tiktok_with_ytdlp(url, is_audio=False):
                     filename = str(files[0])
                 else:
                     return None
+            
+            # التحقق النهائي من حجم الملف المنزلي على القرص
+            if os.path.getsize(filename) > MAX_MEDIA_SIZE:
+                raise DownloadTooLarge
+
             return Path(filename)
+    except DownloadTooLarge:
+        raise
     except Exception:
         logger.exception("Error downloading via yt-dlp")
         return None
@@ -180,7 +194,6 @@ def download_tiktok_with_ytdlp(url, is_audio=False):
 def download_media(url, suffix):
     temporary_path = None
     try:
-        # مهلة اتصال واسعة جداً (15 ثانية للاتصال، 60 ثانية لتنزيل الملف) لمنع حدوث Timeout نهائياً
         with requests.get(
             url, headers=request_headers(), timeout=(15, 60), stream=True
         ) as response:
@@ -384,7 +397,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if total_valid == 0:
                         raise ValueError("No valid images found.")
 
-                    # إرسال الألبومات (10 صور كحد أقصى لكل ألبوم) مع فاصل زمني آمن لضمان عدم الحظر
                     for i in range(0, total_valid, 10):
                         batch = valid_images_data[i:i + 10]
                         media_group = []
@@ -459,16 +471,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         error_custom_msg = (
             "⚠️┇هذا الملف لا يمكنني تحميله،\n"
-            "⚠️┇لأن حجمه يتجاوز ( 200 Mbps )،\n"
+            "⚠️┇لأن حجمه يتجاوز ( 50 MB )،\n"
             "⚠️┇أعد المحاوله مع ملف اخر."
         )
         await processing_msg.edit_text(error_custom_msg)
 
+    except DownloadTooLarge:
+        error_custom_msg = (
+            "⚠️️┇هذا الملف لا يمكنني تحميله،\n"
+            "⚠️┇لأن حجمه يتجاوز ( 50 MB )،\n"
+            "⚠️┇أعد المحاوله مع ملف اخر."
+        )
+        await processing_msg.edit_text(error_custom_msg)
     except Exception:
         logger.exception("Error in handle_message")
         error_custom_msg = (
-            "⚠️️┇هذا الملف لا يمكنني تحميله،\n"
-            "⚠️┇لأن حجمه يتجاوز ( 200 Mbps )،\n"
+            "⚠️┇هذا الملف لا يمكنني تحميله،\n"
+            "⚠️┇لأن حجمه يتجاوز ( 50 MB )،\n"
             "⚠️┇أعد المحاوله مع ملف اخر."
         )
         await processing_msg.edit_text(error_custom_msg)
@@ -532,16 +551,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except TelegramError:
             logger.exception("Could not remove audio button")
 
-        status_msg = await query.message.reply_text("♻️️┇جاري التحميل...")
+        status_msg = await query.message.reply_text("♻┇جاري التحميل...")
         local_audio_path = None
 
         try:
-            # استخدام yt-dlp مباشرة لجلب الصوت بشكل مضمون ومستقر
             local_audio_path = await asyncio.to_thread(
                 download_tiktok_with_ytdlp, url, True
             )
 
-            # إذا لم ينجح، نحاول عبر الـ API كطريقة بديلة
             if not local_audio_path:
                 tiktok_data = await asyncio.to_thread(fetch_tiktok_data, url)
                 audio_link = tiktok_data.get("music") if tiktok_data else None
@@ -568,6 +585,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await status_msg.delete()
 
+        except DownloadTooLarge:
+            error_custom_msg = (
+                "⚠️┇هذا الملف لا يمكنني تحميله،\n"
+                "⚠️┇لأن حجمه يتجاوز ( 50 MB )،\n"
+                "⚠️┇أعد المحاوله مع ملف اخر."
+            )
+            await status_msg.edit_text(error_custom_msg)
         except Exception:
             logger.exception("Audio callback error")
             await status_msg.edit_text("❌ حدث خطأ أثناء تحميل الملف الصوتي.")
@@ -621,11 +645,18 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await status_msg.delete()
 
+        except DownloadTooLarge:
+            error_custom_msg = (
+                "⚠️┇هذا الملف لا يمكنني تحميله،\n"
+                "⚠️┇لأن حجمه يتجاوز ( 50 MB )،\n"
+                "⚠️┇أعد المحاوله مع ملف اخر."
+            )
+            await status_msg.edit_text(error_custom_msg)
         except Exception:
             logger.exception("HD video callback error")
             error_custom_msg = (
                 "⚠️┇هذا الملف لا يمكنني تحميله،\n"
-                "⚠️┇لأن حجمه يتجاوز ( 200 Mbps )،\n"
+                "⚠️┇لأن حجمه يتجاوز ( 50 MB )،\n"
                 "⚠️┇أعد المحاوله مع ملف اخر."
             )
             await status_msg.edit_text(error_custom_msg)
