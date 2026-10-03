@@ -272,26 +272,14 @@ def collect_downloaded(output_dir, prefix, suffixes):
 def download_reel_as_instagram(url, output_dir):
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "bestvideo+bestaudio/best",
+        "format": "bv*+ba/b",  # دمج الصوت مع الفيديو بدقة عالية
         "merge_output_format": "mp4",
-        "postprocessors": [
-            {
-                "key": "FFmpegVideoConvertor",
-                "preferedformat": "mp4",
-            }
-        ],
-        "extractor_args": {
-            "instagram": {
-                "api_hostname": "www.instagram.com",
-            }
-        },
-        "geo_bypass": True,
-        "concurrent_fragment_downloads": 4,
+        "concurrent_fragment_downloads": 4,  # تسريع التحميل عبر تقسيم وتحميل الأجزاء بالتوازي
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
         "noplaylist": True,
-        "socket_timeout": 20,
+        "socket_timeout": 15,
     }
 
     for stale_file in output_dir.iterdir():
@@ -647,5 +635,4 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             await asyncio.to_thread(shutil.rmtree, output_dir, True)
 
 
-log_media_tools_status()
- 
+log_media_tools_status() 
