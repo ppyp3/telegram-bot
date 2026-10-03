@@ -467,7 +467,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         logger.exception("Error in handle_message")
         error_custom_msg = (
-            "⚠️┇هذا الملف لا يمكنني تحميله،\n"
+            "⚠️️┇هذا الملف لا يمكنني تحميله،\n"
             "⚠️┇لأن حجمه يتجاوز ( 200 Mbps )،\n"
             "⚠️┇أعد المحاوله مع ملف اخر."
         )
@@ -532,21 +532,23 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except TelegramError:
             logger.exception("Could not remove audio button")
 
-        status_msg = await query.message.reply_text("♻️┇جاري التحميل...")
+        status_msg = await query.message.reply_text("♻️️┇جاري التحميل...")
         local_audio_path = None
 
         try:
-            tiktok_data = await asyncio.to_thread(fetch_tiktok_data, url)
-            audio_link = tiktok_data.get("music") if tiktok_data else None
+            # استخدام yt-dlp مباشرة لجلب الصوت بشكل مضمون ومستقر
+            local_audio_path = await asyncio.to_thread(
+                download_tiktok_with_ytdlp, url, True
+            )
 
-            if audio_link:
-                local_audio_path = await asyncio.to_thread(
-                    download_media, audio_link, ".mp3"
-                )
-            else:
-                local_audio_path = await asyncio.to_thread(
-                    download_tiktok_with_ytdlp, url, True
-                )
+            # إذا لم ينجح، نحاول عبر الـ API كطريقة بديلة
+            if not local_audio_path:
+                tiktok_data = await asyncio.to_thread(fetch_tiktok_data, url)
+                audio_link = tiktok_data.get("music") if tiktok_data else None
+                if audio_link:
+                    local_audio_path = await asyncio.to_thread(
+                        download_media, audio_link, ".mp3"
+                    )
 
             if not local_audio_path:
                 raise ValueError("Audio file is unavailable")
