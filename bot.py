@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 TOKEN = os.environ.get("TOKEN")
 ADMIN_IDS = [5782729939]
-MAX_MEDIA_SIZE = 49 * 1024 * 1024
+MAX_MEDIA_SIZE = 100 * 1024 * 1024  # تم تعديل الحجم الأقصى إلى 100 ميجابايت
 SESSION_TTL_SECONDS = 20 * 60
 
 USER_AGENTS = [
@@ -344,8 +344,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             action=ChatAction.UPLOAD_VOICE,
                         )
                         with local_audio_path.open("rb") as audio_file:
-                            # 🎵 هنا تم تعيين عنوان المقطع كاسم/كتابة للملف الصوتي مباشرة
-                            audio_caption = f"{title}\n@G66GBOT\n0:00 / 0:49\n\n- @G66GBOT - 1/1"
                             await update.message.reply_audio(
                                 audio=audio_file,
                                 title=title,
@@ -455,7 +453,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         error_custom_msg = (
             "⚠️┇هذا الملف لا يمكنني تحميله،\n"
-            "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
+            "⚠️┇لأن حجمه يتجاوز ( 100 Mbps )،\n"
             "⚠️┇أعد المحاوله مع ملف اخر."
         )
         await processing_msg.edit_text(error_custom_msg)
@@ -463,8 +461,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         logger.exception("Error in handle_message")
         error_custom_msg = (
-            "⚠️┇هذا الملف لا يمكنني تحميله،\n"
-            "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
+            "⚠️️┇هذا الملف لا يمكنني تحميله،\n"
+            "⚠️┇لأن حجمه يتجاوز ( 100 Mbps )،\n"
             "⚠️┇أعد المحاوله مع ملف اخر."
         )
         await processing_msg.edit_text(error_custom_msg)
@@ -619,7 +617,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.exception("HD video callback error")
             error_custom_msg = (
                 "⚠️┇هذا الملف لا يمكنني تحميله،\n"
-                "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
+                "⚠️┇لأن حجمه يتجاوز ( 100 Mbps )،\n"
                 "⚠️┇أعد المحاوله مع ملف اخر."
             )
             await status_msg.edit_text(error_custom_msg)
