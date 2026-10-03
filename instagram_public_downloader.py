@@ -14,7 +14,7 @@ import yt_dlp
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, Update
 from telegram.constants import ChatAction
 from telegram.error import TelegramError
-from telegram.ext import ContextTypes, filters
+from telegram.ext import filters
 
 
 logger = logging.getLogger(__name__)
@@ -272,14 +272,26 @@ def collect_downloaded(output_dir, prefix, suffixes):
 def download_reel_as_instagram(url, output_dir):
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "bv*+ba/b",  # دمج الصوت مع الفيديو بدقة عالية
+        "format": "bestvideo+bestaudio/best",
         "merge_output_format": "mp4",
-        "concurrent_fragment_downloads": 4,  # تسريع التحميل عبر تقسيم وتحميل الأجزاء بالتوازي
+        "postprocessors": [
+            {
+                "key": "FFmpegVideoConvertor",
+                "preferedformat": "mp4",
+            }
+        ],
+        "extractor_args": {
+            "instagram": {
+                "api_hostname": "www.instagram.com",
+            }
+        },
+        "geo_bypass": True,
+        "concurrent_fragment_downloads": 4,
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
         "noplaylist": True,
-        "socket_timeout": 15,
+        "socket_timeout": 30,
     }
 
     for stale_file in output_dir.iterdir():
@@ -313,8 +325,6 @@ def download_instagram_media(url):
     post_caption = ""
 
     try:
-        url_kind = get_url_kind(url)
-        
         try:
             reel_files = download_reel_as_instagram(url, output_dir)
             try:
@@ -635,4 +645,4 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             await asyncio.to_thread(shutil.rmtree, output_dir, True)
 
 
-log_media_tools_status()
+log_media_tools_status() 
