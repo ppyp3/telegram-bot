@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 import instaloader
 import requests
 import yt_dlp
-from telegram import InputMediaPhoto, InputMediaVideo, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, Update
 from telegram.constants import ChatAction
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes, filters
@@ -25,8 +25,7 @@ PROBE_VIDEO_CACHE = {}
 VIDEO_THUMBNAIL_CACHE = {}
 MAX_CACHE_ENTRIES = 500
 DOWNLOAD_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 300.0.0.0.0 (iPhone14,2; iOS 16_6; ar_SA; ar; Scale=3.00; 1170x2532)",
     "Referer": "https://www.instagram.com/",
 }
 
@@ -58,7 +57,6 @@ class VideoProcessingError(InstagramDownloadError):
 
 
 def log_media_tools_status():
-    """Log whether FFmpeg and FFprobe are usable so deploys are diagnosable."""
     for tool in ("ffmpeg", "ffprobe"):
         executable = shutil.which(tool)
         if executable is None:
@@ -147,7 +145,6 @@ def download_file(url, output_path):
 
 
 def probe_video(file_path):
-    """Return (video_codec, audio_codec, width, height, duration) via ffprobe."""
     try:
         stat = file_path.stat()
     except OSError:
@@ -176,7 +173,6 @@ def probe_video(file_path):
         )
         data = json.loads(result.stdout or "{}")
     except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
-        logger.error("FFprobe is unavailable; falling back to stream copy", exc_info=True)
         return store_in_cache(
             PROBE_VIDEO_CACHE,
             cache_key,
@@ -184,10 +180,6 @@ def probe_video(file_path):
         )
 
     if not data.get("streams"):
-        logger.error(
-            "FFprobe reported no streams for %s; falling back to stream copy",
-            file_path.name,
-        )
         return store_in_cache(
             PROBE_VIDEO_CACHE,
             cache_key,
@@ -213,183 +205,7 @@ def probe_video(file_path):
     )
 
 
-def run_ffmpeg(command, output_path, timeout=300):
-    try:
-        result = subprocess.run(
-            command, capture_output=True, text=True, timeout=timeout, check=False
-        )
-    except FileNotFoundError as error:
-        raise VideoProcessingError("FFmpeg is not installed") from error
-    except subprocess.TimeoutExpired as error:
-        output_path.unlink(missing_ok=True)
-        raise VideoProcessingError("Video processing timed out") from error
-
-    if result.returncode != 0 or not output_path.is_file():
-        # A negative return code means the process was killed, usually by the
-        # container's out-of-memory killer.
-        if result.returncode < 0:
-            logger.error(
-                "FFmpeg was killed by signal %s — the container likely ran out of memory",
-                -result.returncode,
-            )
-        logger.error(
-            "FFmpeg failed (exit %s): %s ... %s",
-            result.returncode,
-            result.stderr[:1500],
-            result.stderr[-1500:],
-        )
-        output_path.unlink(missing_ok=True)
-        raise VideoProcessingError(f"Video processing failed (exit {result.returncode})")
-
-
-def build_ffmpeg_command(source_path, output_path, copy_video, copy_audio, add_silence):
-    # Limit threads: x264 defaults to one thread per CPU core, which can exhaust
-    # a small container's memory and get the process killed.
-    command = ["ffmpeg", "-y", "-threads", "1", "-i", str(source_path)]
-
-    if add_silence:
-        command += [
-            "-f", "lavfi",
-            "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
-            "-map", "0:v:0",
-            "-map", "1:a:0",
-            "-shortest",
-        ]
-    else:
-        command += ["-map", "0:v:0", "-map", "0:a?"]
-
-    if copy_video:
-        command += ["-c:v", "copy"]
-    else:
-        command += [
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-crf", "23",
-            "-profile:v", "high",
-            "-level:v", "4.1",
-            "-pix_fmt", "yuv420p",
-            "-vf", "scale=trunc(min(iw\\,720)/2)*2:-2",
-            "-x264-params", "threads=1:lookahead_threads=1:sliced-threads=0:rc-lookahead=10",
-        ]
-
-    if copy_audio and not add_silence:
-        command += ["-c:a", "copy"]
-    else:
-        command += ["-c:a", "aac", "-b:a", "128k", "-ac", "2"]
-
-    return command + ["-movflags", "+faststart", str(output_path)]
-
-
-def normalize_video_for_telegram(source_path):
-    """Make the file an Android-friendly H.264/AAC MP4 with a moov atom up front.
-
-    Instagram already serves H.264/AAC, so the streams are normally copied and
-    only the container is rebuilt; re-encoding is the last resort because it is
-    the step heavy enough to be killed on a small container. A silent audio
-    track is added when the source has none, because Telegram turns a soundless
-    MP4 into a GIF-like animation instead of a video.
-    """
-    video_codec, audio_codec, _, _, _ = probe_video(source_path)
-    if (
-        video_codec == "h264"
-        and audio_codec == "aac"
-        and is_faststart(source_path)
-        and not is_fragmented_mp4(source_path)
-    ):
-        return source_path
-
-    output_path = source_path.with_name(f"{source_path.stem}_telegram.mp4")
-    if video_codec == UNKNOWN_CODEC:
-        # Without ffprobe we cannot know the codecs, and re-encoding blindly is
-        # what gets killed on small containers, so only the container is rebuilt.
-        copy_video = copy_audio = True
-        add_silence = False
-    else:
-        copy_video = video_codec == "h264"
-        copy_audio = audio_codec == "aac"
-        add_silence = audio_codec is None
-
-    try:
-        run_ffmpeg(
-            build_ffmpeg_command(
-                source_path, output_path, copy_video, copy_audio, add_silence
-            ),
-            output_path,
-        )
-    except VideoProcessingError:
-        if not copy_video:
-            raise
-        logger.warning("Stream copy failed, re-encoding instead", exc_info=True)
-        run_ffmpeg(
-            build_ffmpeg_command(source_path, output_path, False, False, add_silence),
-            output_path,
-        )
-
-    if output_path.stat().st_size > MAX_MEDIA_SIZE:
-        output_path.unlink(missing_ok=True)
-        raise InstagramMediaTooLarge
-
-    return output_path
-
-
-def is_faststart(file_path):
-    try:
-        file_size = file_path.stat().st_size
-        with file_path.open("rb") as media_file:
-            head = media_file.read(64 * 1024)
-            moov_position = head.find(b"moov")
-            mdat_position = head.find(b"mdat")
-            if moov_position >= 0 and mdat_position >= 0:
-                return moov_position < mdat_position
-
-            if moov_position < 0 and file_size <= 4 * 1024 * 1024:
-                media_file.seek(0)
-                contents = media_file.read()
-                return (
-                    0 <= contents.find(b"moov") < contents.find(b"mdat")
-                )
-    except OSError:
-        pass
-
-    return False
-
-
-def is_fragmented_mp4(file_path):
-    """Detect DASH-style fragmented MP4 files, which Android often rejects."""
-    try:
-        with file_path.open("rb") as media_file:
-            position = 0
-            while True:
-                media_file.seek(position)
-                header = media_file.read(8)
-                if len(header) < 8:
-                    return False
-
-                box_size = int.from_bytes(header[:4], "big")
-                box_type = header[4:8]
-
-                if box_type in {b"moof", b"styp", b"sidx"}:
-                    return True
-                if box_type == b"mdat":
-                    return False
-
-                if box_size == 1:
-                    extended = media_file.read(8)
-                    if len(extended) < 8:
-                        return False
-                    box_size = int.from_bytes(extended, "big")
-                elif box_size == 0:
-                    return False
-                if box_size < 8:
-                    return False
-
-                position += box_size
-    except OSError:
-        return False
-
-
 def create_video_thumbnail(file_path):
-    """Telegram shows a film icon when no thumbnail is attached; build one."""
     try:
         stat = file_path.stat()
     except OSError:
@@ -419,11 +235,13 @@ def create_video_thumbnail(file_path):
         str(thumbnail_path),
     ]
     try:
-        run_ffmpeg(command, thumbnail_path, timeout=60)
-    except VideoProcessingError:
+        subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
+    except Exception:
         return store_in_cache(VIDEO_THUMBNAIL_CACHE, cache_key, None)
 
-    return store_in_cache(VIDEO_THUMBNAIL_CACHE, cache_key, thumbnail_path)
+    if thumbnail_path.exists():
+        return store_in_cache(VIDEO_THUMBNAIL_CACHE, cache_key, thumbnail_path)
+    return store_in_cache(VIDEO_THUMBNAIL_CACHE, cache_key, None)
 
 
 def is_video_file(file_path):
@@ -432,61 +250,12 @@ def is_video_file(file_path):
 
 
 def normalize_media_files(media_files):
-    prepared_files = []
-
+    checked_files = []
     for file_path in media_files:
-        if is_video_file(file_path):
-            try:
-                converted_path = normalize_video_for_telegram(file_path)
-            except VideoProcessingError:
-                # Better to send the original file than to fail the request.
-                logger.exception("Falling back to the unprocessed video")
-                prepared_files.append(file_path)
-                continue
-            if converted_path != file_path:
-                file_path.unlink(missing_ok=True)
-            prepared_files.append(converted_path)
-        else:
-            prepared_files.append(file_path)
-
-    return prepared_files
-
-
-MERGED_FORMAT = (
-    "bv*[vcodec^=avc1][height<=1080]+ba[acodec^=mp4a]/bv*[ext=mp4]+ba/bv*+ba"
-)
-# A single progressive file already carries its audio, so FFmpeg never has to
-# merge anything.
-PREMUXED_FORMAT = "b[ext=mp4][acodec!=none]/b[acodec!=none]/b"
-AUDIO_FORMAT = "ba[ext=m4a]/ba/bestaudio*"
-# Some reels are published without any audio stream at all, so the last
-# selector must accept a video-only format instead of failing.
-FALLBACK_FORMAT = "bv*+ba/b/bv*/best"
-
-
-def build_download_options(
-    output_dir, name_template, media_format, max_filesize=MAX_MEDIA_SIZE
-):
-    options = {
-        "outtmpl": str(output_dir / name_template),
-        "format": media_format,
-        "merge_output_format": "mp4",
-        "quiet": True,
-        "no_warnings": True,
-        "noprogress": True,
-        "writethumbnail": False,
-        "writesubtitles": False,
-        "writeautomaticsub": False,
-        "concurrent_fragment_downloads": 8,
-        "http_chunk_size": 10485760,
-        "retries": 3,
-        "fragment_retries": 3,
-        "socket_timeout": 15,
-        "noplaylist": True,
-    }
-    if max_filesize is not None:
-        options["max_filesize"] = max_filesize
-    return options
+        if file_path.stat().st_size > MAX_MEDIA_SIZE:
+            raise InstagramMediaTooLarge
+        checked_files.append(file_path)
+    return checked_files
 
 
 def collect_downloaded(output_dir, prefix, suffixes):
@@ -500,154 +269,72 @@ def collect_downloaded(output_dir, prefix, suffixes):
     )
 
 
-def select_reel_media(candidates):
-    """Keep real video files and prefer the one that already has audio."""
-    videos = [path for path in candidates if probe_video(path)[0] is not None]
-    if not videos:
-        return []
-    with_audio = [path for path in videos if probe_video(path)[1]]
-    chosen = with_audio or videos
-    return [max(chosen, key=lambda path: path.stat().st_size)]
+def download_reel_as_instagram(url, output_dir):
+    # خيارات متطورة لضمان دمج الصوت والصورة وإعادة التشفير بصيغة MP4 المتوافقة مع الآيفون والجالاكسي
+    options = {
+        "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
+        "format": "bestvideo+bestaudio/best",
+        "merge_output_format": "mp4",
+        "postprocessors": [
+            {
+                "key": "FFmpegVideoConvertor",
+                "preferedformat": "mp4",
+            }
+        ],
+        "postprocessor_args": {
+            "ffmpeg": ["-c:v", "libx264", "-c:a", "aac", "-strict", "experimental"]
+        },
+        "extractor_args": {
+            "instagram": {
+                "api_hostname": "www.instagram.com",
+            }
+        },
+        "geo_bypass": True,
+        "concurrent_fragment_downloads": 4,
+        "quiet": True,
+        "no_warnings": True,
+        "noprogress": True,
+        "noplaylist": True,
+        "socket_timeout": 30,
+    }
 
+    for stale_file in output_dir.iterdir():
+        if stale_file.is_file():
+            stale_file.unlink(missing_ok=True)
 
-def run_reel_download(url, output_dir, media_format):
-    options = build_download_options(output_dir, "reel_%(id)s.%(ext)s", media_format)
-
-    with yt_dlp.YoutubeDL(options) as downloader:
-        downloader.extract_info(url, download=True)
-
-    return select_reel_media(
-        collect_downloaded(output_dir, "reel_", {".mp4", ".mkv", ".webm"})
-    )
-
-
-def download_reel_audio(url, output_dir):
-    """Fetch the reel's own audio stream on its own, without any video."""
-    options = build_download_options(
-        output_dir, "audio_%(id)s.%(ext)s", AUDIO_FORMAT, max_filesize=None
-    )
-
-    with yt_dlp.YoutubeDL(options) as downloader:
-        downloader.extract_info(url, download=True)
-
-    audio_files = collect_downloaded(
-        output_dir, "audio_", {".m4a", ".mp4", ".aac", ".webm", ".opus", ".mp3"}
-    )
-    return audio_files[0] if audio_files else None
-
-
-def mux_audio_into_video(video_path, audio_path):
-    """Attach the original audio without touching the video stream."""
-    audio_codec = probe_video(audio_path)[1]
-    output_path = video_path.with_name(f"{video_path.stem}_sound.mp4")
-    command = [
-        "ffmpeg",
-        "-y",
-        "-threads",
-        "2",
-        "-i",
-        str(video_path),
-        "-i",
-        str(audio_path),
-        "-map",
-        "0:v:0",
-        "-map",
-        "1:a:0",
-        "-c:v",
-        "copy",
-    ]
-    if audio_codec == "aac":
-        command += ["-c:a", "copy"]
-    else:
-        command += ["-c:a", "aac", "-b:a", "128k", "-ac", "2"]
-    command += ["-shortest", "-movflags", "+faststart", str(output_path)]
-
-    run_ffmpeg(command, output_path)
-    return output_path
-
-
-def attach_missing_audio(url, output_dir, media_files):
-    """Add the reel's original audio to files that were downloaded video-only."""
-    if all(probe_video(path)[1] for path in media_files):
-        return media_files
-
-    logger.info("Reel came without audio, fetching the audio stream separately")
     try:
-        audio_path = download_reel_audio(url, output_dir)
-    except (yt_dlp.utils.DownloadError, OSError):
-        logger.warning("Could not download the reel audio stream", exc_info=True)
-        return media_files
+        with yt_dlp.YoutubeDL(options) as downloader:
+            downloader.extract_info(url, download=True)
+    except yt_dlp.utils.DownloadError as error:
+        logger.error("فشل السحب المباشر: %s", error)
+        raise error
 
-    if audio_path is None or not probe_video(audio_path)[1]:
-        logger.warning("The reel does not expose any audio stream")
-        return media_files
-
-    repaired_files = []
-    for path in media_files:
-        if probe_video(path)[1]:
-            repaired_files.append(path)
-            continue
-        try:
-            muxed_path = mux_audio_into_video(path, audio_path)
-        except VideoProcessingError:
-            logger.warning("Muxing the original audio failed", exc_info=True)
-            repaired_files.append(path)
-            continue
-        logger.info("Original audio attached to %s", muxed_path.name)
-        path.unlink(missing_ok=True)
-        repaired_files.append(muxed_path)
-
-    audio_path.unlink(missing_ok=True)
-    return repaired_files
-
-
-def download_reel_with_audio(url, output_dir):
-    """Download a reel, falling back until one selector yields audio."""
-    media_files = []
-    last_error = None
-
-    for media_format in (PREMUXED_FORMAT, MERGED_FORMAT, FALLBACK_FORMAT):
-        for stale_file in output_dir.iterdir():
-            if stale_file.is_file():
-                stale_file.unlink(missing_ok=True)
-
-        try:
-            media_files = run_reel_download(url, output_dir, media_format)
-        except yt_dlp.utils.DownloadError as error:
-            # Some posts expose only a subset of formats; try the next selector.
-            logger.warning("Format %s unavailable: %s", media_format, error)
-            last_error = error
-            media_files = []
-            continue
-
-        if media_files:
-            chosen_codecs = probe_video(media_files[0])[:2]
-            logger.info(
-                "Reel format %s produced %s (video=%s audio=%s)",
-                media_format,
-                media_files[0].name,
-                chosen_codecs[0],
-                chosen_codecs[1],
-            )
-
-        if media_files and all(probe_video(path)[1] for path in media_files):
-            break
-
-        logger.warning("Reel has no audio track, retrying with another format")
-
-    if not media_files and last_error is not None:
-        raise last_error
-
+    media_files = collect_downloaded(output_dir, "reel_", {".mp4", ".mkv", ".webm"})
     if not media_files:
-        raise InstagramDownloadError("No downloadable reel media was found")
+        raise InstagramDownloadError("لم يتم العثور على ملفات فيديو مطابقة")
 
-    media_files = attach_missing_audio(url, output_dir, media_files)
+    chosen = max(media_files, key=lambda p: p.stat().st_size)
+    
+    # خطوة أمان إضافية: فحص ما إذا كان الملف بحاجة لإعادة ترميز نهائية لضمان عمل الصوت والصورة على كافة الهواتف
+    final_output = output_dir / f"final_{chosen.stem}.mp4"
+    reencode_cmd = [
+        "ffmpeg", "-y", "-i", str(chosen),
+        "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+        "-c:a", "aac", "-b:a", "128k",
+        "-movflags", "+faststart",
+        str(final_output)
+    ]
+    try:
+        subprocess.run(reencode_cmd, capture_output=True, text=True, timeout=120, check=True)
+        if final_output.exists() and final_output.stat().st_size > 0:
+            chosen = final_output
+    except Exception:
+        logger.warning("فشل إعادة التشفير الإضافي، سيتم استخدام الملف الأساسي المدمج", exc_info=True)
 
-    for path in media_files:
-        if path.stat().st_size > MAX_MEDIA_SIZE:
-            raise InstagramMediaTooLarge
+    if chosen.stat().st_size > MAX_MEDIA_SIZE:
+        raise InstagramMediaTooLarge
 
-    return media_files
+    return [chosen]
 
 
 def download_instagram_media(url):
@@ -656,15 +343,24 @@ def download_instagram_media(url):
         raise InstagramDownloadError("Invalid Instagram URL")
 
     output_dir = Path(tempfile.mkdtemp(prefix="instagram_media_"))
+    post_caption = ""
 
     try:
-        url_kind = get_url_kind(url)
-        if url_kind == "reel":
+        try:
+            reel_files = download_reel_as_instagram(url, output_dir)
             try:
-                reel_files = download_reel_with_audio(url, output_dir)
-                return output_dir, normalize_media_files(reel_files)
-            except yt_dlp.utils.DownloadError:
-                logger.warning("Falling back to direct Instagram reel URL", exc_info=True)
+                loader = instaloader.Instaloader(
+                    download_pictures=False, download_videos=False, save_metadata=False
+                )
+                post = instaloader.Post.from_shortcode(loader.context, shortcode)
+                if post.caption:
+                    post_caption = post.caption.strip().split("\n")[0][:60]
+            except Exception:
+                pass
+
+            return output_dir, normalize_media_files(reel_files), post_caption
+        except Exception:
+            logger.warning("Instagram app-style stream failed, falling back to API", exc_info=True)
 
         loader = instaloader.Instaloader(
             download_pictures=False,
@@ -675,17 +371,8 @@ def download_instagram_media(url):
             post_metadata_txt_pattern="",
         )
         post = instaloader.Post.from_shortcode(loader.context, shortcode)
-
-        if (
-            url_kind == "post"
-            and post.is_video
-            and post.typename != "GraphSidecar"
-        ):
-            try:
-                reel_files = download_reel_with_audio(url, output_dir)
-                return output_dir, normalize_media_files(reel_files)
-            except yt_dlp.utils.DownloadError:
-                logger.warning("Falling back to direct Instagram reel URL", exc_info=True)
+        if post.caption:
+            post_caption = post.caption.strip().split("\n")[0][:60]
 
         if post.typename == "GraphSidecar":
             media_items = [
@@ -709,25 +396,27 @@ def download_instagram_media(url):
         if not media_files:
             raise InstagramDownloadError("No downloadable Instagram media was found")
 
-        return output_dir, normalize_media_files(media_files)
+        return output_dir, normalize_media_files(media_files), post_caption
 
     except Exception:
         shutil.rmtree(output_dir, ignore_errors=True)
         raise
 
 
-def media_caption(index, total):
-    return f"- @G66Gbot - {index}/{total}"
+def media_caption(index, total, is_reel=False):
+    if is_reel:
+        return "- @G66GBOT"
+    return f"- @G66GBOT - {index}/{total}"
 
 
-async def send_instagram_file(message, chat_id, context, file_path, index, total):
+async def send_instagram_file(message, chat_id, context, file_path, index, total, is_reel=False, reply_markup=None):
     is_video = is_video_file(file_path)
-    caption = media_caption(index, total)
+    caption = media_caption(index, total, is_reel=is_reel)
 
     if not is_video:
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
         with file_path.open("rb") as media_file:
-            sent_message = await message.reply_photo(photo=media_file, caption=caption)
+            sent_message = await message.reply_photo(photo=media_file, caption=caption, reply_markup=reply_markup)
         return [sent_message]
 
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
@@ -740,6 +429,7 @@ async def send_instagram_file(message, chat_id, context, file_path, index, total
         "width": width,
         "height": height,
         "duration": duration,
+        "reply_markup": reply_markup,
     }
 
     thumbnail_file = thumbnail_path.open("rb") if thumbnail_path else None
@@ -754,7 +444,7 @@ async def send_instagram_file(message, chat_id, context, file_path, index, total
     return [sent_message]
 
 
-async def send_instagram_album(message, context, media_files):
+async def send_instagram_album(message, context, media_files, is_reel=False, reply_markup=None):
     total_files = len(media_files)
     sent_messages = []
 
@@ -770,6 +460,8 @@ async def send_instagram_album(message, context, media_files):
                     batch[0],
                     start + 1,
                     total_files,
+                    is_reel=is_reel,
+                    reply_markup=reply_markup,
                 )
             )
             continue
@@ -783,7 +475,7 @@ async def send_instagram_album(message, context, media_files):
                 absolute_index = start + offset
                 is_video = is_video_file(file_path)
                 caption = (
-                    media_caption(absolute_index, total_files)
+                    media_caption(absolute_index, total_files, is_reel=is_reel)
                     if absolute_index == total_files
                     else None
                 )
@@ -812,7 +504,8 @@ async def send_instagram_album(message, context, media_files):
                     )
                 )
 
-            sent_messages.extend(await message.reply_media_group(media=media_group))
+            sent_msg_group = await message.reply_media_group(media=media_group)
+            sent_messages.extend(sent_msg_group)
         finally:
             for media_file in open_files:
                 media_file.close()
@@ -857,7 +550,7 @@ async def send_cached_media(message, context, media_ids):
         batch = media_ids[start : start + 10]
         if len(batch) == 1:
             kind, file_id = batch[0]
-            caption = media_caption(start + 1, total_files)
+            caption = media_caption(start + 1, total_files, is_reel=False)
             if kind == "photo":
                 await message.reply_photo(photo=file_id, caption=caption)
             else:
@@ -872,7 +565,7 @@ async def send_cached_media(message, context, media_ids):
         for offset, (kind, file_id) in enumerate(batch, start=1):
             absolute_index = start + offset
             caption = (
-                media_caption(absolute_index, total_files)
+                media_caption(absolute_index, total_files, is_reel=False)
                 if absolute_index == total_files
                 else None
             )
@@ -898,27 +591,52 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
     if not shortcode:
         return
 
-    status_message = await update.message.reply_text(
-        "⏰┇يرجى الانتظار، يتم قياس حجم التحميل..."
-    )
+    status_message = await update.message.reply_text("♻️┇جاري التحميل...")
     output_dir = None
 
     try:
         cached_media = MEDIA_ID_CACHE.get(shortcode)
-        if cached_media is not None:
+        if cached_media is not None and get_url_kind(url) != "reel":
             await send_cached_media(update.message, context, cached_media)
             await status_message.delete()
             return
 
-        output_dir, media_files = await asyncio.to_thread(download_instagram_media, url)
+        output_dir, media_files, post_caption = await asyncio.to_thread(download_instagram_media, url)
+        
+        is_reel = (get_url_kind(url) == "reel") or (len(media_files) == 1 and is_video_file(media_files[0]))
+        action = ChatAction.UPLOAD_VIDEO if (media_files and is_video_file(media_files[0])) else ChatAction.UPLOAD_PHOTO
+
         await context.bot.send_chat_action(
             chat_id=update.effective_chat.id,
-            action=ChatAction.UPLOAD_PHOTO,
+            action=action,
         )
+
+        reply_markup = None
+        if is_reel and len(media_files) == 1 and is_video_file(media_files[0]):
+            keyboard = [
+                [InlineKeyboardButton("🎵┇تحميل كملف صوتي", callback_data="audio")],
+                [InlineKeyboardButton("📥┇تحميل باعلى دقه HD", callback_data="hd_video")],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
         sent_messages = await send_instagram_album(
-            update.message, context, media_files
+            update.message, context, media_files, is_reel=is_reel, reply_markup=reply_markup
         )
-        cache_sent_media(shortcode, sent_messages)
+
+        if is_reel and sent_messages:
+            user_id = update.effective_user.id
+            title = post_caption if post_caption else "محتوى انستغرام"
+            sessions = context.application.bot_data.setdefault("download_sessions", {})
+            first_sent = sent_messages[0]
+            sessions[(first_sent.chat_id, first_sent.message_id)] = {
+                "user_id": user_id,
+                "url": url,
+                "title": title,
+                "created_at": asyncio.get_event_loop().time() if hasattr(asyncio, 'get_event_loop') else 0,
+            }
+
+        if get_url_kind(url) != "reel":
+            cache_sent_media(shortcode, sent_messages)
 
         await status_message.delete()
     except InstagramMediaTooLarge:
@@ -948,4 +666,5 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             await asyncio.to_thread(shutil.rmtree, output_dir, True)
 
 
-log_media_tools_status() 
+log_media_tools_status()
+ 
