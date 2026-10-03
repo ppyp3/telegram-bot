@@ -1,4 +1,4 @@
-import asyncio
+Import asyncio
 import json
 import logging
 import mimetypes
@@ -635,4 +635,4 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             await asyncio.to_thread(shutil.rmtree, output_dir, True)
 
 
-log_media_tools_status() 
+log_media_tools_status()
