@@ -272,7 +272,8 @@ def collect_downloaded(output_dir, prefix, suffixes):
 def download_reel_as_instagram(url, output_dir):
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "best[ext=mp4]/best",
+        "format": "bestvideo+bestaudio/best",
+        "merge_output_format": "mp4",
         "extractor_args": {
             "instagram": {
                 "api_hostname": "www.instagram.com",
@@ -303,9 +304,6 @@ def download_reel_as_instagram(url, output_dir):
         raise InstagramDownloadError("لم يتم العثور على ملفات فيديو مطابقة")
 
     chosen = max(media_files, key=lambda p: p.stat().st_size)
-    
-    # تم إزالة إعادة التشفير (Re-encode) بالكامل هنا لتجنب إتلاف الصوت
-    # ليعود الملف الخام الأصلي كما يجلبه yt-dlp تماماً
 
     if chosen.stat().st_size > MAX_MEDIA_SIZE:
         raise InstagramMediaTooLarge
