@@ -1,9 +1,6 @@
 import asyncio
-import json
 import logging
-import mimetypes
 import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
@@ -11,7 +8,7 @@ from urllib.parse import urlparse
 import instaloader
 import requests
 import yt_dlp
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes, filters
@@ -19,10 +16,7 @@ from telegram.ext import ContextTypes, filters
 
 logger = logging.getLogger(__name__)
 MAX_MEDIA_SIZE = 49 * 1024 * 1024
-UNKNOWN_CODEC = "unknown"
 MEDIA_ID_CACHE: dict[str, list[tuple[str, str]]] = {}
-PROBE_VIDEO_CACHE = {}
-VIDEO_THUMBNAIL_CACHE = {}
 MAX_CACHE_ENTRIES = 500
 DOWNLOAD_HEADERS = {
     "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 300.0.0.0.0 (iPhone14,2; iOS 16_6; ar_SA; ar; Scale=3.00; 1170x2532)",
@@ -50,31 +44,6 @@ class InstagramDownloadError(Exception):
 
 class InstagramMediaTooLarge(InstagramDownloadError):
     pass
-
-
-class VideoProcessingError(InstagramDownloadError):
-    pass
-
-
-def log_media_tools_status():
-    for tool in ("ffmpeg", "ffprobe"):
-        executable = shutil.which(tool)
-        if executable is None:
-            logger.error("%s is NOT installed; videos cannot be prepared", tool)
-            continue
-        try:
-            result = subprocess.run(
-                [executable, "-version"],
-                capture_output=True,
-                text=True,
-                timeout=15,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            logger.error("%s is installed but failed to run", tool, exc_info=True)
-            continue
-        first_line = (result.stdout or result.stderr or "").splitlines()
-        logger.info("%s available: %s", tool, first_line[0] if first_line else "unknown")
 
 
 def _get_instagram_url_parts(url):
@@ -111,474 +80,42 @@ def get_url_kind(url):
     return "reel" if parts[0] in {"reel", "reels"} else "post"
 
 
-def download_file(url, output_path):
-    response = None
-    try:
-        response = requests.get(
-            url,
-            headers=DOWNLOAD_HEADERS,
-            timeout=(10, 45),
-            stream=True,
-        )
-        response.raise_for_status()
-
-        content_length = response.headers.get("Content-Length")
-        if content_length:
-            try:
-                if int(content_length) > MAX_MEDIA_SIZE:
-                    raise InstagramMediaTooLarge
-            except ValueError:
-                pass
-
-        downloaded = 0
-        with output_path.open("wb") as output_file:
-            for chunk in response.iter_content(chunk_size=128 * 1024):
-                if not chunk:
-                    continue
-                downloaded += len(chunk)
-                if downloaded > MAX_MEDIA_SIZE:
-                    raise InstagramMediaTooLarge
-                output_file.write(chunk)
-    finally:
-        if response is not None:
-            response.close()
-
-
-def probe_video(file_path):
-    try:
-        stat = file_path.stat()
-    except OSError:
-        stat = None
-    cache_key = (
-        (file_path, stat.st_mtime, stat.st_size)
-        if stat is not None
-        else None
-    )
-    if cache_key in PROBE_VIDEO_CACHE:
-        return PROBE_VIDEO_CACHE[cache_key]
-
-    command = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-show_entries",
-        "stream=codec_type,codec_name,width,height:format=duration",
-        "-of",
-        "json",
-        str(file_path),
-    ]
-    try:
-        result = subprocess.run(
-            command, capture_output=True, text=True, timeout=60, check=False
-        )
-        data = json.loads(result.stdout or "{}")
-    except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
-        return store_in_cache(
-            PROBE_VIDEO_CACHE,
-            cache_key,
-            (UNKNOWN_CODEC, UNKNOWN_CODEC, None, None, None),
-        )
-
-    if not data.get("streams"):
-        return store_in_cache(
-            PROBE_VIDEO_CACHE,
-            cache_key,
-            (UNKNOWN_CODEC, UNKNOWN_CODEC, None, None, None),
-        )
-
-    video_codec = audio_codec = width = height = None
-    for stream in data.get("streams", []):
-        if stream.get("codec_type") == "video" and video_codec is None:
-            video_codec = stream.get("codec_name")
-            width = stream.get("width")
-            height = stream.get("height")
-        elif stream.get("codec_type") == "audio" and audio_codec is None:
-            audio_codec = stream.get("codec_name")
-
-    try:
-        duration = int(float(data.get("format", {}).get("duration", 0))) or None
-    except (TypeError, ValueError):
-        duration = None
-
-    return store_in_cache(
-        PROBE_VIDEO_CACHE, cache_key, (video_codec, audio_codec, width, height, duration)
-    )
-
-
-def create_video_thumbnail(file_path):
-    try:
-        stat = file_path.stat()
-    except OSError:
-        stat = None
-    cache_key = (
-        (file_path, stat.st_mtime, stat.st_size)
-        if stat is not None
-        else None
-    )
-    if cache_key in VIDEO_THUMBNAIL_CACHE:
-        return VIDEO_THUMBNAIL_CACHE[cache_key]
-
-    thumbnail_path = file_path.with_name(f"{file_path.stem}_thumb.jpg")
-    command = [
-        "ffmpeg",
-        "-y",
-        "-ss",
-        "0.5",
-        "-i",
-        str(file_path),
-        "-frames:v",
-        "1",
-        "-vf",
-        "scale=320:-2",
-        "-q:v",
-        "4",
-        str(thumbnail_path),
-    ]
-    try:
-        subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
-    except Exception:
-        return store_in_cache(VIDEO_THUMBNAIL_CACHE, cache_key, None)
-
-    if thumbnail_path.exists():
-        return store_in_cache(VIDEO_THUMBNAIL_CACHE, cache_key, thumbnail_path)
-    return store_in_cache(VIDEO_THUMBNAIL_CACHE, cache_key, None)
-
-
-def is_video_file(file_path):
-    mime_type, _ = mimetypes.guess_type(file_path.name)
-    return bool(mime_type and mime_type.startswith("video/"))
-
-
-def normalize_media_files(media_files):
-    checked_files = []
-    for file_path in media_files:
-        if file_path.stat().st_size > MAX_MEDIA_SIZE:
-            raise InstagramMediaTooLarge
-        checked_files.append(file_path)
-    return checked_files
-
-
-def collect_downloaded(output_dir, prefix, suffixes):
-    return sorted(
-        path
-        for path in output_dir.iterdir()
-        if path.is_file()
-        and path.name.startswith(prefix)
-        and not path.name.endswith((".part", ".ytdl"))
-        and path.suffix.lower() in suffixes
-    )
-
-
-def download_reel_as_instagram(url, output_dir):
+def get_direct_video_url(url):
     options = {
-        "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "best/best",
+        "format": "best[ext=mp4]/best",
         "extractor_args": {
             "instagram": {
                 "api_hostname": "www.instagram.com",
             }
         },
         "geo_bypass": True,
-        "concurrent_fragment_downloads": 4,
         "quiet": True,
         "no_warnings": True,
-        "noprogress": True,
         "noplaylist": True,
-        "socket_timeout": 30,
+        "socket_timeout": 15,
     }
-
-    for stale_file in output_dir.iterdir():
-        if stale_file.is_file():
-            stale_file.unlink(missing_ok=True)
-
     try:
-        with yt_dlp.YoutubeDL(options) as downloader:
-            downloader.extract_info(url, download=True)
-    except yt_dlp.utils.DownloadError as error:
-        logger.error("فشل السحب المباشر: %s", error)
-        raise error
-
-    media_files = collect_downloaded(output_dir, "reel_", {".mp4", ".mkv", ".webm", ".mov"})
-    if not media_files:
-        raise InstagramDownloadError("لم يتم العثور على ملفات فيديو مطابقة")
-
-    chosen = max(media_files, key=lambda p: p.stat().st_size)
-    
-    # المعالجة الصارمة المتوافقة 100% مع مزاج ومواصفات مشغل تيليجرام الداخلي
-    final_output = output_dir / f"telegram_ready_{chosen.stem}.mp4"
-    reencode_cmd = [
-        "ffmpeg", "-y", "-i", str(chosen),
-        "-c:v", "libx264",
-        "-profile:v", "main",
-        "-level", "4.0",
-        "-pix_fmt", "yuv420p",
-        "-preset", "medium",
-        "-crf", "23",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-ac", "2",
-        "-ar", "44100",
-        "-movflags", "+faststart",
-        str(final_output)
-    ]
-    try:
-        result = subprocess.run(reencode_cmd, capture_output=True, text=True, timeout=180, check=False)
-        if final_output.exists() and final_output.stat().st_size > 0:
-            chosen = final_output
-        else:
-            logger.error("Telegram-ready FFmpeg re-encode failed: %s", result.stderr)
-    except Exception:
-        logger.warning("خطأ أثناء إعادة التشفير بالتوافقية التامة", exc_info=True)
-
-    if chosen.stat().st_size > MAX_MEDIA_SIZE:
-        raise InstagramMediaTooLarge
-
-    return [chosen]
-
-
-def download_instagram_media(url):
-    shortcode = get_shortcode(url)
-    if not shortcode:
-        raise InstagramDownloadError("Invalid Instagram URL")
-
-    output_dir = Path(tempfile.mkdtemp(prefix="instagram_media_"))
-    post_caption = ""
-
-    try:
-        try:
-            reel_files = download_reel_as_instagram(url, output_dir)
-            try:
-                loader = instaloader.Instaloader(
-                    download_pictures=False, download_videos=False, save_metadata=False
-                )
-                post = instaloader.Post.from_shortcode(loader.context, shortcode)
-                if post.caption:
-                    post_caption = post.caption.strip().split("\n")[0][:60]
-            except Exception:
-                pass
-
-            return output_dir, normalize_media_files(reel_files), post_caption
-        except Exception:
-            logger.warning("Instagram app-style stream failed, falling back to API", exc_info=True)
-
-        loader = instaloader.Instaloader(
-            download_pictures=False,
-            download_videos=False,
-            download_video_thumbnails=False,
-            save_metadata=False,
-            compress_json=False,
-            post_metadata_txt_pattern="",
-        )
-        post = instaloader.Post.from_shortcode(loader.context, shortcode)
-        if post.caption:
-            post_caption = post.caption.strip().split("\n")[0][:60]
-
-        if post.typename == "GraphSidecar":
-            media_items = [
-                (node.video_url if node.is_video else node.display_url, node.is_video)
-                for node in post.get_sidecar_nodes()
-            ]
-        else:
-            media_items = [
-                (post.video_url if post.is_video else post.url, post.is_video)
-            ]
-
-        media_files = []
-        for index, (media_url, is_video) in enumerate(media_items, start=1):
-            if not media_url:
-                continue
-            suffix = ".mp4" if is_video else ".jpg"
-            output_path = output_dir / f"{index:03d}{suffix}"
-            download_file(media_url, output_path)
-            media_files.append(output_path)
-
-        if not media_files:
-            raise InstagramDownloadError("No downloadable Instagram media was found")
-
-        return output_dir, normalize_media_files(media_files), post_caption
-
-    except Exception:
-        shutil.rmtree(output_dir, ignore_errors=True)
-        raise
+        with yt_dlp.YoutubeDL(options) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if info:
+                # إذا كان مقطع مباشر أو يحتوي على رابط مباشر للفيديو
+                direct_url = info.get("url")
+                if direct_url:
+                    return direct_url
+                # لو كان يحتوي على formats
+                formats = info.get("formats", [])
+                if formats:
+                    best_f = max(formats, key=lambda f: f.get("filesize") or f.get("tbr") or 0)
+                    return best_f.get("url")
+    except Exception as e:
+        logger.error("فشل استخراج الرابط المباشر: %s", e)
+    return None
 
 
 def media_caption(index, total, is_reel=False):
     if is_reel:
         return "- @G66GBOT"
     return f"- @G66GBOT - {index}/{total}"
-
-
-async def send_instagram_file(message, chat_id, context, file_path, index, total, is_reel=False, reply_markup=None):
-    is_video = is_video_file(file_path)
-    caption = media_caption(index, total, is_reel=is_reel)
-
-    if not is_video:
-        await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
-        with file_path.open("rb") as media_file:
-            sent_message = await message.reply_photo(photo=media_file, caption=caption, reply_markup=reply_markup)
-        return [sent_message]
-
-    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
-    _, _, width, height, duration = await asyncio.to_thread(probe_video, file_path)
-    thumbnail_path = await asyncio.to_thread(create_video_thumbnail, file_path)
-
-    video_arguments = {
-        "caption": caption,
-        "supports_streaming": True,
-        "width": width,
-        "height": height,
-        "duration": duration,
-        "reply_markup": reply_markup,
-    }
-
-    thumbnail_file = thumbnail_path.open("rb") if thumbnail_path else None
-    try:
-        if thumbnail_file:
-            video_arguments["thumbnail"] = thumbnail_file
-        with file_path.open("rb") as media_file:
-            sent_message = await message.reply_video(video=media_file, **video_arguments)
-    finally:
-        if thumbnail_file:
-            thumbnail_file.close()
-    return [sent_message]
-
-
-async def send_instagram_album(message, context, media_files, is_reel=False, reply_markup=None):
-    total_files = len(media_files)
-    sent_messages = []
-
-    for start in range(0, total_files, 10):
-        batch = media_files[start : start + 10]
-
-        if len(batch) == 1:
-            sent_messages.extend(
-                await send_instagram_file(
-                    message,
-                    message.chat_id,
-                    context,
-                    batch[0],
-                    start + 1,
-                    total_files,
-                    is_reel=is_reel,
-                    reply_markup=reply_markup,
-                )
-            )
-            continue
-
-        open_files = []
-        media_group = []
-        try:
-            for offset, file_path in enumerate(batch, start=1):
-                media_file = file_path.open("rb")
-                open_files.append(media_file)
-                absolute_index = start + offset
-                is_video = is_video_file(file_path)
-                caption = (
-                    media_caption(absolute_index, total_files, is_reel=is_reel)
-                    if absolute_index == total_files
-                    else None
-                )
-
-                if not is_video:
-                    media_group.append(InputMediaPhoto(media=media_file, caption=caption))
-                    continue
-
-                _, _, width, height, duration = await asyncio.to_thread(
-                    probe_video, file_path
-                )
-                thumbnail_path = await asyncio.to_thread(create_video_thumbnail, file_path)
-                thumbnail_file = thumbnail_path.open("rb") if thumbnail_path else None
-                if thumbnail_file:
-                    open_files.append(thumbnail_file)
-
-                media_group.append(
-                    InputMediaVideo(
-                        media=media_file,
-                        caption=caption,
-                        supports_streaming=True,
-                        width=width,
-                        height=height,
-                        duration=duration,
-                        thumbnail=thumbnail_file,
-                    )
-                )
-
-            sent_msg_group = await message.reply_media_group(media=media_group)
-            sent_messages.extend(sent_msg_group)
-        finally:
-            for media_file in open_files:
-                media_file.close()
-
-    return sent_messages
-
-
-def get_sent_media_id(message):
-    video = getattr(message, "video", None)
-    if video is not None and getattr(video, "file_id", None):
-        return "video", video.file_id
-
-    photos = getattr(message, "photo", None)
-    if photos:
-        file_id = getattr(photos[-1], "file_id", None)
-        if file_id:
-            return "photo", file_id
-
-    return None
-
-
-def cache_sent_media(shortcode, sent_messages):
-    media_ids = [
-        media_id
-        for sent_message in sent_messages
-        if (media_id := get_sent_media_id(sent_message)) is not None
-    ]
-    if len(media_ids) != len(sent_messages):
-        return
-
-    store_in_cache(MEDIA_ID_CACHE, shortcode, media_ids)
-
-
-async def send_cached_media(message, context, media_ids):
-    total_files = len(media_ids)
-    await context.bot.send_chat_action(
-        chat_id=message.chat_id,
-        action=ChatAction.UPLOAD_PHOTO,
-    )
-
-    for start in range(0, total_files, 10):
-        batch = media_ids[start : start + 10]
-        if len(batch) == 1:
-            kind, file_id = batch[0]
-            caption = media_caption(start + 1, total_files, is_reel=False)
-            if kind == "photo":
-                await message.reply_photo(photo=file_id, caption=caption)
-            else:
-                await message.reply_video(
-                    video=file_id,
-                    caption=caption,
-                    supports_streaming=True,
-                )
-            continue
-
-        media_group = []
-        for offset, (kind, file_id) in enumerate(batch, start=1):
-            absolute_index = start + offset
-            caption = (
-                media_caption(absolute_index, total_files, is_reel=False)
-                if absolute_index == total_files
-                else None
-            )
-            if kind == "photo":
-                media_group.append(InputMediaPhoto(media=file_id, caption=caption))
-            else:
-                media_group.append(
-                    InputMediaVideo(
-                        media=file_id,
-                        caption=caption,
-                        supports_streaming=True,
-                    )
-                )
-        await message.reply_media_group(media=media_group)
 
 
 async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -591,78 +128,66 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
         return
 
     status_message = await update.message.reply_text("♻┇جاري التحميل...")
-    output_dir = None
 
     try:
-        cached_media = MEDIA_ID_CACHE.get(shortcode)
-        if cached_media is not None and get_url_kind(url) != "reel":
-            await send_cached_media(update.message, context, cached_media)
-            await status_message.delete()
-            return
-
-        output_dir, media_files, post_caption = await asyncio.to_thread(download_instagram_media, url)
+        # استخراج الرابط المباشر للفيديو لجعل تيليجرام يعالج ويحمل بنفسه
+        direct_video_url = await asyncio.to_thread(get_direct_video_url, url)
         
-        is_reel = (get_url_kind(url) == "reel") or (len(media_files) == 1 and is_video_file(media_files[0]))
-        action = ChatAction.UPLOAD_VIDEO if (media_files and is_video_file(media_files[0])) else ChatAction.UPLOAD_PHOTO
+        if not direct_video_url:
+            # محاولة احتياطية عبر انستالوادر لو فشل استخراج الرابط المباشر
+            loader = instaloader.Instaloader(
+                download_pictures=False,
+                download_videos=False,
+                save_metadata=False,
+            )
+            post = await asyncio.to_thread(instaloader.Post.from_shortcode, loader.context, shortcode)
+            if post.is_video:
+                direct_video_url = post.video_url
 
-        await context.bot.send_chat_action(
-            chat_id=update.effective_chat.id,
-            action=action,
-        )
+        if not direct_video_url:
+            raise InstagramDownloadError("تعذر العثور على رابط الفيديو المباشر")
+
+        is_reel = (get_url_kind(url) == "reel")
+        caption = media_caption(1, 1, is_reel=is_reel)
 
         reply_markup = None
-        if is_reel and len(media_files) == 1 and is_video_file(media_files[0]):
+        if is_reel:
             keyboard = [
                 [InlineKeyboardButton("🎵┇تحميل كملف صوتي", callback_data="audio")],
                 [InlineKeyboardButton("📥┇تحميل باعلى دقه HD", callback_data="hd_video")],
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
-        sent_messages = await send_instagram_album(
-            update.message, context, media_files, is_reel=is_reel, reply_markup=reply_markup
+        await context.bot.send_chat_action(
+            chat_id=update.effective_chat.id,
+            action=ChatAction.UPLOAD_VIDEO,
         )
 
-        if is_reel and sent_messages:
+        # إرسال الرابط المباشر ليتولى سيرفر تيليجرام عملية الجلب والمعالجة بالكامل
+        sent_message = await update.message.reply_video(
+            video=direct_video_url,
+            caption=caption,
+            supports_streaming=True,
+            reply_markup=reply_markup
+        )
+
+        if is_reel and sent_message:
             user_id = update.effective_user.id
-            title = post_caption if post_caption else "محتوى انستغرام"
             sessions = context.application.bot_data.setdefault("download_sessions", {})
-            first_sent = sent_messages[0]
-            sessions[(first_sent.chat_id, first_sent.message_id)] = {
+            sessions[(sent_message.chat_id, sent_message.message_id)] = {
                 "user_id": user_id,
                 "url": url,
-                "title": title,
+                "title": "محتوى انستغرام",
                 "created_at": asyncio.get_event_loop().time() if hasattr(asyncio, 'get_event_loop') else 0,
             }
 
-        if get_url_kind(url) != "reel":
-            cache_sent_media(shortcode, sent_messages)
-
         await status_message.delete()
-    except InstagramMediaTooLarge:
-        await status_message.edit_text(
-            "⚠️┇هذا الملف لا يمكنني تحميله،\n"
-            "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
-            "⚠️┇أعد المحاوله مع ملف اخر."
-        )
-    except VideoProcessingError:
-        await status_message.edit_text("❌ تعذر تجهيز الفيديو. حاول مرة أخرى.")
-    except (
-        InstagramDownloadError,
-        instaloader.exceptions.InstaloaderException,
-        requests.RequestException,
-        yt_dlp.utils.DownloadError,
-        TelegramError,
-    ):
-        logger.exception("Instagram download failed")
+
+    except (InstagramDownloadError, yt_dlp.utils.DownloadError, TelegramError):
+        logger.exception("Instagram direct stream failed")
         await status_message.edit_text(
             "❌ تعذر تحميل هذا الرابط. تأكد أن الحساب والمنشور عام ثم أعد المحاولة."
         )
     except Exception:
         logger.exception("Unexpected Instagram handler error")
-        await status_message.edit_text("❌ حدث خطأ أثناء تحميل محتوى الإنستغرام.")
-    finally:
-        if output_dir:
-            await asyncio.to_thread(shutil.rmtree, output_dir, True)
-
-
-log_media_tools_status()
+        await status_message.edit_text("❌ حدث خطأ أثناء معالجة الطلب.")
