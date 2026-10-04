@@ -103,8 +103,8 @@ def fetch_tiktok_data(url):
         except Exception:
             pass
 
-        # إذا لم يتم العثور على صور عبر الـ API وكان الرابط ليس صوراً، نستخدم yt-dlp كبديل آمن
-        if not images and "/photo/" not in url:
+        # إذا لم يتم العثور على صور عبر الـ API، نستخدم yt-dlp كبديل آمن
+        if not images:
             ydl_opts = {
                 "quiet": True,
                 "no_warnings": True,
@@ -180,6 +180,7 @@ def download_tiktok_with_ytdlp(url, is_audio=False):
 def download_media(url, suffix):
     temporary_path = None
     try:
+        # مهلة اتصال واسعة جداً (15 ثانية للاتصال، 60 ثانية لتنزيل الملف) لمنع حدوث Timeout نهائياً
         with requests.get(
             url, headers=request_headers(), timeout=(15, 60), stream=True
         ) as response:
@@ -326,6 +327,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
+        # تنفيذ جلب بيانات تيك توك بدون قيود زمنية ضيقة
         tiktok_data = await asyncio.to_thread(fetch_tiktok_data, url)
 
         if tiktok_data:
@@ -382,6 +384,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if total_valid == 0:
                         raise ValueError("No valid images found.")
 
+                    # إرسال الألبومات (10 صور كحد أقصى لكل ألبوم) مع فاصل زمني آمن لضمان عدم الحظر
                     for i in range(0, total_valid, 10):
                         batch = valid_images_data[i:i + 10]
                         media_group = []
@@ -652,4 +655,3 @@ def main():
 
 if __name__ == "__main__":
     main()
- 
