@@ -258,8 +258,38 @@ def normalize_media_files(media_files):
     return checked_files
 
 
+def convert_video_for_telegram(file_path):
+    """إجبار تحويل الفيديو عبر FFmpeg ليكون متوافقاً 100% مع تيليجرام والصوت والستوديو"""
+    output_path = file_path.with_name(f"{file_path.stem}_converted.mp4")
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(file_path),
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-crf",
+        "23",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=120, check=False)
+        if result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 0:
+            return output_path
+    except Exception:
+        logger.error("فشل تحويل الفيديو عبر ffmpeg", exc_info=True)
+    return file_path
+
+
 def download_reel_as_instagram(url, output_dir):
-    # التعديل الحاسم: سحب ملف الـ mp4 المباشر الخالي من التعقيد ليتطابق مع حجم البوتات السريعة
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
         "format": "b[ext=mp4]/b",
@@ -295,6 +325,9 @@ def download_reel_as_instagram(url, output_dir):
         raise InstagramDownloadError("لم يتم العثور على ملفات فيديو مطابقة")
 
     chosen = max(media_files, key=lambda p: p.stat().st_size)
+
+    # معالجة وتوافق الفيديو تلقائياً ليكون ملائماً تماماً لتيليجرام والاستوديو
+    chosen = convert_video_for_telegram(chosen)
 
     if chosen.stat().st_size > MAX_MEDIA_SIZE:
         raise InstagramMediaTooLarge
