@@ -8,8 +8,6 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
-import yt_dlp
-from PIL import Image
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -65,16 +63,16 @@ def request_headers():
     return {
         "User-Agent": random.choice(USER_AGENTS),
         "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://www.tiktok.com/",
     }
 
 def fetch_tiktok_data(url):
-    """جلب بيانات تيك توك مع وقت انتظار طويل جداً (Timeout مفتوح) لضمان عدم حدوث تايم أوت"""
     try:
+        headers = request_headers()
         parsed_url = urlparse(url)
+
         if parsed_url.hostname in {"vm.tiktok.com", "vt.tiktok.com"}:
             with requests.get(
-                url, allow_redirects=True, timeout=(15, 45), headers=request_headers()
+                url, allow_redirects=True, timeout=(8, 20), headers=headers
             ) as response:
                 response.raise_for_status()
                 url = response.url
@@ -82,107 +80,59 @@ def fetch_tiktok_data(url):
         if not is_valid_tiktok_url(url):
             return None
 
-        images = []
-        music_url = None
-        title = "محتوى تيك توك"
+        with requests.get(
+            "https://tikwm.com/api/",
+            params={"url": url, "music": 1},
+            headers=headers,
+            timeout=(8, 20),
+        ) as response:
+            response.raise_for_status()
+            alt_resp = response.json()
 
-        # محاولة الجلب عبر API الخارجي بمهلة اتصال واسعة جداً
-        try:
-            api_res = requests.get(
-                "https://tikwm.com/api/",
-                params={"url": url, "music": 1},
-                headers=request_headers(),
-                timeout=(15, 45),
-            ).json()
-            if api_res.get("code") == 0:
-                data = api_res.get("data", {})
-                if isinstance(data, dict):
-                    title = data.get("title", title)
-                    images = data.get("images", [])
-                    music_url = data.get("music")
-        except Exception:
-            pass
+        if alt_resp.get("code") != 0:
+            return None
 
-        # إذا لم يتم العثور على صور عبر الـ API، نستخدم yt-dlp كبديل آمن
-        if not images:
-            ydl_opts = {
-                "quiet": True,
-                "no_warnings": True,
-                "extract_flat": False,
-                "socket_timeout": 30,
-            }
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                try:
-                    info = ydl.extract_info(url, download=False)
-                    if info:
-                        title = str(info.get("title") or title)
-                        if "entries" in info:
-                            images = [e.get("url") for e in info.get("entries", []) if e.get("url")]
-                        if not music_url:
-                            if "requested_formats" in info:
-                                for f in info["requested_formats"]:
-                                    if f.get("acodec") != "none" and f.get("vcodec") == "none":
-                                        music_url = f.get("url")
-                                        break
-                            if not music_url:
-                                music_url = info.get("url") if info.get("vcodec") == "none" else None
-                except Exception:
-                    pass
+        data = alt_resp.get("data")
+        if not isinstance(data, dict):
+            return None
 
+        title = str(data.get("title") or "محتوى تيك توك")
         clean_title = "".join(
             character
             for character in title
             if character.isalnum() or character in (" ", "_", "-", "🔥")
         ).strip()
+
         if not clean_title:
             clean_title = "tiktok_audio"
 
+        author = data.get("author")
+        if not isinstance(author, dict):
+            author = {}
+
+        images = data.get("images")
+        if not isinstance(images, list):
+            images = []
+
         return {
             "title": title,
-            "music": music_url,
+            "author": author.get("nickname", "مستخدم تيك توك"),
+            "music": data.get("music"),
             "audio_title": f"{clean_title}.mp3",
             "images": images,
-            "webpage_url": url,
+            "play": data.get("play"),
         }
 
-    except Exception:
+    except (requests.RequestException, ValueError, TypeError):
         logger.exception("Error fetching TikTok data")
-        return None
-
-def download_tiktok_with_ytdlp(url, is_audio=False):
-    temp_dir = tempfile.mkdtemp()
-    ydl_opts = {
-        "outtmpl": os.path.join(temp_dir, "file.%(ext)s"),
-        "quiet": True,
-        "no_warnings": True,
-        "socket_timeout": 30,
-    }
-    if is_audio:
-        ydl_opts["format"] = "bestaudio/best"
-    else:
-        ydl_opts["format"] = "best"
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info)
-            if not os.path.exists(filename):
-                files = list(Path(temp_dir).glob("*"))
-                if files:
-                    filename = str(files[0])
-                else:
-                    return None
-            return Path(filename)
-    except Exception:
-        logger.exception("Error downloading via yt-dlp")
         return None
 
 def download_media(url, suffix):
     temporary_path = None
+
     try:
-        # مهلة اتصال واسعة جداً (15 ثانية للاتصال، 60 ثانية لتنزيل الملف) لمنع حدوث Timeout نهائياً
         with requests.get(
-            url, headers=request_headers(), timeout=(15, 60), stream=True
+            url, headers=request_headers(), timeout=(8, 30), stream=True
         ) as response:
             response.raise_for_status()
 
@@ -203,32 +153,20 @@ def download_media(url, suffix):
                 for chunk in response.iter_content(chunk_size=128 * 1024):
                     if not chunk:
                         continue
+
                     downloaded += len(chunk)
+
                     if downloaded > MAX_MEDIA_SIZE:
                         raise DownloadTooLarge
+
                     temporary_file.write(chunk)
 
         return temporary_path
+
     except Exception:
         if temporary_path:
             temporary_path.unlink(missing_ok=True)
         raise
-
-def process_image_to_jpeg(input_path):
-    try:
-        with Image.open(input_path) as img:
-            img.verify()
-
-        with Image.open(input_path) as img:
-            if img.mode in ("RGBA", "P", "LA"):
-                img = img.convert("RGB")
-            output_fd, output_path = tempfile.mkstemp(suffix=".jpg")
-            os.close(output_fd)
-            img.save(output_path, "JPEG", quality=95)
-            return Path(output_path)
-    except Exception:
-        logger.exception("Invalid or corrupted image file")
-        return None
 
 def remember_session(context, message, user_id, url, title):
     sessions = context.application.bot_data.setdefault("download_sessions", {})
@@ -244,6 +182,7 @@ def remember_session(context, message, user_id, url, title):
         sessions.pop(key, None)
 
     key = (message.chat_id, message.message_id)
+
     sessions[key] = {
         "user_id": user_id,
         "url": url,
@@ -252,23 +191,20 @@ def remember_session(context, message, user_id, url, title):
     }
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_name = f'<a href="tg://user?id={user.id}">{user.first_name}</a>'
-    
+    user_name = update.effective_user.first_name
+
     welcome_msg = (
         f"✦ أهلاً بك ⦗ {user_name} ⦘ 🖤\n\n"
         f"▫︎ بوت التحميل السريع 📥\n"
         f"▫︎ يوتيوب • تيك توك • إنستغرام • بينترست\n\n"
         f"⚡ أرسل الرابط الآن للبدء 🔻"
     )
-    
-    await update.message.reply_text(
-        welcome_msg, 
-        parse_mode='HTML'
-    )
+
+    await update.message.reply_text(welcome_msg)
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+
     if user_id not in ADMIN_IDS:
         await update.message.reply_text("❌ عذراً، هذا الأمر مخصص للمشرفين فقط.")
         return
@@ -279,7 +215,9 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [KeyboardButton("-------------------------------------")],
         [KeyboardButton("🚪 إخفاء لوحة التحكم")],
     ]
+
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
     await update.message.reply_text(
         "👑 **مرحباً بك في لوحة تحكم البوت:**",
         reply_markup=reply_markup,
@@ -296,6 +234,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=ReplyKeyboardRemove(),
             )
             return
+
         elif (
             text.startswith("📊")
             or text.startswith("📢")
@@ -308,12 +247,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     url = text.strip()
 
+    # التحقق مما إذا كان الرابط تابعاً لبينترست أو تيك توك
     if is_valid_pinterest_url(url):
         await handle_pinterest_message(update, context)
         return
 
     if not is_valid_tiktok_url(url):
-        await update.message.reply_text("❌ أرسل رابطاً صحيحاً من فضلك.")
+        await update.message.reply_text("❌ أرسل رابط تيك توك أو بينترست صحيحاً من فضلك.")
+        return
+
+    if not is_valid_tiktok_url(url):
+        await update.message.reply_text("❌ أرسل رابط تيك توك أو بينترست صحيحاً من فضلك.")
         return
 
     processing_msg = await update.message.reply_text(
@@ -325,40 +269,45 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🎵┇تحميل كملف صوتي", callback_data="audio")],
             [InlineKeyboardButton("📥┇تحميل باعلى دقه HD", callback_data="hd_video")],
         ]
+
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # تنفيذ جلب بيانات تيك توك بدون قيود زمنية ضيقة
         tiktok_data = await asyncio.to_thread(fetch_tiktok_data, url)
 
         if tiktok_data:
             title = tiktok_data["title"]
             images = tiktok_data["images"]
+            video_url = tiktok_data["play"]
             audio_url = tiktok_data["music"]
-            real_url = tiktok_data["webpage_url"]
-            caption_text = "- @G66GBOT"
+            caption_text = "- @G66Gbot"
 
             if images:
                 if audio_url:
                     local_audio_path = None
+
                     try:
                         local_audio_path = await asyncio.to_thread(
                             download_media, audio_url, ".mp3"
                         )
+
                         await context.bot.send_chat_action(
                             chat_id=update.effective_chat.id,
                             action=ChatAction.UPLOAD_VOICE,
                         )
+
                         with local_audio_path.open("rb") as audio_file:
                             await update.message.reply_audio(
                                 audio=audio_file,
                                 title=title,
-                                performer="@G66GBOT",
-                                caption="- @G66GBOT - 1/1",
+                                performer="@G66Gbot",
+                                caption="- @G66Gbot - 1/1",
                             )
+
                     except Exception:
                         logger.exception("Audio send error")
+
                     finally:
-                        if local_audio_path and local_audio_path.exists():
+                        if local_audio_path:
                             local_audio_path.unlink(missing_ok=True)
 
                 await context.bot.send_chat_action(
@@ -366,68 +315,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     action=ChatAction.UPLOAD_PHOTO,
                 )
 
-                valid_images_data = []
-                temp_files = []
+                total_images = len(images)
 
-                try:
-                    for img_url in images:
-                        raw_img = await asyncio.to_thread(download_media, img_url, ".jpg")
-                        if raw_img:
-                            temp_files.append(raw_img)
-                            processed_img = await asyncio.to_thread(process_image_to_jpeg, raw_img)
-                            if processed_img:
-                                if processed_img != raw_img:
-                                    temp_files.append(processed_img)
-                                valid_images_data.append(processed_img)
+                for i in range(0, total_images, 10):
+                    batch = images[i:i + 10]
+                    media_group = []
 
-                    total_valid = len(valid_images_data)
-                    if total_valid == 0:
-                        raise ValueError("No valid images found.")
+                    for idx, img_url in enumerate(batch):
+                        absolute_index = i + idx + 1
 
-                    # إرسال الألبومات (10 صور كحد أقصى لكل ألبوم) مع فاصل زمني آمن لضمان عدم الحظر
-                    for i in range(0, total_valid, 10):
-                        batch = valid_images_data[i:i + 10]
-                        media_group = []
-                        batch_file_objs = []
-
-                        for idx, img_path in enumerate(batch):
-                            absolute_index = i + idx + 1
-                            file_obj = open(img_path, "rb")
-                            batch_file_objs.append(file_obj)
-
-                            if absolute_index == total_valid or idx == len(batch) - 1:
-                                media_group.append(
-                                    InputMediaPhoto(
-                                        media=file_obj,
-                                        caption=f"- @G66GBOT - ({absolute_index}/{total_valid})",
-                                    )
+                        if absolute_index == total_images:
+                            media_group.append(
+                                InputMediaPhoto(
+                                    media=img_url,
+                                    caption=f"- @G66Gbot - {absolute_index}/{total_images}",
                                 )
-                            else:
-                                media_group.append(InputMediaPhoto(media=file_obj))
+                            )
+                        else:
+                            media_group.append(InputMediaPhoto(media=img_url))
 
-                        if media_group:
-                            try:
-                                await update.message.reply_media_group(media=media_group)
-                                await asyncio.sleep(1.5)
-                            except TelegramError as e:
-                                logger.error(f"Telegram error while sending media group: {e}")
-                                await asyncio.sleep(4.0)
-
-                finally:
-                    for path_obj in temp_files:
-                        if isinstance(path_obj, Path) and path_obj.exists():
-                            path_obj.unlink(missing_ok=True)
+                    if media_group:
+                        await update.message.reply_media_group(media=media_group)
 
                 await processing_msg.delete()
                 return
 
-            else:
+            elif video_url:
                 local_video_path = await asyncio.to_thread(
-                    download_tiktok_with_ytdlp, real_url, False
+                    download_media, video_url, ".mp4"
                 )
-
-                if not local_video_path:
-                    raise ValueError("Failed to download video via yt-dlp")
 
                 try:
                     await context.bot.send_chat_action(
@@ -446,13 +362,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         context,
                         sent_video,
                         user_id,
-                        real_url,
+                        url,
                         title,
                     )
 
                 finally:
-                    if local_video_path and local_video_path.exists():
-                        local_video_path.unlink(missing_ok=True)
+                    local_video_path.unlink(missing_ok=True)
 
                 await processing_msg.delete()
                 return
@@ -462,24 +377,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
             "⚠️┇أعد المحاوله مع ملف اخر."
         )
+
         await processing_msg.edit_text(error_custom_msg)
 
     except Exception:
         logger.exception("Error in handle_message")
+
         error_custom_msg = (
             "⚠️┇هذا الملف لا يمكنني تحميله،\n"
             "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
             "⚠️┇أعد المحاوله مع ملف اخر."
         )
+
         await processing_msg.edit_text(error_custom_msg)
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+
     if not query or not query.message:
         return
 
     await query.answer()
 
+    # معالجة أزرار اليوتيوب
     if query.data in ["yt_video", "yt_audio", "yt_voice"]:
         chat_id = query.message.chat_id
         yt_sessions = context.application.bot_data.get("yt_sessions", {})
@@ -487,16 +407,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         session = yt_sessions.get(session_key)
 
         if not session:
-            try:
-                await query.edit_message_reply_markup(reply_markup=None)
-            except TelegramError:
-                pass
             await query.message.reply_text("❌ انتهت صلاحية الجلسة، أرسل الرابط مرة أخرى.")
             return
 
         await handle_youtube_callback(query, context, session, query.data)
         return
 
+    # معالجة أزرار التيك توك
     chat_id = query.message.chat_id
     sessions = context.application.bot_data.setdefault("download_sessions", {})
     session_key = (chat_id, query.message.message_id)
@@ -504,20 +421,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not session or time.monotonic() - session["created_at"] > SESSION_TTL_SECONDS:
         sessions.pop(session_key, None)
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except TelegramError:
-            pass
         await query.message.reply_text(
             "❌ انتهت صلاحية الجلسة، أرسل الرابط مرة أخرى."
         )
         return
 
     if query.from_user.id != session["user_id"]:
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except TelegramError:
-            pass
         await query.message.reply_text(
             "❌ انتهت صلاحية الجلسة، أرسل الرابط مرة أخرى."
         )
@@ -539,17 +448,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             tiktok_data = await asyncio.to_thread(fetch_tiktok_data, url)
             audio_link = tiktok_data.get("music") if tiktok_data else None
 
-            if audio_link:
-                local_audio_path = await asyncio.to_thread(
-                    download_media, audio_link, ".mp3"
-                )
-            else:
-                local_audio_path = await asyncio.to_thread(
-                    download_tiktok_with_ytdlp, url, True
-                )
+            if not audio_link:
+                raise ValueError("Audio link is unavailable")
 
-            if not local_audio_path:
-                raise ValueError("Audio file is unavailable")
+            local_audio_path = await asyncio.to_thread(
+                download_media, audio_link, ".mp3"
+            )
 
             await context.bot.send_chat_action(
                 chat_id=chat_id, action=ChatAction.UPLOAD_VOICE
@@ -560,8 +464,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_id=chat_id,
                     audio=audio_file,
                     title=video_title,
-                    performer="@G66GBOT",
-                    caption="- @G66GBOT",
+                    performer="@G66Gbot",
+                    caption="- @G66Gbot",
                 )
 
             await status_msg.delete()
@@ -571,7 +475,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await status_msg.edit_text("❌ حدث خطأ أثناء تحميل الملف الصوتي.")
 
         finally:
-            if local_audio_path and local_audio_path.exists():
+            if local_audio_path:
                 local_audio_path.unlink(missing_ok=True)
             sessions.pop(session_key, None)
 
@@ -585,17 +489,21 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         local_video_path = None
 
         try:
-            local_video_path = await asyncio.to_thread(
-                download_tiktok_with_ytdlp, url, False
-            )
+            tiktok_data = await asyncio.to_thread(fetch_tiktok_data, url)
+            video_url = tiktok_data.get("play") if tiktok_data else None
 
-            if not local_video_path:
-                raise ValueError("Video file is unavailable")
+            if not video_url:
+                raise ValueError("Video link is unavailable")
 
             audio_only_keyboard = [
                 [InlineKeyboardButton("🎵 تحميل كملف صوتي.", callback_data="audio")]
             ]
+
             audio_reply_markup = InlineKeyboardMarkup(audio_only_keyboard)
+
+            local_video_path = await asyncio.to_thread(
+                download_media, video_url, ".mp4"
+            )
 
             await context.bot.send_chat_action(
                 chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO
@@ -605,7 +513,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 sent_video = await context.bot.send_video(
                     chat_id=chat_id,
                     video=video_file,
-                    caption="- @G66GBOT",
+                    caption="- @G66Gbot",
                     reply_markup=audio_reply_markup,
                 )
 
@@ -629,7 +537,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await status_msg.edit_text(error_custom_msg)
 
         finally:
-            if local_video_path and local_video_path.exists():
+            if local_video_path:
                 local_video_path.unlink(missing_ok=True)
             sessions.pop(session_key, None)
 
@@ -648,6 +556,7 @@ def main():
     app.add_handler(
         MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
     )
+
     app.add_handler(CallbackQueryHandler(button_callback))
 
     print("بوت التحميل يعمل الآن بكفاءة...")
