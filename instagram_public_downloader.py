@@ -1,6 +1,9 @@
 import asyncio
+import json
 import logging
+import mimetypes
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
@@ -8,7 +11,7 @@ from urllib.parse import urlparse
 import instaloader
 import requests
 import yt_dlp
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, Update
 from telegram.constants import ChatAction
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes, filters
@@ -16,7 +19,10 @@ from telegram.ext import ContextTypes, filters
 
 logger = logging.getLogger(__name__)
 MAX_MEDIA_SIZE = 49 * 1024 * 1024
+UNKNOWN_CODEC = "unknown"
 MEDIA_ID_CACHE: dict[str, list[tuple[str, str]]] = {}
+PROBE_VIDEO_CACHE = {}
+VIDEO_THUMBNAIL_CACHE = {}
 MAX_CACHE_ENTRIES = 500
 DOWNLOAD_HEADERS = {
     "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 300.0.0.0.0 (iPhone14,2; iOS 16_6; ar_SA; ar; Scale=3.00; 1170x2532)",
@@ -44,6 +50,31 @@ class InstagramDownloadError(Exception):
 
 class InstagramMediaTooLarge(InstagramDownloadError):
     pass
+
+
+class VideoProcessingError(InstagramDownloadError):
+    pass
+
+
+def log_media_tools_status():
+    for tool in ("ffmpeg", "ffprobe"):
+        executable = shutil.which(tool)
+        if executable is None:
+            logger.error("%s is NOT installed; videos cannot be prepared", tool)
+            continue
+        try:
+            result = subprocess.run(
+                [executable, "-version"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            logger.error("%s is installed but failed to run", tool, exc_info=True)
+            continue
+        first_line = (result.stdout or result.stderr or "").splitlines()
+        logger.info("%s available: %s", tool, first_line[0] if first_line else "unknown")
 
 
 def _get_instagram_url_parts(url):
@@ -98,11 +129,9 @@ def get_direct_video_url(url):
         with yt_dlp.YoutubeDL(options) as ydl:
             info = ydl.extract_info(url, download=False)
             if info:
-                # إذا كان مقطع مباشر أو يحتوي على رابط مباشر للفيديو
                 direct_url = info.get("url")
                 if direct_url:
                     return direct_url
-                # لو كان يحتوي على formats
                 formats = info.get("formats", [])
                 if formats:
                     best_f = max(formats, key=lambda f: f.get("filesize") or f.get("tbr") or 0)
@@ -130,11 +159,10 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
     status_message = await update.message.reply_text("♻┇جاري التحميل...")
 
     try:
-        # استخراج الرابط المباشر للفيديو لجعل تيليجرام يعالج ويحمل بنفسه
+        # جلب الرابط المباشر ليقوم سيرفر تيليجرام بالتحميل والمعالجة بنفسه
         direct_video_url = await asyncio.to_thread(get_direct_video_url, url)
         
         if not direct_video_url:
-            # محاولة احتياطية عبر انستالوادر لو فشل استخراج الرابط المباشر
             loader = instaloader.Instaloader(
                 download_pictures=False,
                 download_videos=False,
@@ -163,7 +191,7 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
             action=ChatAction.UPLOAD_VIDEO,
         )
 
-        # إرسال الرابط المباشر ليتولى سيرفر تيليجرام عملية الجلب والمعالجة بالكامل
+        # تيليجرام سيتولى عملية سحب الفيديو وعرضه ومعالجته بالكامل عبر الرابط المباشر
         sent_message = await update.message.reply_video(
             video=direct_video_url,
             caption=caption,
@@ -191,3 +219,6 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
     except Exception:
         logger.exception("Unexpected Instagram handler error")
         await status_message.edit_text("❌ حدث خطأ أثناء معالجة الطلب.")
+
+
+log_media_tools_status()
