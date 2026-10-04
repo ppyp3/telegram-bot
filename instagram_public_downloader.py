@@ -258,8 +258,19 @@ def normalize_media_files(media_files):
     return checked_files
 
 
-def convert_video_for_telegram(file_path):
-    """إجبار تحويل الفيديو عبر FFmpeg ليكون متوافقاً 100% مع تيليجرام والصوت والستوديو"""
+def smart_convert_video_for_telegram(file_path):
+    """فحص الفيديو: إذا كان ترميزه طبيعياً ومتوافقاً ينزل فوراً، وإذا كان معقداً يتم معالجته فقط"""
+    video_codec, audio_codec, _, _, _ = probe_video(file_path)
+    
+    # إذا كان الفيديو بصيغ شائعة ومتوافقة تماماً مع تيليجرام، اتركه كما هو لسرعة التحميل
+    supported_video_codecs = {"h264", "avc1"}
+    supported_audio_codecs = {"aac", "mp4a"}
+    
+    if video_codec in supported_video_codecs and audio_codec in supported_audio_codecs:
+        logger.info("الفيديو ذو ترميز متوافق (%s/%s)، سيتم تمريره بدون معالجة.", video_codec, audio_codec)
+        return file_path
+
+    logger.info("الفيديو يتطلب معالجة لعدم توافق الترميز (%s/%s)", video_codec, audio_codec)
     output_path = file_path.with_name(f"{file_path.stem}_converted.mp4")
     command = [
         "ffmpeg",
@@ -326,8 +337,8 @@ def download_reel_as_instagram(url, output_dir):
 
     chosen = max(media_files, key=lambda p: p.stat().st_size)
 
-    # معالجة وتوافق الفيديو تلقائياً ليكون ملائماً تماماً لتيليجرام والاستوديو
-    chosen = convert_video_for_telegram(chosen)
+    # الفحص الذكي: معالجة فقط الفيديو الذي يحتاج معالجة وتمرير السليم فوراً
+    chosen = smart_convert_video_for_telegram(chosen)
 
     if chosen.stat().st_size > MAX_MEDIA_SIZE:
         raise InstagramMediaTooLarge
