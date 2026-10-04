@@ -258,33 +258,17 @@ def normalize_media_files(media_files):
     return checked_files
 
 
-def collect_downloaded(output_dir, prefix, suffixes):
-    return sorted(
-        path
-        for path in output_dir.iterdir()
-        if path.is_file()
-        and path.name.startswith(prefix)
-        and not path.name.endswith((".part", ".ytdl"))
-        and path.suffix.lower() in suffixes
-    )
-
-
 def download_reel_as_instagram(url, output_dir):
+    # التعديل الحاسم: سحب ملف الـ mp4 المباشر الخالي من التعقيد ليتطابق مع حجم البوتات السريعة
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        "merge_output_format": "mp4",
-        "postprocessors": [{
-            "key": "FFmpegVideoConvertor",
-            "preferedformat": "mp4",
-        }],
+        "format": "b[ext=mp4]/b",
         "extractor_args": {
             "instagram": {
                 "api_hostname": "www.instagram.com",
             }
         },
         "geo_bypass": True,
-        "concurrent_fragment_downloads": 4,
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
@@ -303,7 +287,10 @@ def download_reel_as_instagram(url, output_dir):
         logger.error("فشل السحب المباشر: %s", error)
         raise error
 
-    media_files = collect_downloaded(output_dir, "reel_", {".mp4", ".mkv", ".webm", ".mov"})
+    media_files = sorted(
+        path for path in output_dir.iterdir()
+        if path.is_file() and path.suffix.lower() == ".mp4" and not path.name.endswith((".part", ".ytdl"))
+    )
     if not media_files:
         raise InstagramDownloadError("لم يتم العثور على ملفات فيديو مطابقة")
 
