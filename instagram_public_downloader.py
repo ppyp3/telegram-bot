@@ -272,8 +272,12 @@ def collect_downloaded(output_dir, prefix, suffixes):
 def download_reel_as_instagram(url, output_dir):
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4] / best",
+        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "merge_output_format": "mp4",
+        "postprocessors": [{
+            "key": "FFmpegVideoConvertor",
+            "preferedformat": "mp4",
+        }],
         "extractor_args": {
             "instagram": {
                 "api_hostname": "www.instagram.com",
