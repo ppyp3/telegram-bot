@@ -2,13 +2,13 @@ import asyncio
 import json
 import logging
 import mimetypes
+import re
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
-import instaloader
 import requests
 import yt_dlp
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, Update
@@ -298,51 +298,6 @@ def smart_convert_video_for_telegram(file_path):
     return file_path
 
 
-def download_reel_as_instagram(url, output_dir):
-    shortcode = get_shortcode(url)
-    video_url = None
-
-    # الطريقة الأولى: جلب رابط الفيديو المباشر من خلال صفحة الـ Embed الرسمية لإنستغرام (تتجاوز حظر تسجيل الدخول تماماً)
-    try:
-        embed_url = f"https://www.instagram.com/p/{shortcode}/embed/captioned/"
-        res = requests.get(embed_url, headers=DOWNLOAD_HEADERS, timeout=15)
-        if res.status_code == 200:
-            import re
-            match = re.search(r'"video_url"\s*:\s*"(https:[^"]+)"', res.text)
-            if match:
-                video_url = match.group(1).encode().decode('unicode-escape')
-    except Exception:
-        pass
-
-    # الطريقة الثانية: عبر instaloader إذا لم تنجح طريقة الـ embed
-    if not video_url:
-        try:
-            loader = instaloader.Instaloader(
-                download_pictures=False,
-                download_videos=True,
-                download_video_thumbnails=False,
-                save_metadata=False,
-                compress_json=False,
-                post_metadata_txt_pattern="",
-            )
-            post = instaloader.Post.from_shortcode(loader.context, shortcode)
-            if post.is_video and post.video_url:
-                video_url = post.video_url
-        except Exception:
-            pass
-
-    if video_url:
-        output_path = output_dir / f"reel_{shortcode}.mp4"
-        download_file(video_url, output_path)
-        if output_path.exists() and output_path.stat().st_size > 0:
-            chosen = smart_convert_video_for_telegram(output_path)
-            if chosen.stat().st_size > MAX_MEDIA_SIZE:
-                raise InstagramMediaTooLarge
-            return [chosen]
-
-    raise InstagramDownloadError("تعذر استخراج رابط الفيديو المباشر بسبب حماية إنستغرام.")
-
-
 def download_instagram_media(url):
     shortcode = get_shortcode(url)
     if not shortcode:
@@ -350,54 +305,55 @@ def download_instagram_media(url):
 
     output_dir = Path(tempfile.mkdtemp(prefix="instagram_media_"))
     post_caption = ""
+    media_files = []
 
     try:
-        try:
-            reel_files = download_reel_as_instagram(url, output_dir)
-            try:
-                loader = instaloader.Instaloader(
-                    download_pictures=False, download_videos=False, save_metadata=False
-                )
-                post = instaloader.Post.from_shortcode(loader.context, shortcode)
-                if post.caption:
-                    post_caption = post.caption.strip().split("\n")[0][:60]
-            except Exception:
-                pass
+        # استخراج مباشر عبر صفحة الـ Embed لتجاوز حظر 401 وخوادم إنستغرام
+        embed_url = f"https://www.instagram.com/p/{shortcode}/embed/captioned/"
+        res = requests.get(embed_url, headers=DOWNLOAD_HEADERS, timeout=15)
+        
+        video_url = None
+        image_url = None
 
-            return output_dir, normalize_media_files(reel_files), post_caption
-        except Exception:
-            logger.warning("Embed/Instaloader method failed, trying fallback API", exc_info=True)
+        if res.status_code == 200:
+            v_match = re.search(r'"video_url"\s*:\s*"(https:[^"]+)"', res.text)
+            if v_match:
+                video_url = v_match.group(1).encode().decode('unicode-escape')
+            
+            i_match = re.search(r'"display_url"\s*:\s*"(https:[^"]+)"', res.text)
+            if i_match:
+                image_url = i_match.group(1).encode().decode('unicode-escape')
 
-        loader = instaloader.Instaloader(
-            download_pictures=False,
-            download_videos=False,
-            download_video_thumbnails=False,
-            save_metadata=False,
-            compress_json=False,
-            post_metadata_txt_pattern="",
-        )
-        post = instaloader.Post.from_shortcode(loader.context, shortcode)
-        if post.caption:
-            post_caption = post.caption.strip().split("\n")[0][:60]
-
-        if post.typename == "GraphSidecar":
-            media_items = [
-                (node.video_url if node.is_video else node.display_url, node.is_video)
-                for node in post.get_sidecar_nodes()
-            ]
-        else:
-            media_items = [
-                (post.video_url if post.is_video else post.url, post.is_video)
-            ]
-
-        media_files = []
-        for index, (media_url, is_video) in enumerate(media_items, start=1):
-            if not media_url:
-                continue
-            suffix = ".mp4" if is_video else ".jpg"
-            output_path = output_dir / f"{index:03d}{suffix}"
-            download_file(media_url, output_path)
+        if video_url:
+            output_path = output_dir / "001.mp4"
+            download_file(video_url, output_path)
+            chosen = smart_convert_video_for_telegram(output_path)
+            media_files.append(chosen)
+        elif image_url:
+            output_path = output_dir / "001.jpg"
+            download_file(image_url, output_path)
             media_files.append(output_path)
+        else:
+            # طريقة بديلة أخيرة في حال عدم توفر الـ embed
+            ydl_opts = {
+                "outtmpl": str(output_dir / "media_%(id)s.%(ext)s"),
+                "format": "b[ext=mp4]/b",
+                "quiet": True,
+                "no_warnings": True,
+                "noplaylist": True,
+                "http_headers": DOWNLOAD_HEADERS,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                if info:
+                    post_caption = str(info.get("title") or "").strip().split("\n")[0][:60]
+
+            for path in output_dir.iterdir():
+                if path.is_file() and not path.name.endswith((".part", ".ytdl")):
+                    if is_video_file(path):
+                        media_files.append(smart_convert_video_for_telegram(path))
+                    else:
+                        media_files.append(path)
 
         if not media_files:
             raise InstagramDownloadError("No downloadable Instagram media was found")
@@ -585,91 +541,5 @@ async def send_cached_media(message, context, media_ids):
                         supports_streaming=True,
                     )
                 )
-        await message.reply_media_group(media=media_group)
-
-
-async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.effective_chat:
-        return
-
-    url = (update.message.text or "").strip()
-    shortcode = get_shortcode(url)
-    if not shortcode:
-        return
-
-    status_message = await update.message.reply_text("♻┇جاري التحميل...")
-    output_dir = None
-
-    try:
-        cached_media = MEDIA_ID_CACHE.get(shortcode)
-        if cached_media is not None and get_url_kind(url) != "reel":
-            await send_cached_media(update.message, context, cached_media)
-            await status_message.delete()
-            return
-
-        output_dir, media_files, post_caption = await asyncio.to_thread(download_instagram_media, url)
-        
-        is_reel = (get_url_kind(url) == "reel") or (len(media_files) == 1 and is_video_file(media_files[0]))
-        action = ChatAction.UPLOAD_VIDEO if (media_files and is_video_file(media_files[0])) else ChatAction.UPLOAD_PHOTO
-
-        await context.bot.send_chat_action(
-            chat_id=update.effective_chat.id,
-            action=action,
-        )
-
-        reply_markup = None
-        if is_reel and len(media_files) == 1 and is_video_file(media_files[0]):
-            keyboard = [
-                [InlineKeyboardButton("🎵┇تحميل كملف صوتي", callback_data="audio")],
-                [InlineKeyboardButton("📥┇تحميل باعلى دقه HD", callback_data="hd_video")],
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-
-        sent_messages = await send_instagram_album(
-            update.message, context, media_files, is_reel=is_reel, reply_markup=reply_markup
-        )
-
-        if is_reel and sent_messages:
-            user_id = update.effective_user.id
-            title = post_caption if post_caption else "محتوى انستغرام"
-            sessions = context.application.bot_data.setdefault("download_sessions", {})
-            first_sent = sent_messages[0]
-            sessions[(first_sent.chat_id, first_sent.message_id)] = {
-                "user_id": user_id,
-                "url": url,
-                "title": title,
-                "created_at": asyncio.get_event_loop().time() if hasattr(asyncio, 'get_event_loop') else 0,
-            }
-
-        if get_url_kind(url) != "reel":
-            cache_sent_media(shortcode, sent_messages)
-
-        await status_message.delete()
-    except InstagramMediaTooLarge:
-        await status_message.edit_text(
-            "⚠️┇هذا الملف لا يمكنني تحميله،\n"
-            "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
-            "⚠️┇أعد المحاوله مع ملف اخر."
-        )
-    except VideoProcessingError:
-        await status_message.edit_text("❌ تعذر تجهيز الفيديو. حاول مرة أخرى.")
-    except (
-        InstagramDownloadError,
-        instaloader.exceptions.InstaloaderException,
-        requests.RequestException,
-        TelegramError,
-    ):
-        logger.exception("Instagram download failed")
-        await status_message.edit_text(
-            "❌ تعذر تحميل هذا الرابط. تأكد أن الحساب والمنشور عام ثم أعد المحاولة."
-        )
-    except Exception:
-        logger.exception("Unexpected Instagram handler error")
-        await status_message.edit_text("❌ حدث خطأ أثناء تحميل محتوى الإنستغرام.")
-    finally:
-        if output_dir:
-            await asyncio.to_thread(shutil.rmtree, output_dir, True)
-
-
-log_media_tools_status()
+        await message.reply_media_
  
