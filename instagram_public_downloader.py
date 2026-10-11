@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import mimetypes
+import random
 import re
 import shutil
 import subprocess
@@ -10,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
+import yt_dlp
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, Update
 from telegram.constants import ChatAction
 from telegram.error import TelegramError
@@ -23,12 +25,27 @@ MEDIA_ID_CACHE: dict[str, list[tuple[str, str]]] = {}
 PROBE_VIDEO_CACHE = {}
 VIDEO_THUMBNAIL_CACHE = {}
 MAX_CACHE_ENTRIES = 500
-DOWNLOAD_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://www.instagram.com/",
-}
+
+# قائمة متصفحات عشوائية متغيرة بالكامل لتجنب الحظر تماماً (Anti-Ban User Agents)
+STEALTH_USER_AGENTS = [
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 313.0.0.30.115",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 302.0.0.2.108",
+    "Mozilla/5.0 (Linux; Android 14; SM-S918B Build/UP1A.231005.007; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/121.0.6167.144 Mobile Safari/537.36 Instagram 314.0.0.32.115",
+    "Mozilla/5.0 (Linux; Android 13; SM-A536B Build/TP1A.220624.014) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.43 Mobile Safari/537.36 Instagram 310.0.0.34.110"
+]
+
+def get_stealth_headers():
+    return {
+        "User-Agent": random.choice(STEALTH_USER_AGENTS),
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Dest": "empty",
+        "Referer": "https://www.instagram.com/",
+        "X-IG-App-ID": "936619743392459",
+    }
 
 INSTAGRAM_FILTER = filters.TEXT & filters.Regex(
     r"(?i)^https?://(?:www\.)?instagram\.com/(?:p|reel|reels)/"
@@ -117,8 +134,8 @@ def download_file(url, output_path):
     try:
         response = requests.get(
             url,
-            headers=DOWNLOAD_HEADERS,
-            timeout=(10, 45),
+            headers=get_stealth_headers(),
+            timeout=(15, 60),
             stream=True,
         )
         response.raise_for_status()
@@ -307,57 +324,41 @@ def download_instagram_media(url):
     media_files = []
 
     try:
-        embed_url = f"https://www.instagram.com/p/{shortcode}/embed/captioned/"
-        res = requests.get(embed_url, headers=DOWNLOAD_HEADERS, timeout=15)
+        # نظام الخداع المزدوج (Anti-Detection Extraction)
+        ydl_opts = {
+            "outtmpl": str(output_dir / "media_%(id)s.%(ext)s"),
+            "format": "b[ext=mp4]/b",
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "geo_bypass": True,
+            "socket_timeout": 30,
+            "http_headers": get_stealth_headers(),
+        }
         
-        video_url = None
-        image_url = None
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            if info:
+                post_caption = str(info.get("title") or "").strip().split("\n")[0][:60]
 
-        if res.status_code == 200:
-            v_match = re.search(r'"video_url"\s*:\s*"(https:[^"]+)"', res.text)
-            if v_match:
-                video_url = v_match.group(1).encode().decode('unicode-escape')
-            
-            i_match = re.search(r'"display_url"\s*:\s*"(https:[^"]+)"', res.text)
-            if i_match:
-                image_url = i_match.group(1).encode().decode('unicode-escape')
+        for path in output_dir.iterdir():
+            if path.is_file() and not path.name.endswith((".part", ".ytdl")):
+                if is_video_file(path):
+                    media_files.append(smart_convert_video_for_telegram(path))
+                else:
+                    media_files.append(path)
 
-        if video_url:
-            output_path = output_dir / "001.mp4"
-            download_file(video_url, output_path)
-            chosen = smart_convert_video_for_telegram(output_path)
-            media_files.append(chosen)
-        elif image_url:
-            output_path = output_dir / "001.jpg"
-            download_file(image_url, output_path)
-            media_files.append(output_path)
-        else:
-            api_url = f"https://www.instagram.com/p/{shortcode}/?__a=1&__d=dis"
-            api_headers = DOWNLOAD_HEADERS.copy()
-            api_headers["X-Requested-With"] = "XMLHttpRequest"
-            
-            api_res = requests.get(api_url, headers=api_headers, timeout=15)
-            if api_res.status_code == 200:
-                data = api_res.json()
-                items = data.get("items", [])
-                if not items and "graphql" in data:
-                    node = data["graphql"].get("shortcode_media", {})
-                    if node:
-                        items = [node]
-                
-                for item in items:
-                    is_vid = item.get("is_video", False)
-                    v_url = item.get("video_url")
-                    i_url = item.get("display_url")
-                    
-                    if is_vid and v_url:
-                        out_p = output_dir / f"{len(media_files)+1:03d}.mp4"
-                        download_file(v_url, out_p)
-                        media_files.append(smart_convert_video_for_telegram(out_p))
-                    elif i_url:
-                        out_p = output_dir / f"{len(media_files)+1:03d}.jpg"
-                        download_file(i_url, out_p)
-                        media_files.append(out_p)
+        if not media_files:
+            # خطة احتياطية خفية جداً في حال فشل yt_dlp
+            embed_url = f"https://www.instagram.com/p/{shortcode}/embed/captioned/"
+            res = requests.get(embed_url, headers=get_stealth_headers(), timeout=15)
+            if res.status_code == 200:
+                v_match = re.search(r'"video_url"\s*:\s*"(https:[^"]+)"', res.text)
+                if v_match:
+                    v_url = v_match.group(1).encode().decode('unicode-escape')
+                    out_p = output_dir / "001.mp4"
+                    download_file(v_url, out_p)
+                    media_files.append(smart_convert_video_for_telegram(out_p))
 
         if not media_files:
             raise InstagramDownloadError("No downloadable Instagram media was found")
@@ -598,37 +599,5 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
                 "user_id": user_id,
                 "url": url,
                 "title": title,
-                "created_at": asyncio.get_event_loop().time() if hasattr(asyncio, 'get_event_loop') else 0,
-            }
-
-        if get_url_kind(url) != "reel":
-            cache_sent_media(shortcode, sent_messages)
-
-        await status_message.delete()
-    except InstagramMediaTooLarge:
-        await status_message.edit_text(
-            "⚠️┇هذا الملف لا يمكنني تحميله،\n"
-            "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
-            "⚠️┇أعد المحاوله مع ملف اخر."
-        )
-    except VideoProcessingError:
-        await status_message.edit_text("❌ تعذر تجهيز الفيديو. حاول مرة أخرى.")
-    except (
-        InstagramDownloadError,
-        requests.RequestException,
-        TelegramError,
-    ):
-        logger.exception("Instagram download failed")
-        await status_message.edit_text(
-            "❌ تعذر تحميل هذا الرابط. تأكد أن الحساب والمنشور عام ثم أعد المحاولة."
-        )
-    except Exception:
-        logger.exception("Unexpected Instagram handler error")
-        await status_message.edit_text("❌ حدث خطأ أثناء تحميل محتوى الإنستغرام.")
-    finally:
-        if output_dir:
-            await asyncio.to_thread(shutil.rmtree, output_dir, True)
-
-
-log_media_tools_status()
+                "created_at": asyncio.
  
