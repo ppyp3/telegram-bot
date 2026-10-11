@@ -35,12 +35,12 @@ STEALTH_USER_AGENTS = [
 def get_stealth_headers():
     return {
         "User-Agent": random.choice(STEALTH_USER_AGENTS),
-        "Accept": "*/*",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
         "Accept-Encoding": "gzip, deflate, br",
         "Sec-Fetch-Site": "same-origin",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Dest": "document",
         "Referer": "https://www.instagram.com/",
         "X-IG-App-ID": "936619743392459",
     }
@@ -322,8 +322,8 @@ def download_instagram_media(url):
     media_files = []
 
     try:
-        embed_url = f"https://www.instagram.com/p/{shortcode}/embed/captioned/"
-        res = requests.get(embed_url, headers=get_stealth_headers(), timeout=15)
+        post_url = f"https://www.instagram.com/p/{shortcode}/"
+        res = requests.get(post_url, headers=get_stealth_headers(), timeout=15)
         
         video_url = None
         image_url = None
@@ -333,9 +333,19 @@ def download_instagram_media(url):
             if v_match:
                 video_url = v_match.group(1).encode().decode('unicode-escape')
             
+            if not video_url:
+                v_match_alt = re.search(r'property="og:video"\s+content="(https:[^"]+)"', res.text)
+                if v_match_alt:
+                    video_url = v_match_alt.group(1).replace('&amp;', '&')
+
             i_match = re.search(r'"display_url"\s*:\s*"(https:[^"]+)"', res.text)
             if i_match:
                 image_url = i_match.group(1).encode().decode('unicode-escape')
+            
+            if not image_url:
+                i_match_alt = re.search(r'property="og:image"\s+content="(https:[^"]+)"', res.text)
+                if i_match_alt:
+                    image_url = i_match_alt.group(1).replace('&amp;', '&')
 
         if video_url:
             output_path = output_dir / "001.mp4"
