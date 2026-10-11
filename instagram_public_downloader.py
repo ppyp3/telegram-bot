@@ -25,7 +25,9 @@ PROBE_VIDEO_CACHE = {}
 VIDEO_THUMBNAIL_CACHE = {}
 MAX_CACHE_ENTRIES = 500
 DOWNLOAD_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 300.0.0.0.0 (iPhone14,2; iOS 16_6; ar_SA; ar; Scale=3.00; 1170x2532)",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
     "Referer": "https://www.instagram.com/",
 }
 
@@ -298,71 +300,47 @@ def smart_convert_video_for_telegram(file_path):
 
 def download_reel_as_instagram(url, output_dir):
     shortcode = get_shortcode(url)
-    
-    # محاولة السحب عبر instaloader أولاً لتجاوز حظر الـ rate-limit
+    video_url = None
+
+    # الطريقة الأولى: جلب رابط الفيديو المباشر من خلال صفحة الـ Embed الرسمية لإنستغرام (تتجاوز حظر تسجيل الدخول تماماً)
     try:
-        loader = instaloader.Instaloader(
-            download_pictures=False,
-            download_videos=True,
-            download_video_thumbnails=False,
-            save_metadata=False,
-            compress_json=False,
-            post_metadata_txt_pattern="",
-        )
-        post = instaloader.Post.from_shortcode(loader.context, shortcode)
-        if post.is_video and post.video_url:
-            output_path = output_dir / f"reel_{shortcode}.mp4"
-            download_file(post.video_url, output_path)
-            if output_path.exists() and output_path.stat().st_size > 0:
-                chosen = smart_convert_video_for_telegram(output_path)
-                if chosen.stat().st_size > MAX_MEDIA_SIZE:
-                    raise InstagramMediaTooLarge
-                return [chosen]
+        embed_url = f"https://www.instagram.com/p/{shortcode}/embed/captioned/"
+        res = requests.get(embed_url, headers=DOWNLOAD_HEADERS, timeout=15)
+        if res.status_code == 200:
+            import re
+            match = re.search(r'"video_url"\s*:\s*"(https:[^"]+)"', res.text)
+            if match:
+                video_url = match.group(1).encode().decode('unicode-escape')
     except Exception:
-        logger.warning("Instaloader direct download failed, falling back to yt-dlp", exc_info=True)
+        pass
 
-    options = {
-        "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
-        "format": "b[ext=mp4]/b",
-        "extractor_args": {
-            "instagram": {
-                "api_hostname": "www.instagram.com",
-            }
-        },
-        "geo_bypass": True,
-        "quiet": True,
-        "no_warnings": True,
-        "noprogress": True,
-        "noplaylist": True,
-        "socket_timeout": 30,
-        "http_headers": DOWNLOAD_HEADERS,
-    }
+    # الطريقة الثانية: عبر instaloader إذا لم تنجح طريقة الـ embed
+    if not video_url:
+        try:
+            loader = instaloader.Instaloader(
+                download_pictures=False,
+                download_videos=True,
+                download_video_thumbnails=False,
+                save_metadata=False,
+                compress_json=False,
+                post_metadata_txt_pattern="",
+            )
+            post = instaloader.Post.from_shortcode(loader.context, shortcode)
+            if post.is_video and post.video_url:
+                video_url = post.video_url
+        except Exception:
+            pass
 
-    for stale_file in output_dir.iterdir():
-        if stale_file.is_file():
-            stale_file.unlink(missing_ok=True)
+    if video_url:
+        output_path = output_dir / f"reel_{shortcode}.mp4"
+        download_file(video_url, output_path)
+        if output_path.exists() and output_path.stat().st_size > 0:
+            chosen = smart_convert_video_for_telegram(output_path)
+            if chosen.stat().st_size > MAX_MEDIA_SIZE:
+                raise InstagramMediaTooLarge
+            return [chosen]
 
-    try:
-        with yt_dlp.YoutubeDL(options) as downloader:
-            downloader.extract_info(url, download=True)
-    except yt_dlp.utils.DownloadError as error:
-        logger.error("فشل السحب: %s", error)
-        raise error
-
-    media_files = sorted(
-        path for path in output_dir.iterdir()
-        if path.is_file() and path.suffix.lower() == ".mp4" and not path.name.endswith((".part", ".ytdl"))
-    )
-    if not media_files:
-        raise InstagramDownloadError("لم يتم العثور على ملفات فيديو مطابقة")
-
-    chosen = max(media_files, key=lambda p: p.stat().st_size)
-    chosen = smart_convert_video_for_telegram(chosen)
-
-    if chosen.stat().st_size > MAX_MEDIA_SIZE:
-        raise InstagramMediaTooLarge
-
-    return [chosen]
+    raise InstagramDownloadError("تعذر استخراج رابط الفيديو المباشر بسبب حماية إنستغرام.")
 
 
 def download_instagram_media(url):
@@ -388,24 +366,38 @@ def download_instagram_media(url):
 
             return output_dir, normalize_media_files(reel_files), post_caption
         except Exception:
-            logger.warning("Instagram app-style stream failed, falling back to yt-dlp direct extraction", exc_info=True)
+            logger.warning("Embed/Instaloader method failed, trying fallback API", exc_info=True)
 
-        options = {
-            "outtmpl": str(output_dir / "post_%(id)s.%(ext)s"),
-            "format": "b[ext=mp4]/b",
-            "quiet": True,
-            "no_warnings": True,
-            "noplaylist": True,
-        }
-        with yt_dlp.YoutubeDL(options) as ydl:
-            info = ydl.extract_info(url, download=True)
-            if info:
-                post_caption = str(info.get("title") or "").strip().split("\n")[0][:60]
-
-        media_files = sorted(
-            path for path in output_dir.iterdir()
-            if path.is_file() and not path.name.endswith((".part", ".ytdl"))
+        loader = instaloader.Instaloader(
+            download_pictures=False,
+            download_videos=False,
+            download_video_thumbnails=False,
+            save_metadata=False,
+            compress_json=False,
+            post_metadata_txt_pattern="",
         )
+        post = instaloader.Post.from_shortcode(loader.context, shortcode)
+        if post.caption:
+            post_caption = post.caption.strip().split("\n")[0][:60]
+
+        if post.typename == "GraphSidecar":
+            media_items = [
+                (node.video_url if node.is_video else node.display_url, node.is_video)
+                for node in post.get_sidecar_nodes()
+            ]
+        else:
+            media_items = [
+                (post.video_url if post.is_video else post.url, post.is_video)
+            ]
+
+        media_files = []
+        for index, (media_url, is_video) in enumerate(media_items, start=1):
+            if not media_url:
+                continue
+            suffix = ".mp4" if is_video else ".jpg"
+            output_path = output_dir / f"{index:03d}{suffix}"
+            download_file(media_url, output_path)
+            media_files.append(output_path)
 
         if not media_files:
             raise InstagramDownloadError("No downloadable Instagram media was found")
@@ -665,7 +657,6 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
         InstagramDownloadError,
         instaloader.exceptions.InstaloaderException,
         requests.RequestException,
-        yt_dlp.utils.DownloadError,
         TelegramError,
     ):
         logger.exception("Instagram download failed")
@@ -681,3 +672,4 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
+ 
