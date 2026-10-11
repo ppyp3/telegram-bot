@@ -259,18 +259,14 @@ def normalize_media_files(media_files):
 
 
 def smart_convert_video_for_telegram(file_path):
-    """فحص الفيديو: إذا كان ترميزه طبيعياً ومتوافقاً ينزل فوراً، وإذا كان معقداً يتم معالجته فقط"""
     video_codec, audio_codec, _, _, _ = probe_video(file_path)
     
-    # إذا كان الفيديو بصيغ شائعة ومتوافقة تماماً مع تيليجرام، اتركه كما هو لسرعة التحميل
     supported_video_codecs = {"h264", "avc1"}
     supported_audio_codecs = {"aac", "mp4a"}
     
     if video_codec in supported_video_codecs and audio_codec in supported_audio_codecs:
-        logger.info("الفيديو ذو ترميز متوافق (%s/%s)، سيتم تمريره بدون معالجة.", video_codec, audio_codec)
         return file_path
 
-    logger.info("الفيديو يتطلب معالجة لعدم توافق الترميز (%s/%s)", video_codec, audio_codec)
     output_path = file_path.with_name(f"{file_path.stem}_converted.mp4")
     command = [
         "ffmpeg",
@@ -336,8 +332,6 @@ def download_reel_as_instagram(url, output_dir):
         raise InstagramDownloadError("لم يتم العثور على ملفات فيديو مطابقة")
 
     chosen = max(media_files, key=lambda p: p.stat().st_size)
-
-    # الفحص الذكي: معالجة فقط الفيديو الذي يحتاج معالجة وتمرير السليم فوراً
     chosen = smart_convert_video_for_telegram(chosen)
 
     if chosen.stat().st_size > MAX_MEDIA_SIZE:
@@ -369,38 +363,25 @@ def download_instagram_media(url):
 
             return output_dir, normalize_media_files(reel_files), post_caption
         except Exception:
-            logger.warning("Instagram app-style stream failed, falling back to API", exc_info=True)
+            logger.warning("Instagram app-style stream failed, falling back to yt-dlp direct extraction", exc_info=True)
 
-        loader = instaloader.Instaloader(
-            download_pictures=False,
-            download_videos=False,
-            download_video_thumbnails=False,
-            save_metadata=False,
-            compress_json=False,
-            post_metadata_txt_pattern="",
+        # خطة بديلة عبر yt-dlp للمنشورات العادية إذا فشل instaloader
+        options = {
+            "outtmpl": str(output_dir / "post_%(id)s.%(ext)s"),
+            "format": "b[ext=mp4]/b",
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+        }
+        with yt_dlp.YoutubeDL(options) as ydl:
+            info = ydl.extract_info(url, download=True)
+            if info:
+                post_caption = str(info.get("title") or "").strip().split("\n")[0][:60]
+
+        media_files = sorted(
+            path for path in output_dir.iterdir()
+            if path.is_file() and not path.name.endswith((".part", ".ytdl"))
         )
-        post = instaloader.Post.from_shortcode(loader.context, shortcode)
-        if post.caption:
-            post_caption = post.caption.strip().split("\n")[0][:60]
-
-        if post.typename == "GraphSidecar":
-            media_items = [
-                (node.video_url if node.is_video else node.display_url, node.is_video)
-                for node in post.get_sidecar_nodes()
-            ]
-        else:
-            media_items = [
-                (post.video_url if post.is_video else post.url, post.is_video)
-            ]
-
-        media_files = []
-        for index, (media_url, is_video) in enumerate(media_items, start=1):
-            if not media_url:
-                continue
-            suffix = ".mp4" if is_video else ".jpg"
-            output_path = output_dir / f"{index:03d}{suffix}"
-            download_file(media_url, output_path)
-            media_files.append(output_path)
 
         if not media_files:
             raise InstagramDownloadError("No downloadable Instagram media was found")
