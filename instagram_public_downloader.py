@@ -322,40 +322,32 @@ def download_instagram_media(url):
     media_files = []
 
     try:
-        post_url = f"https://www.instagram.com/p/{shortcode}/"
-        res = requests.get(post_url, headers=get_stealth_headers(), timeout=15)
+        api_endpoint = f"https://apis.joshweb.click/instagram?url={url}"
+        res = requests.get(api_endpoint, timeout=20)
         
         video_url = None
-        image_url = None
-
         if res.status_code == 200:
-            v_match = re.search(r'"video_url"\s*:\s*"(https:[^"]+)"', res.text)
-            if v_match:
-                video_url = v_match.group(1).encode().decode('unicode-escape')
-            
-            if not video_url:
-                v_match_alt = re.search(r'property="og:video"\s+content="(https:[^"]+)"', res.text)
-                if v_match_alt:
-                    video_url = v_match_alt.group(1).replace('&amp;', '&')
+            data = res.json()
+            if data.get("status") and data.get("result"):
+                result_data = data["result"]
+                if isinstance(result_data, list) and len(result_data) > 0:
+                    video_url = result_data[0].get("url")
+                elif isinstance(result_data, dict):
+                    video_url = result_data.get("url") or result_data.get("video_url")
 
-            i_match = re.search(r'"display_url"\s*:\s*"(https:[^"]+)"', res.text)
-            if i_match:
-                image_url = i_match.group(1).encode().decode('unicode-escape')
-            
-            if not image_url:
-                i_match_alt = re.search(r'property="og:image"\s+content="(https:[^"]+)"', res.text)
-                if i_match_alt:
-                    image_url = i_match_alt.group(1).replace('&amp;', '&')
+        if not video_url:
+            embed_url = f"https://www.instagram.com/p/{shortcode}/embed/"
+            embed_res = requests.get(embed_url, headers=get_stealth_headers(), timeout=15)
+            if embed_res.status_code == 200:
+                v_match = re.search(r'"video_url"\s*:\s*"(https:[^"]+)"', embed_res.text)
+                if v_match:
+                    video_url = v_match.group(1).encode().decode('unicode-escape')
 
         if video_url:
             output_path = output_dir / "001.mp4"
             download_file(video_url, output_path)
             chosen = smart_convert_video_for_telegram(output_path)
             media_files.append(chosen)
-        elif image_url:
-            output_path = output_dir / "001.jpg"
-            download_file(image_url, output_path)
-            media_files.append(output_path)
 
         if not media_files:
             raise InstagramDownloadError("No downloadable Instagram media was found")
