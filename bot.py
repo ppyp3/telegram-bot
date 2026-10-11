@@ -86,7 +86,6 @@ def fetch_tiktok_data(url):
         music_url = None
         title = "محتوى تيك توك"
 
-        # محاولة الجلب عبر API الخارجي بمهلة اتصال واسعة جداً
         try:
             api_res = requests.get(
                 "https://tikwm.com/api/",
@@ -103,7 +102,6 @@ def fetch_tiktok_data(url):
         except Exception:
             pass
 
-        # إذا لم يتم العثور على صور عبر الـ API، نستخدم yt-dlp كبديل آمن
         if not images:
             ydl_opts = {
                 "quiet": True,
@@ -180,7 +178,6 @@ def download_tiktok_with_ytdlp(url, is_audio=False):
 def download_media(url, suffix):
     temporary_path = None
     try:
-        # مهلة اتصال واسعة جداً (15 ثانية للاتصال، 60 ثانية لتنزيل الملف) لمنع حدوث Timeout نهائياً
         with requests.get(
             url, headers=request_headers(), timeout=(15, 60), stream=True
         ) as response:
@@ -327,7 +324,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # تنفيذ جلب بيانات تيك توك بدون قيود زمنية ضيقة
         tiktok_data = await asyncio.to_thread(fetch_tiktok_data, url)
 
         if tiktok_data:
@@ -384,7 +380,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if total_valid == 0:
                         raise ValueError("No valid images found.")
 
-                    # إرسال الألبومات (10 صور كحد أقصى لكل ألبوم) مع فاصل زمني آمن لضمان عدم الحظر
                     for i in range(0, total_valid, 10):
                         batch = valid_images_data[i:i + 10]
                         media_group = []
@@ -457,6 +452,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await processing_msg.delete()
                 return
 
+        await processing_msg.edit_text("❌ تعذر جلب بيانات هذا الرابط، حاول مرة أخرى.")
+
+    except DownloadTooLarge:
         error_custom_msg = (
             "⚠️┇هذا الملف لا يمكنني تحميله،\n"
             "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
@@ -464,14 +462,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await processing_msg.edit_text(error_custom_msg)
 
-    except Exception:
+    except Exception as e:
         logger.exception("Error in handle_message")
-        error_custom_msg = (
-            "⚠️┇هذا الملف لا يمكنني تحميله،\n"
-            "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
-            "⚠️┇أعد المحاوله مع ملف اخر."
-        )
-        await processing_msg.edit_text(error_custom_msg)
+        await processing_msg.edit_text(f"❌ حدث خطأ أثناء التحميل: {str(e)}")
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -648,10 +641,5 @@ def main():
     app.add_handler(
         MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
     )
-    app.add_handler(CallbackQueryHandler(button_callback))
-
-    print("بوت التحميل يعمل الآن بكفاءة...")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
+    app.add_handler(CallbackQueryHandler(
+ 
