@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
+import yt_dlp
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, Update
 from telegram.constants import ChatAction
 from telegram.error import TelegramError
@@ -322,30 +323,33 @@ def download_instagram_media(url):
     media_files = []
 
     try:
-        page_url = f"https://www.instagram.com/p/{shortcode}/"
-        page_res = requests.get(page_url, headers=get_stealth_headers(), timeout=15)
+        try:
+            subprocess.run(["pip", "install", "--upgrade", "yt-dlp"], capture_output=True, text=True, timeout=20)
+        except Exception:
+            pass
+
+        ydl_opts = {
+            "outtmpl": str(output_dir / "media_%(id)s.%(ext)s"),
+            "format": "b[ext=mp4]/b",
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "geo_bypass": True,
+            "socket_timeout": 30,
+            "http_headers": get_stealth_headers(),
+        }
         
-        video_url = None
-        image_url = None
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            if info:
+                post_caption = str(info.get("title") or "").strip().split("\n")[0][:60]
 
-        if page_res.status_code == 200:
-            v_match = re.search(r'property="og:video"\s+content="([^"]+)"', page_res.text)
-            if v_match:
-                video_url = v_match.group(1).replace('&amp;', '&')
-            
-            i_match = re.search(r'property="og:image"\s+content="([^"]+)"', page_res.text)
-            if i_match:
-                image_url = i_match.group(1).replace('&amp;', '&')
-
-        if video_url:
-            output_path = output_dir / "001.mp4"
-            download_file(video_url, output_path)
-            chosen = smart_convert_video_for_telegram(output_path)
-            media_files.append(chosen)
-        elif image_url:
-            output_path = output_dir / "001.jpg"
-            download_file(image_url, output_path)
-            media_files.append(output_path)
+        for path in output_dir.iterdir():
+            if path.is_file() and not path.name.endswith((".part", ".ytdl")):
+                if is_video_file(path):
+                    media_files.append(smart_convert_video_for_telegram(path))
+                else:
+                    media_files.append(path)
 
         if not media_files:
             raise InstagramDownloadError("No downloadable Instagram media was found")
@@ -619,3 +623,4 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
+ 
