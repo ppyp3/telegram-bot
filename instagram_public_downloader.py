@@ -308,7 +308,6 @@ def download_instagram_media(url):
     media_files = []
 
     try:
-        # استخراج مباشر عبر صفحة الـ Embed لتجاوز حظر 401 وخوادم إنستغرام
         embed_url = f"https://www.instagram.com/p/{shortcode}/embed/captioned/"
         res = requests.get(embed_url, headers=DOWNLOAD_HEADERS, timeout=15)
         
@@ -334,7 +333,6 @@ def download_instagram_media(url):
             download_file(image_url, output_path)
             media_files.append(output_path)
         else:
-            # طريقة بديلة أخيرة في حال عدم توفر الـ embed
             ydl_opts = {
                 "outtmpl": str(output_dir / "media_%(id)s.%(ext)s"),
                 "format": "b[ext=mp4]/b",
@@ -541,5 +539,90 @@ async def send_cached_media(message, context, media_ids):
                         supports_streaming=True,
                     )
                 )
-        await message.reply_media_
+        await message.reply_media_group(media=media_group)
+
+
+async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.effective_chat:
+        return
+
+    url = (update.message.text or "").strip()
+    shortcode = get_shortcode(url)
+    if not shortcode:
+        return
+
+    status_message = await update.message.reply_text("♻┇جاري التحميل...")
+    output_dir = None
+
+    try:
+        cached_media = MEDIA_ID_CACHE.get(shortcode)
+        if cached_media is not None and get_url_kind(url) != "reel":
+            await send_cached_media(update.message, context, cached_media)
+            await status_message.delete()
+            return
+
+        output_dir, media_files, post_caption = await asyncio.to_thread(download_instagram_media, url)
+        
+        is_reel = (get_url_kind(url) == "reel") or (len(media_files) == 1 and is_video_file(media_files[0]))
+        action = ChatAction.UPLOAD_VIDEO if (media_files and is_video_file(media_files[0])) else ChatAction.UPLOAD_PHOTO
+
+        await context.bot.send_chat_action(
+            chat_id=update.effective_chat.id,
+            action=action,
+        )
+
+        reply_markup = None
+        if is_reel and len(media_files) == 1 and is_video_file(media_files[0]):
+            keyboard = [
+                [InlineKeyboardButton("🎵┇تحميل كملف صوتي", callback_data="audio")],
+                [InlineKeyboardButton("📥┇تحميل باعلى دقه HD", callback_data="hd_video")],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+        sent_messages = await send_instagram_album(
+            update.message, context, media_files, is_reel=is_reel, reply_markup=reply_markup
+        )
+
+        if is_reel and sent_messages:
+            user_id = update.effective_user.id
+            title = post_caption if post_caption else "محتوى انستغرام"
+            sessions = context.application.bot_data.setdefault("download_sessions", {})
+            first_sent = sent_messages[0]
+            sessions[(first_sent.chat_id, first_sent.message_id)] = {
+                "user_id": user_id,
+                "url": url,
+                "title": title,
+                "created_at": asyncio.get_event_loop().time() if hasattr(asyncio, 'get_event_loop') else 0,
+            }
+
+        if get_url_kind(url) != "reel":
+            cache_sent_media(shortcode, sent_messages)
+
+        await status_message.delete()
+    except InstagramMediaTooLarge:
+        await status_message.edit_text(
+            "⚠️┇هذا الملف لا يمكنني تحميله،\n"
+            "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
+            "⚠️┇أعد المحاوله مع ملف اخر."
+        )
+    except VideoProcessingError:
+        await status_message.edit_text("❌ تعذر تجهيز الفيديو. حاول مرة أخرى.")
+    except (
+        InstagramDownloadError,
+        requests.RequestException,
+        TelegramError,
+    ):
+        logger.exception("Instagram download failed")
+        await status_message.edit_text(
+            "❌ تعذر تحميل هذا الرابط. تأكد أن الحساب والمنشور عام ثم أعد المحاولة."
+        )
+    except Exception:
+        logger.exception("Unexpected Instagram handler error")
+        await status_message.edit_text("❌ حدث خطأ أثناء تحميل محتوى الإنستغرام.")
+    finally:
+        if output_dir:
+            await asyncio.to_thread(shutil.rmtree, output_dir, True)
+
+
+log_media_tools_status()
  
