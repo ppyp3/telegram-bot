@@ -305,7 +305,7 @@ def smart_convert_video_for_telegram(file_path):
     ]
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=120, check=False)
-        if result.returncode ==0 and output_path.exists() and output_path.stat().st_size > 0:
+        if result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 0:
             return output_path
     except Exception:
         logger.error("فشل تحويل الفيديو عبر ffmpeg", exc_info=True)
@@ -322,39 +322,20 @@ def download_instagram_media(url):
     media_files = []
 
     try:
-        # الطريقة المحلية المحضة عبر محاكاة طلب جرافيك موبايل داخلي
-        graphql_url = f"https://www.instagram.com/graphql/query/?query_hash=2b06764fdb41f1984251433990616b3f&variables={%22shortcode%22:%22{shortcode}%22}"
-        headers = get_stealth_headers()
-        headers["X-Requested-With"] = "XMLHttpRequest"
+        page_url = f"https://www.instagram.com/p/{shortcode}/"
+        page_res = requests.get(page_url, headers=get_stealth_headers(), timeout=15)
         
-        res = requests.get(graphql_url, headers=headers, timeout=15)
         video_url = None
         image_url = None
 
-        if res.status_code == 200:
-            try:
-                data = res.json()
-                media = data.get("data", {}).get("shortcode_media", {})
-                if media:
-                    if media.get("is_video"):
-                        video_url = media.get("video_url")
-                    else:
-                        image_url = media.get("display_url")
-            except Exception:
-                pass
-
-        # خطة بديلة محلية بحتة عبر جلب الصفحة واستخراج ميتداتا الـ OpenGraph المباشرة
-        if not video_url and not image_url:
-            page_url = f"https://www.instagram.com/p/{shortcode}/"
-            page_res = requests.get(page_url, headers=get_stealth_headers(), timeout=15)
-            if page_res.status_code == 200:
-                v_match = re.search(r'property="og:video"\s+content="([^"]+)"', page_res.text)
-                if v_match:
-                    video_url = v_match.group(1).replace('&amp;', '&')
-                
-                i_match = re.search(r'property="og:image"\s+content="([^"]+)"', page_res.text)
-                if i_match:
-                    image_url = i_match.group(1).replace('&amp;', '&')
+        if page_res.status_code == 200:
+            v_match = re.search(r'property="og:video"\s+content="([^"]+)"', page_res.text)
+            if v_match:
+                video_url = v_match.group(1).replace('&amp;', '&')
+            
+            i_match = re.search(r'property="og:image"\s+content="([^"]+)"', page_res.text)
+            if i_match:
+                image_url = i_match.group(1).replace('&amp;', '&')
 
         if video_url:
             output_path = output_dir / "001.mp4"
@@ -638,4 +619,3 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
- 
