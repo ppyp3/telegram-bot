@@ -10,7 +10,6 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
-import yt_dlp
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, Update
 from telegram.constants import ChatAction
 from telegram.error import TelegramError
@@ -333,25 +332,32 @@ def download_instagram_media(url):
             download_file(image_url, output_path)
             media_files.append(output_path)
         else:
-            ydl_opts = {
-                "outtmpl": str(output_dir / "media_%(id)s.%(ext)s"),
-                "format": "b[ext=mp4]/b",
-                "quiet": True,
-                "no_warnings": True,
-                "noplaylist": True,
-                "http_headers": DOWNLOAD_HEADERS,
-            }
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                if info:
-                    post_caption = str(info.get("title") or "").strip().split("\n")[0][:60]
-
-            for path in output_dir.iterdir():
-                if path.is_file() and not path.name.endswith((".part", ".ytdl")):
-                    if is_video_file(path):
-                        media_files.append(smart_convert_video_for_telegram(path))
-                    else:
-                        media_files.append(path)
+            api_url = f"https://www.instagram.com/p/{shortcode}/?__a=1&__d=dis"
+            api_headers = DOWNLOAD_HEADERS.copy()
+            api_headers["X-Requested-With"] = "XMLHttpRequest"
+            
+            api_res = requests.get(api_url, headers=api_headers, timeout=15)
+            if api_res.status_code == 200:
+                data = api_res.json()
+                items = data.get("items", [])
+                if not items and "graphql" in data:
+                    node = data["graphql"].get("shortcode_media", {})
+                    if node:
+                        items = [node]
+                
+                for item in items:
+                    is_vid = item.get("is_video", False)
+                    v_url = item.get("video_url")
+                    i_url = item.get("display_url")
+                    
+                    if is_vid and v_url:
+                        out_p = output_dir / f"{len(media_files)+1:03d}.mp4"
+                        download_file(v_url, out_p)
+                        media_files.append(smart_convert_video_for_telegram(out_p))
+                    elif i_url:
+                        out_p = output_dir / f"{len(media_files)+1:03d}.jpg"
+                        download_file(i_url, out_p)
+                        media_files.append(out_p)
 
         if not media_files:
             raise InstagramDownloadError("No downloadable Instagram media was found")
@@ -625,3 +631,4 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
 
 
 log_media_tools_status()
+ 
