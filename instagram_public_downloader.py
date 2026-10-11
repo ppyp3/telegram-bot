@@ -297,6 +297,30 @@ def smart_convert_video_for_telegram(file_path):
 
 
 def download_reel_as_instagram(url, output_dir):
+    shortcode = get_shortcode(url)
+    
+    # محاولة السحب عبر instaloader أولاً لتجاوز حظر الـ rate-limit
+    try:
+        loader = instaloader.Instaloader(
+            download_pictures=False,
+            download_videos=True,
+            download_video_thumbnails=False,
+            save_metadata=False,
+            compress_json=False,
+            post_metadata_txt_pattern="",
+        )
+        post = instaloader.Post.from_shortcode(loader.context, shortcode)
+        if post.is_video and post.video_url:
+            output_path = output_dir / f"reel_{shortcode}.mp4"
+            download_file(post.video_url, output_path)
+            if output_path.exists() and output_path.stat().st_size > 0:
+                chosen = smart_convert_video_for_telegram(output_path)
+                if chosen.stat().st_size > MAX_MEDIA_SIZE:
+                    raise InstagramMediaTooLarge
+                return [chosen]
+    except Exception:
+        logger.warning("Instaloader direct download failed, falling back to yt-dlp", exc_info=True)
+
     options = {
         "outtmpl": str(output_dir / "reel_%(id)s.%(ext)s"),
         "format": "b[ext=mp4]/b",
@@ -311,6 +335,7 @@ def download_reel_as_instagram(url, output_dir):
         "noprogress": True,
         "noplaylist": True,
         "socket_timeout": 30,
+        "http_headers": DOWNLOAD_HEADERS,
     }
 
     for stale_file in output_dir.iterdir():
@@ -321,7 +346,7 @@ def download_reel_as_instagram(url, output_dir):
         with yt_dlp.YoutubeDL(options) as downloader:
             downloader.extract_info(url, download=True)
     except yt_dlp.utils.DownloadError as error:
-        logger.error("فشل السحب المباشر: %s", error)
+        logger.error("فشل السحب: %s", error)
         raise error
 
     media_files = sorted(
@@ -365,7 +390,6 @@ def download_instagram_media(url):
         except Exception:
             logger.warning("Instagram app-style stream failed, falling back to yt-dlp direct extraction", exc_info=True)
 
-        # خطة بديلة عبر yt-dlp للمنشورات العادية إذا فشل instaloader
         options = {
             "outtmpl": str(output_dir / "post_%(id)s.%(ext)s"),
             "format": "b[ext=mp4]/b",
