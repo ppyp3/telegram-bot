@@ -69,7 +69,6 @@ def request_headers():
     }
 
 def fetch_tiktok_data(url):
-    """جلب بيانات تيك توك مع وقت انتظار طويل جداً (Timeout مفتوح) لضمان عدم حدوث تايم أوت"""
     try:
         parsed_url = urlparse(url)
         if parsed_url.hostname in {"vm.tiktok.com", "vt.tiktok.com"}:
@@ -641,5 +640,11 @@ def main():
     app.add_handler(
         MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
     )
-    app.add_handler(CallbackQueryHandler(
+    app.add_handler(CallbackQueryHandler(button_callback))
+
+    print("بوت التحميل يعمل الآن بكفاءة...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
  
