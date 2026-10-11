@@ -11,7 +11,6 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
-import yt_dlp
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, Update
 from telegram.constants import ChatAction
 from telegram.error import TelegramError
@@ -323,39 +322,30 @@ def download_instagram_media(url):
     media_files = []
 
     try:
-        ydl_opts = {
-            "outtmpl": str(output_dir / "media_%(id)s.%(ext)s"),
-            "format": "b[ext=mp4]/b",
-            "quiet": True,
-            "no_warnings": True,
-            "noplaylist": True,
-            "geo_bypass": True,
-            "socket_timeout": 30,
-            "http_headers": get_stealth_headers(),
-        }
+        embed_url = f"https://www.instagram.com/p/{shortcode}/embed/captioned/"
+        res = requests.get(embed_url, headers=get_stealth_headers(), timeout=15)
         
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            if info:
-                post_caption = str(info.get("title") or "").strip().split("\n")[0][:60]
+        video_url = None
+        image_url = None
 
-        for path in output_dir.iterdir():
-            if path.is_file() and not path.name.endswith((".part", ".ytdl")):
-                if is_video_file(path):
-                    media_files.append(smart_convert_video_for_telegram(path))
-                else:
-                    media_files.append(path)
+        if res.status_code == 200:
+            v_match = re.search(r'"video_url"\s*:\s*"(https:[^"]+)"', res.text)
+            if v_match:
+                video_url = v_match.group(1).encode().decode('unicode-escape')
+            
+            i_match = re.search(r'"display_url"\s*:\s*"(https:[^"]+)"', res.text)
+            if i_match:
+                image_url = i_match.group(1).encode().decode('unicode-escape')
 
-        if not media_files:
-            embed_url = f"https://www.instagram.com/p/{shortcode}/embed/captioned/"
-            res = requests.get(embed_url, headers=get_stealth_headers(), timeout=15)
-            if res.status_code == 200:
-                v_match = re.search(r'"video_url"\s*:\s*"(https:[^"]+)"', res.text)
-                if v_match:
-                    v_url = v_match.group(1).encode().decode('unicode-escape')
-                    out_p = output_dir / "001.mp4"
-                    download_file(v_url, out_p)
-                    media_files.append(smart_convert_video_for_telegram(out_p))
+        if video_url:
+            output_path = output_dir / "001.mp4"
+            download_file(video_url, output_path)
+            chosen = smart_convert_video_for_telegram(output_path)
+            media_files.append(chosen)
+        elif image_url:
+            output_path = output_dir / "001.jpg"
+            download_file(image_url, output_path)
+            media_files.append(output_path)
 
         if not media_files:
             raise InstagramDownloadError("No downloadable Instagram media was found")
