@@ -26,7 +26,6 @@ PROBE_VIDEO_CACHE = {}
 VIDEO_THUMBNAIL_CACHE = {}
 MAX_CACHE_ENTRIES = 500
 
-# قائمة متصفحات عشوائية متغيرة بالكامل لتجنب الحظر تماماً (Anti-Ban User Agents)
 STEALTH_USER_AGENTS = [
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 313.0.0.30.115",
     "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 302.0.0.2.108",
@@ -324,7 +323,6 @@ def download_instagram_media(url):
     media_files = []
 
     try:
-        # نظام الخداع المزدوج (Anti-Detection Extraction)
         ydl_opts = {
             "outtmpl": str(output_dir / "media_%(id)s.%(ext)s"),
             "format": "b[ext=mp4]/b",
@@ -349,7 +347,6 @@ def download_instagram_media(url):
                     media_files.append(path)
 
         if not media_files:
-            # خطة احتياطية خفية جداً في حال فشل yt_dlp
             embed_url = f"https://www.instagram.com/p/{shortcode}/embed/captioned/"
             res = requests.get(embed_url, headers=get_stealth_headers(), timeout=15)
             if res.status_code == 200:
@@ -599,5 +596,37 @@ async def handle_instagram_message(update: Update, context: ContextTypes.DEFAULT
                 "user_id": user_id,
                 "url": url,
                 "title": title,
-                "created_at": asyncio.
+                "created_at": asyncio.get_event_loop().time() if hasattr(asyncio, 'get_event_loop') else 0,
+            }
+
+        if get_url_kind(url) != "reel":
+            cache_sent_media(shortcode, sent_messages)
+
+        await status_message.delete()
+    except InstagramMediaTooLarge:
+        await status_message.edit_text(
+            "⚠️┇هذا الملف لا يمكنني تحميله،\n"
+            "⚠️┇لأن حجمه يتجاوز ( 50 Mbps )،\n"
+            "⚠️┇أعد المحاوله مع ملف اخر."
+        )
+    except VideoProcessingError:
+        await status_message.edit_text("❌ تعذر تجهيز الفيديو. حاول مرة أخرى.")
+    except (
+        InstagramDownloadError,
+        requests.RequestException,
+        TelegramError,
+    ):
+        logger.exception("Instagram download failed")
+        await status_message.edit_text(
+            "❌ تعذر تحميل هذا الرابط. تأكد أن الحساب والمنشور عام ثم أعد المحاولة."
+        )
+    except Exception:
+        logger.exception("Unexpected Instagram handler error")
+        await status_message.edit_text("❌ حدث خطأ أثناء تحميل محتوى الإنستغرام.")
+    finally:
+        if output_dir:
+            await asyncio.to_thread(shutil.rmtree, output_dir, True)
+
+
+log_media_tools_status()
  
