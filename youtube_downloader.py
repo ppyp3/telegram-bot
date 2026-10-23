@@ -1,720 +1,407 @@
 import asyncio
-import html
 import logging
 import os
-import re
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
+from urllib.parse import urlparse
 
-import requests
 import yt_dlp
-
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
-from telegram.ext import filters
-
+from telegram.ext import ContextTypes
 
 logger = logging.getLogger(__name__)
 
 MAX_MEDIA_SIZE = 49 * 1024 * 1024
-COOKIES_FILE = "cookies.txt"
+COOKIES_FILE = os.getenv("YOUTUBE_COOKIES_FILE", "cookies.txt")
 
+# ضع المفتاح في Railway Variables إذا أردت استخدام YouTube Data API.
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "").strip()
 
-YOUTUBE_REGEX = re.compile(
-    r"https?://(?:www\.)?(?:youtube\.com/watch\?v=|youtube\.com/shorts/|"
-    r"youtube\.com/embed/|youtu\.be/)([A-Za-z0-9_-]+)",
-    re.IGNORECASE,
-)
 
-
-class DownloadTooLarge(Exception):
-    pass
-
-
-class YoutubeFilter(filters.MessageFilter):
-    def filter(self, message):
-        text = message.text or message.caption or ""
-        return bool(YOUTUBE_REGEX.search(text))
-
-
-YOUTUBE_FILTER = YoutubeFilter()
-
-
-# ---------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------
-
-def normalize_mode(mode):
+def normalize_mode(mode: str) -> str:
+    """وحّد أسماء أزرار التحميل القديمة والجديدة."""
     aliases = {
-        "yt_video": "video",
         "video": "video",
-        "yt_audio": "yt_audio",
-        "audio": "yt_audio",
-        "yt_voice": "yt_voice",
+        "yt_video": "video",
+        "audio": "audio",
+        "yt_audio": "audio",
+        "voice": "voice",
+        "yt_voice": "voice",
     }
-
-    normalized = aliases.get(mode)
-
-    if normalized is None:
+    normalized = aliases.get(str(mode).lower().strip())
+    if not normalized:
         raise ValueError(f"Unknown YouTube mode: {mode}")
-
     return normalized
 
 
-def extract_youtube_url(text: str):
-    if not text:
-        return None
-
-    match = YOUTUBE_REGEX.search(text)
-    return match.group(0) if match else None
-
-
-def extract_video_id(url: str):
-    match = YOUTUBE_REGEX.search(url)
-    return match.group(1) if match else None
-
-
-def format_views(views):
+def is_youtube_url(url: str) -> bool:
     try:
-        views = int(views or 0)
-    except (ValueError, TypeError):
-        return "0"
-
-    if views >= 1_000_000:
-        return f"{views / 1_000_000:.1f}M"
-
-    if views >= 1_000:
-        return f"{views / 1_000:.1f}K"
-
-    return str(views)
-
-
-def parse_iso8601_duration(duration_str):
-    match = re.match(
-        r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?",
-        duration_str or "",
-    )
-
-    if not match:
-        return 0
-
-    hours = int(match.group(1) or 0)
-    minutes = int(match.group(2) or 0)
-    seconds = int(match.group(3) or 0)
-
-    return hours * 3600 + minutes * 60 + seconds
+        parsed = urlparse(url.strip())
+        host = (parsed.hostname or "").lower()
+        return host in {
+            "youtube.com",
+            "www.youtube.com",
+            "m.youtube.com",
+            "music.youtube.com",
+            "youtu.be",
+            "www.youtube-nocookie.com",
+        }
+    except Exception:
+        return False
 
 
-def format_duration(seconds):
-    try:
-        seconds = int(seconds or 0)
-    except (ValueError, TypeError):
-        seconds = 0
-
-    hours, remainder = divmod(seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-
-    if hours:
-        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-
-    return f"{minutes:02d}:{seconds:02d}"
-
-
-def get_common_ydl_opts():
+def base_ydl_options() -> dict:
     opts = {
         "quiet": True,
-        "no_warnings": False,
+        "no_warnings": True,
+        "noplaylist": True,
+        "retries": 5,
+        "fragment_retries": 5,
+        "extractor_retries": 3,
         "socket_timeout": 30,
-        "retries": 3,
-        "fragment_retries": 3,
-        "file_access_retries": 3,
-        "concurrent_fragment_downloads": 4,
-        "noprogress": True,
+        "ignoreerrors": False,
     }
 
-    if os.path.isfile(COOKIES_FILE):
-        opts["cookiefile"] = COOKIES_FILE
+    cookie_path = Path(COOKIES_FILE)
+    if cookie_path.is_file():
+        opts["cookiefile"] = str(cookie_path)
 
     return opts
 
 
-# ---------------------------------------------------------
-# YouTube information through Google API v3
-# ---------------------------------------------------------
+def get_download_info(url: str) -> dict:
+    """استخراج معلومات الفيديو بدون تنزيله."""
+    if not is_youtube_url(url):
+        raise ValueError("أرسل رابط YouTube صحيحاً.")
 
-def get_youtube_info(url: str):
-    video_id = extract_video_id(url)
-
-    if not video_id:
-        raise ValueError("رابط يوتيوب غير صالح.")
-
-    api_key = os.getenv("YOUTUBE_API_KEY", "").strip()
-
-    if not api_key:
-        raise ValueError(
-            "مفتاح YOUTUBE_API_KEY غير موجود في Railway Variables."
-        )
-
-    api_url = "https://www.googleapis.com/youtube/v3/videos"
-
-    params = {
-        "part": "snippet,contentDetails,statistics",
-        "id": video_id,
-        "key": api_key,
-    }
-
-    try:
-        response = requests.get(
-            api_url,
-            params=params,
-            timeout=15,
-        )
-
-        try:
-            data = response.json()
-        except ValueError as error:
-            raise ValueError(
-                "Google API رجّع استجابة غير مفهومة."
-            ) from error
-
-        if response.status_code != 200:
-            error_data = data.get("error", {})
-            errors = error_data.get("errors", [])
-
-            reason = (
-                errors[0].get("reason", "")
-                if errors
-                else ""
-            )
-
-            message = error_data.get(
-                "message",
-                "خطأ غير معروف",
-            )
-
-            logger.error(
-                "YouTube API error: status=%s reason=%s message=%s",
-                response.status_code,
-                reason,
-                message,
-            )
-
-            raise ValueError(
-                f"YouTube API: {reason or message}"
-            )
-
-        items = data.get("items", [])
-
-        if not items:
-            raise ValueError(
-                "لم يتم العثور على معلومات الفيديو عبر Google API."
-            )
-
-        item = items[0]
-        snippet = item.get("snippet", {})
-        details = item.get("contentDetails", {})
-        statistics = item.get("statistics", {})
-        thumbnails = snippet.get("thumbnails", {})
-
-        thumbnail = (
-            thumbnails.get("maxres", {}).get("url")
-            or thumbnails.get("high", {}).get("url")
-            or thumbnails.get("medium", {}).get("url")
-            or thumbnails.get("default", {}).get("url")
-        )
-
-        duration = parse_iso8601_duration(
-            details.get("duration", "PT0S")
-        )
-
-        return {
-            "title": snippet.get("title", "فيديو يوتيوب"),
-            "uploader": snippet.get("channelTitle", "غير معروف"),
-            "duration": duration,
-            "duration_string": format_duration(duration),
-            "view_count_formatted": format_views(
-                statistics.get("viewCount", 0)
-            ),
-            "thumbnail": thumbnail,
-            "url": url,
-        }
-
-    except requests.RequestException as error:
-        logger.exception("Connection to YouTube API failed")
-        raise ValueError(
-            f"تعذر الاتصال بـ Google API: {error}"
-        ) from error
-
-
-# ---------------------------------------------------------
-# Download information
-# ---------------------------------------------------------
-
-def get_download_info(url: str, mode: str):
-    mode = normalize_mode(mode)
-    opts = get_common_ydl_opts()
+    opts = base_ydl_options()
     opts["skip_download"] = True
-
-    if mode in ("yt_audio", "yt_voice"):
-        opts["format"] = "bestaudio/best"
-    else:
-        opts["format"] = "bestvideo*+bestaudio/best"
 
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
 
     if not info:
-        raise ValueError("لم يتمكن yt-dlp من قراءة معلومات الفيديو.")
+        raise RuntimeError("لم أتمكن من الحصول على معلومات الفيديو.")
 
-    return info
+    return {
+        "id": info.get("id", ""),
+        "title": info.get("title") or "YouTube video",
+        "uploader": info.get("uploader") or "Unknown",
+        "duration": info.get("duration") or 0,
+        "view_count": info.get("view_count") or 0,
+        "thumbnail": info.get("thumbnail"),
+        "webpage_url": info.get("webpage_url") or url,
+    }
 
 
-# ---------------------------------------------------------
-# Size check
-# ---------------------------------------------------------
-
-def check_media_size_before_download(url: str, mode: str = "video"):
+def download_youtube_media(url: str, mode: str, output_dir: str) -> str:
+    """
+    ينزّل ملفاً واحداً:
+    video = فيديو MP4 قدر الإمكان
+    audio = ملف MP3
+    voice = ملف OGG/Opus مناسب للرسائل الصوتية
+    """
     mode = normalize_mode(mode)
 
-    try:
-        info = get_download_info(url, mode)
+    if not is_youtube_url(url):
+        raise ValueError("رابط YouTube غير صحيح.")
 
-        # إذا حجم الصيغة المختارة معروف، نفحصه.
-        filesize = info.get("filesize") or info.get("filesize_approx")
-
-        if filesize:
-            return int(filesize) <= MAX_MEDIA_SIZE
-
-        # إذا الحجم غير معروف، لا نرفض الفيديو مباشرة.
-        return True
-
-    except Exception:
-        logger.exception("Size check failed")
-        # السماح بمحاولة التنزيل، ثم فحص الحجم الفعلي.
-        return True
-
-
-# ---------------------------------------------------------
-# Download media
-# ---------------------------------------------------------
-
-def download_youtube_media(url: str, mode: str = "video"):
-    mode = normalize_mode(mode)
-
-    temp_dir = tempfile.mkdtemp(prefix="yt_")
-    logger.info("Temporary directory created")
-
-    try:
-        outtmpl = os.path.join(
-            temp_dir,
-            "%(title).150s.%(ext)s",
+    if not shutil.which("ffmpeg"):
+        raise RuntimeError(
+            "FFmpeg غير مثبت على الاستضافة. ثبّته باستخدام Dockerfile."
         )
 
-        opts = get_common_ydl_opts()
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
 
+    opts = base_ydl_options()
+    opts.update({
+        "outtmpl": str(output_path / "%(title).100B-%(id)s.%(ext)s"),
+        "overwrites": True,
+    })
+
+    if mode == "video":
+        # يفضّل MP4، مع بدائل عندما لا تتوفر الصيغة المطلوبة.
         opts.update({
-            "outtmpl": outtmpl,
-            "quiet": True,
-            "noprogress": True,
-            "overwrites": True,
+            "format": (
+                "bestvideo*+bestaudio/"
+                "best[ext=mp4]/best"
+            ),
+            "merge_output_format": "mp4",
         })
 
-        if mode == "video":
-            # أفضل فيديو مع الصوت، مع صيغة احتياطية جاهزة.
-            opts["format"] = "bestvideo*+bestaudio/best"
-            opts["merge_output_format"] = "mp4"
+    elif mode == "audio":
+        opts.update({
+            "format": "bestaudio/best",
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }],
+        })
 
-        elif mode == "yt_audio":
-            opts["format"] = "bestaudio/best"
-            opts["postprocessors"] = [
-                {
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }
-            ]
+    elif mode == "voice":
+        opts.update({
+            "format": "bestaudio/best",
+        })
 
-        elif mode == "yt_voice":
-            opts["format"] = "bestaudio/best"
-            opts["postprocessors"] = [
-                {
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "opus",
-                }
-            ]
+    # لا نستخدم extractor_args ثابتة قد تمنع الصيغ المتاحة.
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=True)
 
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+    if not info:
+        raise RuntimeError("فشل تنزيل الوسائط من YouTube.")
 
-            if not info:
-                raise ValueError(
-                    "yt-dlp لم يرجع معلومات بعد التنزيل."
-                )
+    video_id = info.get("id", "")
+    candidates = [
+        p for p in output_path.iterdir()
+        if p.is_file() and video_id in p.name
+    ]
 
-            title = info.get("title", "فيديو يوتيوب")
-            duration = int(info.get("duration") or 0)
-
-        # البحث عن الملفات الناتجة.
-        allowed_media = {
-            ".mp3",
-            ".mp4",
-            ".m4a",
-            ".webm",
-            ".ogg",
-            ".opus",
-            ".mkv",
-        }
-
-        media_files = [
-            p for p in Path(temp_dir).glob("*")
-            if p.is_file()
-            and p.suffix.lower() in allowed_media
+    if mode == "audio":
+        candidates = [
+            p for p in candidates if p.suffix.lower() == ".mp3"
         ]
 
-        if not media_files:
-            raise FileNotFoundError(
-                "لم يتم العثور على الملف الناتج. "
-                "تحقق من تثبيت FFmpeg في Railway."
-            )
+    elif mode == "video":
+        candidates = [
+            p for p in candidates
+            if p.suffix.lower() in {".mp4", ".mkv", ".webm", ".mov"}
+        ]
 
-        # اختيار الملف الناتج المناسب لنوع الطلب.
-        if mode == "video":
-            candidates = [
-                p for p in media_files
-                if p.suffix.lower() in {
-                    ".mp4", ".mkv", ".webm"
-                }
-            ]
-        elif mode == "yt_audio":
-            candidates = [
-                p for p in media_files
-                if p.suffix.lower() == ".mp3"
-            ]
-        else:
-            candidates = [
-                p for p in media_files
-                if p.suffix.lower() in {".opus", ".ogg"}
-            ]
+    elif mode == "voice":
+        candidates = [
+            p for p in candidates
+            if p.suffix.lower() not in {".part", ".ytdl", ".json"}
+        ]
 
-        if not candidates:
-            raise FileNotFoundError(
-                "لم يتم العثور على صيغة الملف المطلوبة بعد التحويل."
-            )
-
-        file_path = max(
-            candidates,
-            key=lambda p: p.stat().st_size,
+    if not candidates:
+        raise RuntimeError(
+            "اكتمل طلب التنزيل لكن لم أعثر على الملف الناتج. "
+            "راجع سجل Railway."
         )
 
-        # ملفات Opus الناتجة تكون عادةً داخل حاوية Ogg.
-        # نغيّر الامتداد فقط لتناسب إرسال الرسالة الصوتية.
-        if mode == "yt_voice" and file_path.suffix.lower() == ".opus":
-            ogg_path = file_path.with_suffix(".ogg")
-            file_path.rename(ogg_path)
-            file_path = ogg_path
+    downloaded_file = max(candidates, key=lambda p: p.stat().st_size)
 
-        file_size = file_path.stat().st_size
+    if mode == "voice":
+        # أنشئ حاوية OGG بترميز Opus؛ لا تغيّر امتداد الملف فقط.
+        voice_file = output_path / f"{video_id}-voice.ogg"
+        command = [
+            "ffmpeg", "-y", "-i", str(downloaded_file),
+            "-vn", "-c:a", "libopus", "-b:a", "48k",
+            "-vbr", "on", "-application", "voip",
+            str(voice_file),
+        ]
 
-        if file_size > MAX_MEDIA_SIZE:
-            raise DownloadTooLarge(
-                "حجم الملف أكبر من الحد المسموح (49 MB)."
-            )
-
-        return (
-            file_path,
-            title,
-            duration,
-            None,
-            temp_dir,
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=300,
         )
 
-    except Exception:
-        logger.exception("YouTube download failed")
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        raise
+        if result.returncode != 0 or not voice_file.is_file():
+            logger.error("FFmpeg voice conversion failed: %s", result.stderr[-3000:])
+            raise RuntimeError("فشل تحويل الملف إلى رسالة صوتية.")
+
+        downloaded_file = voice_file
+
+    if downloaded_file.stat().st_size > MAX_MEDIA_SIZE:
+        raise RuntimeError(
+            "حجم الملف أكبر من حد الإرسال المحدد (49 MB)."
+        )
+
+    return str(downloaded_file)
 
 
-# ---------------------------------------------------------
-# Handle YouTube message
-# ---------------------------------------------------------
-
-async def handle_youtube_message(update, context):
+async def handle_youtube_message(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    """يتعامل مع رسالة تحتوي على رابط YouTube."""
     message = update.effective_message
-
-    if not message:
+    if not message or not message.text:
         return
 
-    text = message.text or message.caption or ""
-    url = extract_youtube_url(text)
+    words = message.text.split()
+    url = next((word for word in words if is_youtube_url(word)), None)
 
     if not url:
         return
 
-    user = update.effective_user
-    user_id = user.id if user else 0
-
-    processing_msg = await message.reply_text(
-        "⏳┇جاري قراءة معلومات الفيديو..."
-    )
+    await message.reply_text("⏳ أفحص رابط YouTube...")
 
     try:
-        info = await asyncio.to_thread(
-            get_youtube_info,
-            url,
-        )
+        info = await asyncio.to_thread(get_download_info, url)
 
-        keyboard = [
-            [
-                InlineKeyboardButton(
-                    "🎬 فيديو",
-                    callback_data="yt_video",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🎧 ملف صوتي",
-                    callback_data="yt_audio",
-                ),
-                InlineKeyboardButton(
-                    "🎙 بصمة صوتية",
-                    callback_data="yt_voice",
-                ),
-            ],
-        ]
-
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        safe_title = html.escape(info["title"])
-        safe_uploader = html.escape(info["uploader"])
-        safe_url = html.escape(info["url"])
+        duration = int(info.get("duration") or 0)
+        minutes, seconds = divmod(duration, 60)
 
         caption = (
-            f'🎬 <a href="{safe_url}">{safe_title}</a>\n'
-            f"👤 {safe_uploader}\n"
-            f'⏱ {info["duration_string"]} - '
-            f'👁 {info["view_count_formatted"]}'
+            f"🎬 {info['title']}\n"
+            f"👤 القناة: {info['uploader']}\n"
+            f"⏱️ المدة: {minutes}:{seconds:02d}\n\n"
+            "اختَر نوع التحميل:"
         )
 
-        sent_msg = None
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "🎥 فيديو",
+                    callback_data=f"yt_video|{url}",
+                ),
+                InlineKeyboardButton(
+                    "🎵 MP3",
+                    callback_data=f"yt_audio|{url}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "🎙️ رسالة صوتية",
+                    callback_data=f"yt_voice|{url}",
+                ),
+            ],
+        ])
 
-        if info.get("thumbnail"):
-            try:
-                sent_msg = await message.reply_photo(
-                    photo=info["thumbnail"],
-                    caption=caption,
-                    parse_mode="HTML",
-                    reply_markup=reply_markup,
-                )
-            except Exception:
-                logger.exception("Failed to send YouTube thumbnail")
-
-        if sent_msg is None:
-            sent_msg = await message.reply_text(
-                text=caption,
-                parse_mode="HTML",
-                reply_markup=reply_markup,
-            )
-
-        sessions = context.application.bot_data.setdefault(
-            "yt_sessions",
-            {},
+        await message.reply_text(
+            caption,
+            reply_markup=keyboard,
+            disable_web_page_preview=True,
         )
 
-        sessions[(sent_msg.chat_id, sent_msg.message_id)] = {
-            "user_id": user_id,
-            "url": url,
-            "title": info["title"],
-        }
-
-        await processing_msg.delete()
-
-    except Exception as error:
-        logger.exception("Error handling YouTube message")
-
-        await processing_msg.edit_text(
-            "❌ حدث خطأ أثناء معالجة الرابط.\n\n"
-            f"الخطأ: {str(error)[:500]}"
+    except Exception as exc:
+        logger.exception("YouTube info extraction failed")
+        await message.reply_text(
+            f"❌ تعذّر قراءة الفيديو.\n"
+            f"{str(exc)[:800]}"
         )
 
-
-# ---------------------------------------------------------
-# Callback
-# ---------------------------------------------------------
 
 async def handle_youtube_callback(
     query,
-    context,
-    session_data,
-    mode,
+    context: ContextTypes.DEFAULT_TYPE,
+    session_data=None,
+    mode=None,
 ):
-    mode = normalize_mode(mode)
+    """
+    يدعم الاستدعاء المباشر:
+    handle_youtube_callback(query, context, session_data, mode)
 
-    chat_id = query.message.chat_id
-    url = session_data["url"]
-
-    try:
-        await query.answer()
-    except Exception:
-        pass
-
-    try:
-        await query.message.delete()
-    except Exception:
-        pass
-
-    status_msg = await context.bot.send_message(
-        chat_id=chat_id,
-        text="♻️┇جاري تحميل الملف...",
-    )
-
-    temp_dir = None
-    file_path = None
+    ويدعم أيضاً زر callback_data بصيغة:
+    yt_video|URL
+    """
+    await query.answer()
 
     try:
-        is_size_ok = await asyncio.to_thread(
-            check_media_size_before_download,
-            url,
-            mode,
-        )
+        if mode is None:
+            data = query.data or ""
+            parts = data.split("|", 1)
+            mode = parts[0]
+            url = parts[1] if len(parts) > 1 else ""
+        else:
+            data = query.data or ""
+            parts = data.split("|", 1)
+            url = parts[1] if len(parts) > 1 else ""
 
-        if not is_size_ok:
-            await status_msg.edit_text(
-                "⚠️┇الملف أكبر من الحد المسموح (49 MB)."
+            # إذا كان المشروع القديم يخزن الرابط في session_data.
+            if not url and isinstance(session_data, dict):
+                url = (
+                    session_data.get("url")
+                    or session_data.get("youtube_url")
+                    or ""
+                )
+
+        mode = normalize_mode(mode)
+
+        if not url or not is_youtube_url(url):
+            await query.edit_message_text(
+                "❌ الرابط غير موجود أو غير صالح. أرسل الرابط مرة ثانية."
             )
             return
 
-        (
-            file_path,
-            title,
-            duration,
-            thumb_path,
-            temp_dir,
-        ) = await asyncio.to_thread(
-            download_youtube_media,
-            url,
-            mode,
+        await query.edit_message_text(
+            "⏳ جارٍ تحميل الوسائط، انتظر..."
         )
 
-        file_size_mb = (
-            os.path.getsize(file_path) / (1024 * 1024)
-        )
+        chat = query.message.chat
+        bot = context.bot
 
-        time_str = format_duration(duration)
-
-        share_keyboard = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton(
-                    "🔀 | شارك",
-                    switch_inline_query=title[:100],
-                )
-            ]
-        ])
-
-        if mode == "yt_voice":
-            await context.bot.send_chat_action(
-                chat_id=chat_id,
-                action=ChatAction.UPLOAD_VOICE,
+        with tempfile.TemporaryDirectory(prefix="yt_download_") as temp_dir:
+            file_path = await asyncio.to_thread(
+                download_youtube_media,
+                url,
+                mode,
+                temp_dir,
             )
 
-            with open(file_path, "rb") as voice_file:
-                await context.bot.send_voice(
-                    chat_id=chat_id,
-                    voice=voice_file,
-                    caption=f"@G66Gbot - {time_str}",
-                    duration=int(duration),
-                    reply_markup=share_keyboard,
-                    filename="audio.ogg",
-                    read_timeout=120,
-                    write_timeout=120,
+            size = os.path.getsize(file_path)
+            if size > MAX_MEDIA_SIZE:
+                raise RuntimeError("الملف أكبر من الحد المسموح للإرسال.")
+
+            if mode == "video":
+                await bot.send_chat_action(
+                    chat_id=chat.id,
+                    action=ChatAction.UPLOAD_VIDEO,
                 )
+                with open(file_path, "rb") as media:
+                    await bot.send_video(
+                        chat_id=chat.id,
+                        video=media,
+                        caption=Path(file_path).stem[:900],
+                        supports_streaming=True,
+                        read_timeout=180,
+                        write_timeout=180,
+                        connect_timeout=30,
+                        pool_timeout=30,
+                    )
 
-        elif mode == "yt_audio":
-            await context.bot.send_chat_action(
-                chat_id=chat_id,
-                action=ChatAction.UPLOAD_DOCUMENT,
-            )
-
-            with open(file_path, "rb") as audio_file:
-                await context.bot.send_audio(
-                    chat_id=chat_id,
-                    audio=audio_file,
-                    title=title[:200],
-                    performer="@G66Gbot",
-                    duration=int(duration),
-                    caption=(
-                        f"@G66Gbot - {time_str}, "
-                        f"{file_size_mb:.1f}MB"
-                    ),
-                    reply_markup=share_keyboard,
-                    filename="audio.mp3",
-                    read_timeout=120,
-                    write_timeout=120,
+            elif mode == "audio":
+                await bot.send_chat_action(
+                    chat_id=chat.id,
+                    action=ChatAction.UPLOAD_AUDIO,
                 )
+                with open(file_path, "rb") as media:
+                    await bot.send_audio(
+                        chat_id=chat.id,
+                        audio=media,
+                        title=Path(file_path).stem[:64],
+                        read_timeout=180,
+                        write_timeout=180,
+                        connect_timeout=30,
+                        pool_timeout=30,
+                    )
 
-        else:
-            await context.bot.send_chat_action(
-                chat_id=chat_id,
-                action=ChatAction.UPLOAD_VIDEO,
-            )
-
-            with open(file_path, "rb") as video_file:
-                await context.bot.send_video(
-                    chat_id=chat_id,
-                    video=video_file,
-                    caption=(
-                        f"@G66Gbot - {time_str}, "
-                        f"{file_size_mb:.1f}MB"
-                    ),
-                    duration=int(duration),
-                    supports_streaming=True,
-                    reply_markup=share_keyboard,
-                    filename="video.mp4",
-                    read_timeout=120,
-                    write_timeout=120,
+            elif mode == "voice":
+                await bot.send_chat_action(
+                    chat_id=chat.id,
+                    action=ChatAction.UPLOAD_VOICE,
                 )
+                with open(file_path, "rb") as media:
+                    await bot.send_voice(
+                        chat_id=chat.id,
+                        voice=media,
+                        read_timeout=180,
+                        write_timeout=180,
+                        connect_timeout=30,
+                        pool_timeout=30,
+                    )
+
+        # TemporaryDirectory يحذف الملفات تلقائياً بعد الإرسال.
+        await query.message.reply_text("✅ تم إرسال الملف.")
+
+    except Exception as exc:
+        logger.exception("YouTube download/callback failed")
+        error_text = str(exc).strip() or type(exc).__name__
 
         try:
-            await status_msg.delete()
+            await query.message.reply_text(
+                "❌ فشل تحميل الوسائط من YouTube.\n\n"
+                f"{error_text[:1200]}"
+            )
         except Exception:
-            pass
-
-    except DownloadTooLarge:
-        await status_msg.edit_text(
-            "⚠️┇حجم الملف أكبر من الحد المسموح (49 MB)."
-        )
-
-    except yt_dlp.utils.DownloadError as error:
-        logger.exception("yt-dlp DownloadError")
-
-        await status_msg.edit_text(
-            "❌ فشل تحميل الوسائط من يوتيوب.\n\n"
-            f"{str(error)[:700]}"
-        )
-
-    except FileNotFoundError as error:
-        logger.exception("Media file not found")
-
-        await status_msg.edit_text(
-            f"❌ {str(error)[:700]}"
-        )
-
-    except Exception as error:
-        logger.exception("Unexpected YouTube callback error")
-
-        await status_msg.edit_text(
-            "❌ حدث خطأ أثناء التحميل أو الإرسال.\n\n"
-            f"الخطأ: {str(error)[:700]}"
-        )
-
-    finally:
-        if temp_dir and os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir, ignore_errors=True)
-
-        elif file_path and os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except OSError:
-                logger.warning("Could not remove temporary media file")
+            logger.exception("Could not send error message to Telegram")
  
