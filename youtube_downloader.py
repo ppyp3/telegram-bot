@@ -22,7 +22,7 @@ MAX_MEDIA_SIZE = 49 * 1024 * 1024
 COOKIES_FILE = "cookies.txt"
 
 # ضع مفتاح YouTube Data API v3 الخاص بك هنا
-YOUTUBE_API_KEY = "YOUTUBE_API_KEY"
+YOUTUBE_API_KEY = "YOUR_GOOGLE_YOUTUBE_API_KEY"
 
 YOUTUBE_REGEX = re.compile(
     r"https?://(?:www\.)?(?:youtube\.com/watch\?v=|youtube\.com/shorts/|"
