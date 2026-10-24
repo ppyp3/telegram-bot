@@ -10,7 +10,12 @@ from urllib.parse import urlparse
 import yt_dlp
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, filters
+
+# فلتر روابط اليوتيوب لحل مشكلة الاستيراد في bot.py
+YOUTUBE_FILTER = filters.TEXT & filters.Regex(
+    r"(?i)^(https?://)?(www\.)?(youtube\.com|youtu\.be)/.+"
+)
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +129,6 @@ def download_youtube_media(url: str, mode: str, output_dir: str) -> str:
     })
 
     if mode == "video":
-        # يفضّل MP4، مع بدائل عندما لا تتوفر الصيغة المطلوبة.
         opts.update({
             "format": (
                 "bestvideo*+bestaudio/"
@@ -148,7 +152,6 @@ def download_youtube_media(url: str, mode: str, output_dir: str) -> str:
             "format": "bestaudio/best",
         })
 
-    # لا نستخدم extractor_args ثابتة قد تمنع الصيغ المتاحة.
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
 
@@ -187,7 +190,6 @@ def download_youtube_media(url: str, mode: str, output_dir: str) -> str:
     downloaded_file = max(candidates, key=lambda p: p.stat().st_size)
 
     if mode == "voice":
-        # أنشئ حاوية OGG بترميز Opus؛ لا تغيّر امتداد الملف فقط.
         voice_file = output_path / f"{video_id}-voice.ogg"
         command = [
             "ffmpeg", "-y", "-i", str(downloaded_file),
@@ -307,7 +309,6 @@ async def handle_youtube_callback(
             parts = data.split("|", 1)
             url = parts[1] if len(parts) > 1 else ""
 
-            # إذا كان المشروع القديم يخزن الرابط في session_data.
             if not url and isinstance(session_data, dict):
                 url = (
                     session_data.get("url")
@@ -390,7 +391,6 @@ async def handle_youtube_callback(
                         pool_timeout=30,
                     )
 
-        # TemporaryDirectory يحذف الملفات تلقائياً بعد الإرسال.
         await query.message.reply_text("✅ تم إرسال الملف.")
 
     except Exception as exc:
