@@ -23,7 +23,7 @@ MAX_MEDIA_SIZE = 49 * 1024 * 1024
 COOKIES_FILE = os.getenv("YOUTUBE_COOKIES_FILE", "cookies.txt")
 
 # ضع المفتاح في Railway Variables إذا أردت استخدام YouTube Data API.
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "").strip()
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY").strip()
 
 
 def normalize_mode(mode: str) -> str:
