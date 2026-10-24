@@ -518,17 +518,17 @@ async def handle_youtube_message(update, context):
         keyboard = [
             [
                 InlineKeyboardButton(
-                    "🎬 فيديو",
+                    "🎬┇فيديو",
                     callback_data="yt_video"
                 )
             ],
             [
                 InlineKeyboardButton(
-                    "🎧 ملف صوتي",
+                    "🎧┇ملف صوتي",
                     callback_data="yt_audio"
                 ),
                 InlineKeyboardButton(
-                    "🎙 بصمة صوتية",
+                    "🎙┇بصمة صوتية",
                     callback_data="yt_voice"
                 ),
             ],
